@@ -12,6 +12,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SKILL_DIR = ROOT / "skills" / "httk"
 MANIFEST = ROOT / ".codex-plugin" / "plugin.json"
+LICENSE_FILE = ROOT / "LICENSE"
+PRIVACY_FILE = ROOT / "PRIVACY.md"
+TERMS_FILE = ROOT / "TERMS.md"
 DIST_DIR = ROOT / "dist"
 FIXED_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 IGNORED_NAMES = {".DS_Store", "__pycache__"}
@@ -199,6 +202,20 @@ def validate() -> None:
         raise ValueError("missing OpenAI skill UI metadata: agents/openai.yaml")
     if MANIFEST.is_symlink():
         raise ValueError("plugin manifest must not be a symlink")
+    if not LICENSE_FILE.is_file():
+        raise ValueError(f"missing distribution license: {LICENSE_FILE}")
+    if LICENSE_FILE.is_symlink():
+        raise ValueError("distribution license must not be a symlink")
+    skill_license = SKILL_DIR / "LICENSE"
+    if not skill_license.is_file():
+        raise ValueError(f"missing skill license: {skill_license}")
+    if skill_license.read_bytes() != LICENSE_FILE.read_bytes():
+        raise ValueError("skill and repository licenses must be identical")
+    for legal_file in (PRIVACY_FILE, TERMS_FILE):
+        if not legal_file.is_file():
+            raise ValueError(f"missing legal page: {legal_file}")
+        if legal_file.is_symlink():
+            raise ValueError(f"legal page must not be a symlink: {legal_file}")
     if (ROOT / "SKILL.md").exists():
         raise ValueError("SKILL.md belongs under skills/httk, not the plugin root")
 
@@ -215,7 +232,11 @@ def build() -> tuple[Path, Path]:
     _write_zip(skill_archive, skill_entries)
 
     plugin_archive = DIST_DIR / "httk-plugin.zip"
-    plugin_files = _files_under(ROOT / ".codex-plugin") + skill_files
+    plugin_files = (
+        _files_under(ROOT / ".codex-plugin")
+        + skill_files
+        + [LICENSE_FILE, PRIVACY_FILE, TERMS_FILE]
+    )
     plugin_entries = [
         (path, f"httk/{path.relative_to(ROOT).as_posix()}") for path in plugin_files
     ]

@@ -14,11 +14,15 @@ The user-facing skill name is `httk`. The product remains *httk₂* in prose and
 .
 ├── .codex-plugin/
 │   └── plugin.json          # OpenAI plugin manifest
+├── LICENSE                  # GNU AGPL v3-or-later license
+├── PRIVACY.md               # Static-skill privacy policy
+├── TERMS.md                 # Static-skill terms of use
 ├── skills/
 │   └── httk/
 │       ├── SKILL.md        # Portable Agent Skills entry point
 │       ├── agents/
 │       │   └── openai.yaml # Optional OpenAI UI metadata
+│       ├── assets/          # httk logo and icon
 │       └── references/     # Curated guides and offline docs
 └── scripts/
     └── build_packages.py  # Deterministic distribution builder
@@ -27,6 +31,8 @@ The user-facing skill name is `httk`. The product remains *httk₂* in prose and
 The `skills/httk/` directory follows the open Agent Skills format used by
 ChatGPT, Claude, Codex, Claude Code, and other compatible agents. The
 `.codex-plugin/plugin.json` wrapper is specific to OpenAI's plugin system.
+Both archives include the full `AGPL-3.0-or-later` license. The OpenAI plugin
+also declares the httk brand color and bundled logo assets.
 
 ## Install the portable skill
 
@@ -40,8 +46,10 @@ The archive has the portable layout expected by both products:
 
 ```text
 httk/
+├── LICENSE
 ├── SKILL.md
 ├── agents/openai.yaml
+├── assets/
 └── references/
 ```
 

@@ -8,6 +8,7 @@
   },
   "homepage": "https://docs.httk.org",
   "repository": "https://github.com/httk/agent-httk-skill",
+  "license": "AGPL-3.0-or-later",
   "keywords": [
     "httk",
     "materials-science",
@@ -24,10 +25,15 @@
     "category": "Developer Tools",
     "capabilities": [],
     "websiteURL": "https://docs.httk.org",
+    "privacyPolicyURL": "https://github.com/httk/agent-httk-skill/blob/main/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/httk/agent-httk-skill/blob/main/TERMS.md",
     "defaultPrompt": [
       "Help me run an httk₂ computational campaign.",
       "Load and inspect a structure with httk₂.",
       "Help me serve httk₂ data through OPTIMADE."
-    ]
+    ],
+    "brandColor": "#FF4B39",
+    "composerIcon": "./skills/httk/assets/httk-icon.png",
+    "logo": "./skills/httk/assets/httk-logo.svg"
   }
 }
