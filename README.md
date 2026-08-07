@@ -30,9 +30,8 @@ ChatGPT, Claude, Codex, Claude Code, and other compatible agents. The
 
 ## Install the portable skill
 
-Download `httk-skill.zip` from the workflow's `httk-packages` GitHub Actions
-artifact, or build it locally with `make dist`. Upload that ZIP directly in
-either web product:
+Download the workflow's `httk-skill.zip` GitHub Actions artifact, or build it
+locally with `make dist`. Upload that ZIP directly in either web product:
 
 - **ChatGPT:** Plugins → Skills → Create → Upload from your computer.
 - **Claude:** Customize → Skills → Create skill → Upload a skill.
@@ -74,9 +73,10 @@ make dist    # create dist/httk-skill.zip and dist/httk-plugin.zip
 make ci      # run both
 ```
 
-The GitHub Actions workflow runs `make ci` and uploads both ZIP files as build
-artifacts. The archives are deterministic: identical source trees produce
-byte-identical ZIP files.
+The GitHub Actions workflow runs `make ci` and directly uploads
+`httk-skill.zip` and `httk-plugin.zip` as separate, unwrapped artifacts. The
+archives are deterministic: identical source trees produce byte-identical ZIP
+files.
 
 ## Refresh the documentation snapshot
 
