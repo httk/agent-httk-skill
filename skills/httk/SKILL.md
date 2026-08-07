@@ -1,15 +1,9 @@
 ---
-name: httk2
+name: httk
 description: >-
-  Help the user work with httk₂ (the high-throughput toolkit, v2): prepare and
-  run computational campaigns locally or on remote HPC systems (projects,
-  workspaces, workflows, VASP runners, transfers, collection), manage and store
-  results (exact-precision structures, SQL stores, provenance), analyse them
-  (phase diagrams, convex hulls), read/write materials files (CIF, POSCAR,
-  OUTCAR, WAVECAR, …), and disseminate data via files, websites, or an OPTIMADE
-  server. Use whenever the user mentions httk, httk2, httk₂, any httk.* Python
-  package, `httk workflow`/`httk project` commands, or wants to do
-  materials-science high-throughput work with this toolkit.
+  Help with httk₂: run materials campaigns, handle structures and files,
+  store or analyze results, and serve data. Use when the user mentions httk,
+  httk2, or an httk command.
 ---
 
 # httk₂ — the high-throughput toolkit

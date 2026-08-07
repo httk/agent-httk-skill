@@ -1,0 +1,33 @@
+{
+  "name": "httk",
+  "version": "0.1.0",
+  "description": "Work with httk₂ materials campaigns, structures, data, analysis, and serving.",
+  "author": {
+    "name": "httk",
+    "url": "https://github.com/httk"
+  },
+  "homepage": "https://docs.httk.org",
+  "repository": "https://github.com/httk/agent-httk-skill",
+  "keywords": [
+    "httk",
+    "materials-science",
+    "computational-materials",
+    "optimade",
+    "hpc"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "httk₂",
+    "shortDescription": "Work with the httk₂ materials toolkit",
+    "longDescription": "Use httk₂ to run computational materials campaigns, work with structures and files, manage and analyze results, and serve data.",
+    "developerName": "httk",
+    "category": "Developer Tools",
+    "capabilities": [],
+    "websiteURL": "https://docs.httk.org",
+    "defaultPrompt": [
+      "Help me run an httk₂ computational campaign.",
+      "Load and inspect a structure with httk₂.",
+      "Help me serve httk₂ data through OPTIMADE."
+    ]
+  }
+}

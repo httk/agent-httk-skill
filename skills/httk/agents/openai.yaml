@@ -1,0 +1,4 @@
+interface:
+  display_name: "httk₂"
+  short_description: "Work with the httk₂ materials toolkit"
+  default_prompt: "Use $httk to help me complete this httk₂ task."
