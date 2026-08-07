@@ -35,5 +35,7 @@ GNU Affero General Public License. The license's warranty disclaimer and
 limitation of liability apply to the maximum extent permitted by applicable
 law.
 
-Questions about these terms can be submitted through the
+The publisher is Rickard Armiento, who can be contacted at
+[rickard-gpg@armiento.net](mailto:rickard-gpg@armiento.net). Questions can
+also be submitted through the
 [repository issue tracker](https://github.com/httk/agent-httk-skill/issues).

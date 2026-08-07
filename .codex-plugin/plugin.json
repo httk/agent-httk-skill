@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "description": "Work with the high-throughput toolkit (httk₂) to prepare and run large-scale distributed computational projects, and to analyze, store, and disseminate the results.",
   "author": {
-    "name": "httk",
+    "name": "Rickard Armiento",
+    "email": "rickard-gpg@armiento.net",
     "url": "https://github.com/httk"
   },
   "homepage": "https://docs.httk.org",
@@ -21,7 +22,7 @@
     "displayName": "httk",
     "shortDescription": "Large-scale computational projects with httk₂",
     "longDescription": "Work with the high-throughput toolkit (httk₂) to prepare and run large-scale distributed computational projects, and to analyze, store, and disseminate the results.",
-    "developerName": "httk",
+    "developerName": "Rickard Armiento",
     "category": "Developer Tools",
     "capabilities": [],
     "websiteURL": "https://docs.httk.org",

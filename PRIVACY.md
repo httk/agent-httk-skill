@@ -27,6 +27,8 @@ outside the scope of this policy.
 ## Changes and contact
 
 If the skill later adds a service or another feature that handles user data,
-this policy will be updated before that feature is released. Questions about
-this policy can be submitted through the
+this policy will be updated before that feature is released. The publisher is
+Rickard Armiento, who can be contacted at
+[rickard-gpg@armiento.net](mailto:rickard-gpg@armiento.net). Questions can
+also be submitted through the
 [repository issue tracker](https://github.com/httk/agent-httk-skill/issues).
