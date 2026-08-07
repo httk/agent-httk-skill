@@ -1,9 +1,9 @@
 ---
 name: httk
 description: >-
-  Help with httk₂: run materials campaigns, handle structures and files,
-  store or analyze results, and serve data. Use when the user mentions httk,
-  httk2, or an httk command.
+  Work with the high-throughput toolkit (httk₂) to prepare and run large-scale
+  distributed computational projects, and to analyze, store, and disseminate
+  the results.
 ---
 
 # httk₂ — the high-throughput toolkit

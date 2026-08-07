@@ -1,7 +1,7 @@
 {
   "name": "httk",
   "version": "0.1.0",
-  "description": "Work with httk₂ materials campaigns, structures, data, analysis, and serving.",
+  "description": "Work with the high-throughput toolkit (httk₂) to prepare and run large-scale distributed computational projects, and to analyze, store, and disseminate the results.",
   "author": {
     "name": "httk",
     "url": "https://github.com/httk"
@@ -17,9 +17,9 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "httk₂",
-    "shortDescription": "Work with the httk₂ materials toolkit",
-    "longDescription": "Use httk₂ to run computational materials campaigns, work with structures and files, manage and analyze results, and serve data.",
+    "displayName": "httk",
+    "shortDescription": "Large-scale computational projects with httk₂",
+    "longDescription": "Work with the high-throughput toolkit (httk₂) to prepare and run large-scale distributed computational projects, and to analyze, store, and disseminate the results.",
     "developerName": "httk",
     "category": "Developer Tools",
     "capabilities": [],
