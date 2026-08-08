@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build deterministic standalone-skill and OpenAI-plugin ZIP packages."""
+"""Build deterministic skill and cross-client plugin ZIP packages."""
 
 import argparse
 import hashlib
@@ -11,13 +11,29 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILL_DIR = ROOT / "skills" / "httk"
-MANIFEST = ROOT / ".codex-plugin" / "plugin.json"
+OPENAI_MANIFEST = ROOT / ".codex-plugin" / "plugin.json"
+CLAUDE_MANIFEST = ROOT / ".claude-plugin" / "plugin.json"
+AGENT_MANIFEST = ROOT / "plugin.json"
 LICENSE_FILE = ROOT / "LICENSE"
 PRIVACY_FILE = ROOT / "PRIVACY.md"
 TERMS_FILE = ROOT / "TERMS.md"
 DIST_DIR = ROOT / "dist"
 FIXED_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 IGNORED_NAMES = {".DS_Store", "__pycache__"}
+AGENT_PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+CLAUDE_PLUGIN_SCHEMA = "https://json.schemastore.org/claude-code-plugin-manifest.json"
+COMMON_MANIFEST_KEYS = (
+    "name",
+    "version",
+    "description",
+    "author",
+    "homepage",
+    "repository",
+    "license",
+    "keywords",
+)
+AGENT_MANIFEST_KEYS = {"$schema", *COMMON_MANIFEST_KEYS, "extensions"}
+CLAUDE_MANIFEST_KEYS = {"$schema", *COMMON_MANIFEST_KEYS, "displayName"}
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SEMVER_RE = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
@@ -39,14 +55,22 @@ def _files_under(directory: Path) -> list[Path]:
     return sorted(files, key=lambda path: path.relative_to(ROOT).as_posix())
 
 
-def _load_metadata() -> tuple[dict[str, object], str, str]:
-    """Load and validate the plugin manifest and skill frontmatter."""
+def _read_json(path: Path, label: str) -> dict[str, object]:
+    """Read a JSON object from *path* with a useful validation error."""
     try:
-        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
-        raise ValueError(f"missing plugin manifest: {MANIFEST}") from error
+        raise ValueError(f"missing {label}: {path}") from error
     except json.JSONDecodeError as error:
-        raise ValueError(f"invalid plugin manifest JSON: {error}") from error
+        raise ValueError(f"invalid {label} JSON: {error}") from error
+    if not isinstance(value, dict):
+        raise TypeError(f"{label} must contain a JSON object")
+    return value
+
+
+def _load_metadata() -> tuple[dict[str, object], str, str]:
+    """Load and validate every plugin manifest and the skill frontmatter."""
+    manifest = _read_json(OPENAI_MANIFEST, "OpenAI plugin manifest")
 
     required_manifest = (
         "name",
@@ -109,6 +133,37 @@ def _load_metadata() -> tuple[dict[str, object], str, str]:
         raise TypeError("plugin manifest interface.websiteURL must be a string")
     if website is not None and not website.startswith("https://"):
         raise ValueError("plugin manifest interface.websiteURL must be an HTTPS URL")
+
+    claude_manifest = _read_json(CLAUDE_MANIFEST, "Claude plugin manifest")
+    if set(claude_manifest) - CLAUDE_MANIFEST_KEYS:
+        extras = ", ".join(sorted(set(claude_manifest) - CLAUDE_MANIFEST_KEYS))
+        raise ValueError(f"Claude plugin manifest has unsupported fields: {extras}")
+    if claude_manifest.get("$schema") != CLAUDE_PLUGIN_SCHEMA:
+        raise ValueError("Claude plugin manifest must target the canonical schema")
+    if claude_manifest.get("displayName") != "httk":
+        raise ValueError("Claude plugin displayName must be 'httk'")
+
+    agent_manifest = _read_json(AGENT_MANIFEST, "Agent Plugins manifest")
+    if set(agent_manifest) - AGENT_MANIFEST_KEYS:
+        extras = ", ".join(sorted(set(agent_manifest) - AGENT_MANIFEST_KEYS))
+        raise ValueError(f"Agent Plugins manifest has unsupported fields: {extras}")
+    if agent_manifest.get("$schema") != AGENT_PLUGIN_SCHEMA:
+        raise ValueError("Agent Plugins manifest must target version 1.0.0")
+    if not SKILL_NAME_RE.fullmatch(str(agent_manifest.get("name", ""))):
+        raise ValueError("Agent Plugins manifest has an invalid name")
+    extensions = agent_manifest.get("extensions", {})
+    if not isinstance(extensions, dict) or any(
+        not isinstance(value, dict) for value in extensions.values()
+    ):
+        raise TypeError("Agent Plugins extensions must map names to objects")
+
+    for label, other_manifest in (
+        ("Claude", claude_manifest),
+        ("Agent Plugins", agent_manifest),
+    ):
+        for key in COMMON_MANIFEST_KEYS:
+            if other_manifest.get(key) != manifest.get(key):
+                raise ValueError(f"{label} manifest {key} must match OpenAI metadata")
 
     skill_path = SKILL_DIR / "SKILL.md"
     try:
@@ -200,8 +255,9 @@ def validate() -> None:
         raise ValueError("the httk skill has no package files")
     if not (SKILL_DIR / "agents" / "openai.yaml").is_file():
         raise ValueError("missing OpenAI skill UI metadata: agents/openai.yaml")
-    if MANIFEST.is_symlink():
-        raise ValueError("plugin manifest must not be a symlink")
+    for manifest_path in (OPENAI_MANIFEST, CLAUDE_MANIFEST, AGENT_MANIFEST):
+        if manifest_path.is_symlink():
+            raise ValueError(f"plugin manifest must not be a symlink: {manifest_path}")
     if not LICENSE_FILE.is_file():
         raise ValueError(f"missing distribution license: {LICENSE_FILE}")
     if LICENSE_FILE.is_symlink():
@@ -220,8 +276,8 @@ def validate() -> None:
         raise ValueError("SKILL.md belongs under skills/httk, not the plugin root")
 
 
-def build() -> tuple[Path, Path]:
-    """Build and return the portable skill and OpenAI plugin archives."""
+def build() -> tuple[Path, Path, Path, Path]:
+    """Build and return the skill plus OpenAI, Claude, and portable plugins."""
     validate()
     skill_files = _files_under(SKILL_DIR)
 
@@ -231,22 +287,34 @@ def build() -> tuple[Path, Path]:
     ]
     _write_zip(skill_archive, skill_entries)
 
-    plugin_archive = DIST_DIR / "httk-plugin.zip"
-    plugin_files = (
-        _files_under(ROOT / ".codex-plugin")
-        + skill_files
-        + [LICENSE_FILE, PRIVACY_FILE, TERMS_FILE]
-    )
-    plugin_entries = [
-        (path, f"httk/{path.relative_to(ROOT).as_posix()}") for path in plugin_files
-    ]
-    _write_zip(plugin_archive, plugin_entries)
+    common_plugin_files = skill_files + [LICENSE_FILE, PRIVACY_FILE, TERMS_FILE]
 
-    return skill_archive, plugin_archive
+    openai_archive = DIST_DIR / "httk-plugin.zip"
+    openai_files = _files_under(ROOT / ".codex-plugin") + common_plugin_files
+    openai_entries = [
+        (path, f"httk/{path.relative_to(ROOT).as_posix()}") for path in openai_files
+    ]
+    _write_zip(openai_archive, openai_entries)
+
+    claude_archive = DIST_DIR / "httk-claude-plugin.zip"
+    claude_files = _files_under(ROOT / ".claude-plugin") + common_plugin_files
+    claude_entries = [
+        (path, f"httk/{path.relative_to(ROOT).as_posix()}") for path in claude_files
+    ]
+    _write_zip(claude_archive, claude_entries)
+
+    agent_archive = DIST_DIR / "httk-agent-plugin.zip"
+    agent_files = [AGENT_MANIFEST] + common_plugin_files
+    agent_entries = [
+        (path, f"httk/{path.relative_to(ROOT).as_posix()}") for path in agent_files
+    ]
+    _write_zip(agent_archive, agent_entries)
+
+    return skill_archive, openai_archive, claude_archive, agent_archive
 
 
 def main() -> int:
-    """Validate the source tree or build both distribution archives."""
+    """Validate the source tree or build every distribution archive."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--check",

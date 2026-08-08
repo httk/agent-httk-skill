@@ -12,6 +12,9 @@ The user-facing skill name is `httk`. The product remains *httk₂* in prose and
 
 ```text
 .
+├── plugin.json              # Agent Plugins v1 portable manifest
+├── .claude-plugin/
+│   └── plugin.json          # Claude plugin manifest
 ├── .codex-plugin/
 │   └── plugin.json          # OpenAI plugin manifest
 ├── LICENSE                  # GNU AGPL v3-or-later license
@@ -29,10 +32,27 @@ The user-facing skill name is `httk`. The product remains *httk₂* in prose and
 ```
 
 The `skills/httk/` directory follows the open Agent Skills format used by
-ChatGPT, Claude, Codex, Claude Code, and other compatible agents. The
-`.codex-plugin/plugin.json` wrapper is specific to OpenAI's plugin system.
-Both archives include the full `AGPL-3.0-or-later` license. The OpenAI plugin
-also declares the httk brand color and bundled logo assets.
+ChatGPT, Claude, Codex, Claude Code, and other compatible agents. Plugin
+manifests differ between current clients: OpenAI uses `.codex-plugin/`, Claude
+uses `.claude-plugin/`, and the vendor-neutral
+[Agent Plugins v1](https://agent-plugins.org/specification) format uses root
+`plugin.json`. All archives include the full `AGPL-3.0-or-later` license.
+
+## Distribution artifacts
+
+The repository keeps one shared skill source and generates a purpose-specific
+ZIP for each installation contract:
+
+| Artifact | Use |
+| --- | --- |
+| `httk-skill.zip` | Direct skill upload in ChatGPT or Claude |
+| `httk-plugin.zip` | Native OpenAI plugin submission or installation |
+| `httk-claude-plugin.zip` | Native Claude plugin upload, marketplace, or Claude Code |
+| `httk-agent-plugin.zip` | Agent Plugins v1 clients such as ChatGPT, Codex, VS Code, Cursor, GitHub Copilot, and Kiro |
+
+Separate plugin archives avoid depending on one client silently accepting
+another client's manifest. The skill ZIP remains the simplest cross-vendor
+choice when only the `httk` skill is needed.
 
 ## Install the portable skill
 
@@ -73,18 +93,33 @@ testing and submission workflow. Public discovery in ChatGPT requires
 publishing through OpenAI's plugin directory; a public GitHub repository alone
 does not add it to that directory.
 
+## Install the Claude plugin
+
+Use `httk-claude-plugin.zip` for Claude's plugin installation and marketplace
+flows, or extract it and load the `httk/` directory with Claude Code. Its
+`.claude-plugin/plugin.json` passes `claude plugin validate --strict`. For a
+direct upload under Claude's **Skills** tab, use `httk-skill.zip` instead.
+
+## Install the portable Agent Plugin
+
+Use `httk-agent-plugin.zip` with clients that implement
+[Agent Plugins v1](https://agent-plugins.org/). It contains the required root
+`plugin.json` and discovers the same `skills/httk/SKILL.md` through the
+standard fixed `skills/` location. Agent Plugins currently lists ChatGPT and
+Codex among compatible clients but does not list Claude, so the Claude-native
+archive remains necessary for Claude plugin installation.
+
 ## Build and validate
 
 ```console
 make check   # validate source layout and metadata
-make dist    # create dist/httk-skill.zip and dist/httk-plugin.zip
-make ci      # run both
+make dist    # create all four ZIP artifacts under dist/
+make ci      # validate and build every artifact
 ```
 
-The GitHub Actions workflow runs `make ci` and directly uploads
-`httk-skill.zip` and `httk-plugin.zip` as separate, unwrapped artifacts. The
-archives are deterministic: identical source trees produce byte-identical ZIP
-files.
+The GitHub Actions workflow runs `make ci` and directly uploads all four ZIPs
+as separate, unwrapped artifacts. The archives are deterministic: identical
+source trees produce byte-identical ZIP files.
 
 ## Refresh the documentation snapshot
 
