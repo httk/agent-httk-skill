@@ -147,12 +147,12 @@ the job publishes.
 
 ### Creation-time instantiation
 
-`@run.instantiate` is a Python-only creation-time hook, replacing v1's
-`ht.instantiate.py`. `new_job(s)` resolves the workflow on the creating machine,
-after declared inputs are staged and before `job.json` is finalized. Its
-`InstantiateContext` provides the staging `payload`, read-only `inputs`,
-mutable merged `parameters`, and caller `tag`; `suggest_tag` supplies a tag only
-when the caller did not. For example:
+There are two equivalent creation-time forms. For a Python runner,
+`@run.instantiate` is the in-process hook replacing v1's `ht.instantiate.py`.
+`new_job(s)` resolves it on the creating machine, after declared inputs are
+staged and before `job.json` is finalized. Its `InstantiateContext` provides the
+staging `payload`, read-only `inputs`, mutable merged `parameters`, and caller
+`tag`; `suggest_tag` supplies a tag only when the caller did not. For example:
 
 ```python
 @run.instantiate
@@ -163,8 +163,16 @@ def instantiate(ctx):
 ```
 
 The hook may write anywhere below `payload`. It is trusted workflow code: the
-file is code being published and executed anyway, and Bash runners cannot
-declare this hook.
+file is code being published and executed anyway.
+
+A directory package may instead name any executable member in
+`[workflow.instantiate].file`. The framework starts it in the staging payload,
+pre-serializes hook-consumed inputs, and sends the JSON
+`httk-workflow-instantiate` envelope on stdin. The executable returns
+`{"parameters": {...}}` and may return a string `tag`; nonzero exit or malformed
+output aborts submission. This form is language-neutral and has the same
+parameter, tag, payload, and input semantics as the Python hook. The complete
+envelope and serialization rules are normative in {doc}`workflow_packages`.
 
 ## What an attempt reads
 
@@ -234,7 +242,7 @@ no half-outcome ever reaches the manager.
 | Call | Meaning |
 | --- | --- |
 | `a.advance(step, state=..., priority=...)` | run `step` next; `state` is written before publication |
-| `a.gather(step, when=..., count=..., on_impossible=...)` | wait for the children spawned on this attempt, then run `step` |
+| `a.gather(step, when=..., count=..., on_impossible=..., rejoin=...)` | wait for children spawned on this attempt and earlier-activation labels named by `rejoin`, then run `step` |
 | `a.succeed()` | the job is done |
 | `a.retry(reason)` | repeat this activation within the job's attempt budget |
 | `a.pause(reason)` | stop until an operator resumes the job |
@@ -278,10 +286,10 @@ a.spawn(a.workdir / "child", label="prepared", placement="project/children")
 
 ### Gathering them
 
-`a.gather(step)` joins exactly the children spawned on this attempt — the same
-bundle that creates them, which is what makes the join resolvable — and runs
-`step` when the condition holds. `when` is `all_succeeded` (the default),
-`all_terminal`, `any_succeeded`, or `at_least` with `count`. When the condition
+`a.gather(step)` joins the children spawned on this attempt and can add children
+from earlier activations by label with `rejoin=(...)`. It runs `step` when the
+condition holds. `when` is `all_succeeded` (the default), `all_terminal`,
+`any_succeeded`, `any_terminal`, or `at_least` with `count`. When the condition
 can no longer be met the job advances to `on_impossible` if one is named, and
 fails with `dependency_failure` otherwise. A named child the manager cannot
 resolve fails the parent with `dependency_failure` once its grace expires,
@@ -291,9 +299,12 @@ rather than waiting forever.
 
 For a job with `data_mode="transactional"`, `a.put(source, destination)` stages a
 file or a directory and `a.remove(destination, missing_ok=...)` stages a removal.
-The manager applies them exactly once when it commits the outcome. Operation
-identifiers are generated in call order (`op-0001`, `op-0002`, …), so replaying
-the same step produces the same manifest:
+The manager applies them exactly once when it commits the outcome. A `put`
+overwrites its destination whether the source is a file or a directory: when the
+destination already exists in the committed data, a directory put replaces that
+tree, so a step that advances back onto a step and re-puts the same tree
+succeeds rather than failing. Operation identifiers are generated in call order
+(`op-0001`, `op-0002`, …), so replaying the same step produces the same manifest:
 
 ```python
 a.put(a.workdir / "energy.json", "results/energy.json")

@@ -65,7 +65,10 @@ $ httk workflow workspace settings set vasp.command "srun -n 32 vasp_std"
 Scalar settings are exported into each attempt's environment
 (`vasp.command` → `HTTK_VASP_COMMAND`); a real environment variable is a
 deployment override and wins. Scheduler settings (e.g. `slurm.partition`)
-belong to the workspace that runs the jobs.
+belong to the workspace that runs the jobs. Workflows can *declare* the
+settings they consume (`[workflow.environment.*]` — typed, with defaults);
+declared entries are resolution-gated at attempt start and overridable per job
+with `job new --environment NAME=VALUE`.
 
 ## 4. A remote (HPC) workspace
 
@@ -107,7 +110,11 @@ $ httk workflow workspace status kappa:runs
   `--idle` keeps serving). Managers drive jobs through their steps
   (`prepare` → `run` → `publish` for the VASP runners) with the reviewed
   remedy ladder retrying known VASP failure modes.
+- Before submitting a manager, `httk workflow precheck WS` reports readiness
+  read-only: declared-environment resolution, runner reachability, per-job
+  claimability against live managers, missing required inputs.
 - Monitor: `workspace status kappa:runs` (marker counts),
+  `workspace managers WS` (which managers serve it, live or stale),
   `job list [WS]`, `job show JOB`, `job why JOB` (explains a job that is
   *not* progressing), `job log JOB`. While authoring a runner,
   `job debug WS JOB` drives one job in the foreground printing transitions.
@@ -123,12 +130,15 @@ The reverse transfer offers finished jobs on the remote, pulls, imports, and
 retires the sources (rename, never delete; recovery bundles retained). Fetched
 jobs are then ordinary local jobs. `collect` prints one summary per finished
 job; options: `--raw` (mechanical `JobRecord`s), `--jsonl`/`--json`,
-`--allow-job-postprocessor` (trust job-pinned postprocessors),
-`--into STORE` (store collected entries straight into an httk-data store).
+`--degraded` (show only jobs that degraded), `--allow-job-collector` (trust
+job-pinned collect hooks), `--into STORE` (store collected entries straight
+into an httk-data store — degraded jobs are skipped and the exit code says so).
+`httk workflow postprocess WS --script NAME` runs a workflow's curated
+post-collection script (e.g. a relaxation plot).
 
 In Python, `collect()` yields `CollectedJob`s with typed `outputs` per declared
 role, the provenance `Run` record, `products` links, and degradation reasons
-for jobs whose postprocessor was unreachable — a partially collectable sweep
+for jobs whose collect hook was unreachable — a partially collectable sweep
 never dies:
 
 ```python
@@ -179,12 +189,23 @@ serve them over OPTIMADE with httk-serve.
   (`docs/httk-workflow/runtime_helpers.md`) or plain Bash
   (`native_bash_api.md`); `job new --workflow ./my_runner.py` publishes and
   pins it like a packaged one.
-- **Workflow package directory**: a directory with `workflow.toml` declaring
-  id, runner entry/steps, inputs (staged), parameters (knobs), outputs (with
-  `product_of` provenance), plus a `postprocess` hook — the whole directory is
-  published content-addressed (`docs/httk-workflow/workflow_packages.md`).
-- **Existing workflows**: `httk workflow import pwd|cwl FILE` runs Python
-  Workflow Definition / CWL workflows as jobs without rewriting.
-- **httk v1 task templates**: `httk workflow v1 …` runs them on the v2 engine
-  (`docs/httk-workflow/v1_compatibility.md`); this is the only v1 surface to
-  recommend.
+- **Workflow package directory**: a directory with `httk_workflow.toml`
+  declaring id, runner entry/steps, inputs (staged; `required` by default when
+  typed), parameters (knobs), `[workflow.environment.*]` (typed
+  workspace-setting consumption), outputs (with `product_of` provenance),
+  optional `[workflow.instantiate]`/`[workflow.collect]` hooks (Python or any
+  `+x` executable speaking the JSON envelope), and `[workflow.postprocess.NAME]`
+  curated scripts — the whole directory is published content-addressed
+  (`docs/httk-workflow/workflow_packages.md`).
+- **Runners in other languages**: the SDK exists in Python, Bash, C, Fortran,
+  and Rust (`native_bash_api.md`, `native_c_api.md`, `native_fortran_api.md`,
+  `native_rust_api.md`) — the native SDKs are bridge clients with identical
+  semantics.
+- **Existing workflow languages**: a manifest (or bare document with
+  `--format cwl|pwd|jobflow|httk-v1`) runs CWL, Python Workflow Definition,
+  jobflow/atomate2 (`maker = "atomate2…:RelaxMaker"`, with real DAG
+  parallelism as child jobs), or converted httk v1 template packages without
+  rewriting (`docs/httk-workflow/workflow_languages.md`).
+- **Finished v1 trees**: `httk workflow v1 collect ROOT --workflow-dir PKG`
+  harvests already-computed v1 runs (`docs/httk-workflow/v1_compatibility.md`);
+  this is the only v1 surface to recommend.

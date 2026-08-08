@@ -85,19 +85,22 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
 - **Workflows**: packaged providers (`vasp-relax`, `httk.vasp.static`,
   `httk.vasp.relax-static`), a single runner file
   (`--workflow ./my_runner.py`), or a **workflow package directory** with
-  `workflow.toml` (declared inputs/outputs/parameters, hooks, any-language
+  `httk_workflow.toml` (declared inputs/outputs/parameters/environment,
+  instantiate/collect hooks as Python or any executable, any-language
   runner) — published content-addressed and digest-pinned per job.
 - Lifecycle: **instantiate → run → collect**, with `postprocess` the
   workflow-owned substep of collect. *Inputs* are declared staged objects;
   *parameters* are opaque knobs (`--parameter k=v`, `Attempt.parameter()`).
 - SDK: `Runner`/`Attempt` for authoring runners (`docs snapshot:
-  runtime_helpers.md`, `native_bash_api.md` for Bash); `Workspace`,
-  `new_jobs()` streaming job creation; `collect()` yields `CollectedJob`
-  (outputs, provenance `Run`, products); `job_records()` the mechanical
-  readout.
-- `httk workflow import pwd|cwl` runs Python Workflow Definition / CWL
-  workflows unmodified; `httk workflow v1 …` runs httk v1 task templates on
-  the v2 engine (the only supported v1 surface).
+  runtime_helpers.md`; Bash/C/Fortran/Rust in `native_*_api.md` — bridge
+  clients with identical semantics); `Workspace`, `new_jobs()` streaming job
+  creation; `collect()` yields `CollectedJob` (outputs, provenance `Run`,
+  products); `job_records()` the mechanical readout.
+- **Workflow languages** (`workflow_languages.md`): CWL, Python Workflow
+  Definition, jobflow/atomate2 Makers (DAG-parallel as child jobs), and
+  converted httk v1 template packages run via a manifest `language =` key or
+  `job new --format LANG` on a bare document. Finished v1 trees are harvested
+  with `httk workflow v1 collect` (the only supported v1 surface).
 - Provenance: `run_record(job_record)` → `httk.core.Run`; collect assembles
   provenance in the framework.
 

@@ -13,6 +13,34 @@ defined in the packaged library, or when a public member of `Runner` or
 authoring feature that is not in this table does not exist as far as the
 documentation is concerned, and adding one to the code means adding a row here.
 
+A third language SDK, {doc}`in C <native_c_api>`, is a bridge client of this same
+surface: like the Bash functions, each `httk_workflow_*` C function is one
+invocation of one {py:mod}`httk.workflow.shell_bridge` subcommand, so a C runner
+publishes the same bytes too. Its own function-by-function mapping to the Python
+and Bash columns below lives in {doc}`native_c_api`, which is the reference and
+the foundation the Fortran bindings build on.
+
+A fourth SDK, {doc}`in modern Fortran <native_fortran_api>`, adds no new bridge
+protocol at all: it is `iso_c_binding` bindings over that C library plus an
+idiomatic Fortran module, so the C `httk_workflow_main` owns dispatch and every
+verb reaches the same subcommand. A Fortran runner therefore publishes the same
+bytes as the C, Bash, and Python runners; its Fortran-to-C mapping lives in
+{doc}`native_fortran_api`.
+
+A fifth SDK, {doc}`in safe Rust <native_rust_api>`, is a bridge client of this
+same surface, but — unlike the Fortran one — it is not FFI over the C library: it
+is a std-only, dependency-free reimplementation of the same thin pattern in safe
+Rust, so `cargo build --offline` needs no network. Each `Attempt` method is one
+invocation of one {py:mod}`httk.workflow.shell_bridge` subcommand, so a Rust
+runner publishes the same bytes too; its Rust-to-C mapping lives in
+{doc}`native_rust_api`.
+
+One thing the SDKs do *not* share is the `error.json` breadcrumb's `exception`
+label for a handler that ends abnormally: Bash records `ShellError`, C records
+`CError`, Rust records `RustError`, and the Fortran bindings inherit `CError`
+because they end through the C library. The label names the language a handler
+died in; the outcome the manager acts on is identical.
+
 Both languages perform their work through exactly one implementation — the Bash
 functions are thin calls into {py:mod}`httk.workflow.shell_bridge`, which drives
 the same `Attempt` object the Python SDK exposes — so a Bash runner and a Python
@@ -46,7 +74,7 @@ language, and compares everything both left behind.
 | `Runner.inputs` | — | Immutable creation-time staged-input declarations. | the optional `inputs` member of the description |
 | `Runner.has_instantiate` | — | Whether a creation-time instantiate hook is registered. | none |
 | `Runner.step` | **step_&lt;name&gt;** function | Register one handler for one step; the name is the function's unless overridden. | none |
-| `Runner.instantiate` | — | Register the Python-only creation-time hook receiving `scaffold.InstantiateContext`. | none |
+| `Runner.instantiate` | — | Register the in-process Python creation-time hook receiving `scaffold.InstantiateContext`; directory packages may use the language-neutral executable hook contract instead. | none for the Python form; JSON stdin/stdout for the executable form |
 | `Runner.steps` | — | Every registered step name, against which every step name an outcome publishes is checked. | `.httk-job/runner-steps.json`, rewritten when the set changes |
 | `Runner.description` | `httk_workflow_main --describe` | Print this runner's own description and touch nothing else. | one `httk-workflow-runner-description` version 1 object on stdout |
 | `Runner.main` | `httk_workflow_main` | Dispatch the step the manager asked for, and turn every ending of it into exactly one outcome. | the published `outcome.ready/` of one attempt |
@@ -66,6 +94,8 @@ language, and compares everything both left behind.
 | `Attempt.parameters` | `httk_workflow_parameter` | The opaque implementation `parameters` object of the job. | `job.json` → `parameters` |
 | `Attempt.parameter` | `httk_workflow_parameter` | One parameter, with an optional default; without one, a missing parameter raises `KeyError` in Python and exits 1 in Bash. | `job.json` → `parameters` |
 | `Attempt.setting` | `httk_workflow_setting` | One application setting, resolved most-specific first: the job's `parameters[name]`, then the environment variable `HTTK_` + the dotted name upper-cased with dots as underscores (`vasp.command` → `HTTK_VASP_COMMAND`), then the workspace settings, then the default; without one, an absent setting returns `None` in Python and exits 1 in Bash. | `job.json` → `parameters`, manager-built attempt environment, `context.json` → `settings` |
+| `Attempt.environment` | `httk_workflow_environment` | One declared workflow environment value. The start gate resolves every entry before a handler runs and snapshots the result for the attempt; direct reads retain the override → environment variable → workspace setting → manifest default → call-default order. An undeclared or unresolved value raises `KeyError` in Python and exits 1 in Bash. | `job.json` → `environment`, manager-built attempt environment, `context.json` → `settings` |
+| `Runner.main` | `httk_workflow_main` | Before dispatch, a declared environment is resolved eagerly. Missing or ill-typed values publish non-retryable `environment_unresolved`; successful changes are recorded with their source and logged once after the handler completes. Describe mode and jobs without declarations are unchanged. | `fail` outcome, `.httk-job/declarations/environment.json`, `.httk-runner/runlog.jsonl` |
 | `Attempt.state` | — | The job's private JSON state mapping, surviving every advance, every retry, and every isolated workdir. | `.httk-job/state.json` |
 | `JobState.read` | `httk_workflow_state_get` | Read the whole state document, or in Bash one key; an unset key exits 1. | `.httk-job/state.json` |
 | `JobState.set` | `httk_workflow_state_set` | Store one JSON value in one atomic replace. | `.httk-job/state.json` |
@@ -89,9 +119,9 @@ language, and compares everything both left behind.
 | `Attempt.children` | `httk_workflow_children` | The children observed by the join that started this activation; empty when no join did, so it can be read unconditionally. | `context.json` → `children` |
 | `ChildResult` | `httk_workflow_child` | One observed child by label: its state, identity, failure, and absolute payload, workdir and data paths. | `context.json` → `children[]` |
 | `Attempt.advance` | `httk_workflow_advance` | Publish a new activation of this job at another step, optionally merging state first so the next step finds what decided to run it. | outcome action `advance` |
-| `Attempt.gather` | `httk_workflow_gather` | Wait for the children spawned on this attempt, then run a step. `when` is `all_succeeded` (default), `all_terminal`, `any_succeeded`, or `at_least` with `count`; when the condition can no longer be met the job advances to `on_impossible` if one is named, and fails with `dependency_failure` otherwise. | outcome action `wait` with a `join` |
+| `Attempt.gather` | `httk_workflow_gather` | Python `a.gather(step, *, when="all_succeeded", count=None, on_impossible=None, rejoin=(), priority=None)` waits for children spawned on this attempt plus earlier-activation labels named by `rejoin`; Bash waits for children spawned on this attempt. `when` is `all_succeeded`, `all_terminal`, `any_succeeded`, `any_terminal`, or `at_least` with `count`; when the condition can no longer be met the job advances to `on_impossible` if one is named, and fails with `dependency_failure` otherwise. `priority` optionally changes the join activation priority. | outcome action `wait` with a `join` |
 | `Attempt.succeed` | `httk_workflow_succeed` | Publish the successful completion of this job. | outcome action `succeed` |
-| `Attempt.fail` | `httk_workflow_fail` | Publish a structured terminal failure: `code` is the token `retry_on` lists, and `retryable` declares that repeating could help. | outcome action `fail` with a `failure` |
+| `Attempt.fail` | `httk_workflow_fail` | Publish a structured terminal failure: `code` is the token `retry_on` lists, `retryable` declares that repeating could help, and `priority` optionally changes the terminal priority. | outcome action `fail` with a `failure` |
 | `Attempt.retry` | `httk_workflow_retry` | Ask for another attempt of this same activation. | outcome action `retry` |
 | `Attempt.pause` | `httk_workflow_pause` | Pause this job until an operator resumes it. | outcome action `pause` |
 | `Attempt.published` | — | Whether this attempt already published; a second outcome is refused before anything of the first is disturbed. | the existence of `outcome.ready/` |

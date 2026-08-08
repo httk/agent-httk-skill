@@ -1390,6 +1390,63 @@ rather than as a protocol violation. The ones this implementation exports are:
 HTTK_WORKFLOW_VASP_BASH_API=<absolute native VASP Bash library>
 ```
 
+### Executable workflow-hook wire formats
+
+Directory-package instantiate and collect hooks that are not `.py` use these
+UTF-8 JSON subprocess formats. The package manifest and hook trust rules are
+specified in {doc}`workflow_packages`; these are the wire-format catalogue.
+
+An executable instantiate hook receives one document on stdin, with its current
+working directory set to the staging payload:
+
+```json
+{
+  "format": "httk-workflow-instantiate",
+  "format_version": 1,
+  "workflow": "example.relax",
+  "tag": "silicon",
+  "parameters": {"cutoff": 520},
+  "inputs": {
+    "structure": {"kind": "file", "path": "files/inputs/structure/POSCAR"},
+    "settings": {"kind": "value", "value": {"kpoints": [4, 4, 4]}}
+  }
+}
+```
+
+Its stdout is one JSON object containing `parameters` and, optionally, `tag`.
+An executable collect hook receives JSONL: the first line is exactly
+
+```json
+{"format": "httk-workflow-collect-stream", "format_version": 1}
+```
+
+and each later line is exactly one request envelope:
+
+```json
+{"record": {"workspace_id": "workspace", "job_id": "job-1", "state": "succeeded", "job": {}}}
+```
+
+The record value is the complete `JobRecord.as_mapping()` mapping; the example
+shows only the envelope shape. The hook writes one ordered response per record,
+using either:
+
+```json
+{"job_id": "job-1", "outputs": {"energy": {"value": 3.14}}}
+```
+
+or:
+
+```json
+{"job_id": "job-1", "error": "could not read the result"}
+```
+
+The Python hook fast paths do not cross this subprocess boundary, but preserve
+the same successful-path hook and assembly semantics. Collector failure handling
+is intentionally different: registered Python collector exceptions abort
+iteration, while executable responses can degrade jobs independently.
+`httk.workflow.hookapi` provides `instantiate_main()` and `collect_main()` for
+Python executables implementing these formats.
+
 An unclean persistent retry context is:
 
 ```json
@@ -1861,6 +1918,7 @@ Supported conditions are:
 - `all_succeeded`;
 - `all_terminal`;
 - `any_succeeded`;
+- `any_terminal`;
 - `at_least`, with a successful-child count.
 
 The waiting journal frame contains each exact child identity, its spawn
@@ -1940,6 +1998,7 @@ contains enough terminal nonsuccess states to make the condition false:
 - `any_succeeded`: every child is terminal and none succeeded;
 - `at_least N`: succeeded children plus nonterminal children is less than `N`;
 - `all_terminal`: never impossible merely because a child failed.
+- `any_terminal`: never impossible.
 
 A manually continuable `failed` child still counts as terminal nonsuccess in
 the current vector. If success is currently impossible, `on_impossible`
@@ -2034,7 +2093,9 @@ Codes emitted by this manager itself are reserved. Those currently in use are:
 - `budget_exhausted` — an attempt or activation budget exceeded;
 - `dependency_failure` — a join became impossible, or a named join child stayed
   unresolvable past the manager's bounded grace;
-- `transaction_corruption` — a published transaction could not be replayed;
+- `transaction_corruption` — the replay of a published transaction failed
+  midway; a transaction manifest or outcome the manager cannot parse is a
+  `protocol_error`, not this;
 - `runner_unavailable` — a runner outside the payload could not be resolved,
   staged, or entered at all;
 - `runner_mismatch` — the staged copy of such a runner did not match the
@@ -2584,8 +2645,9 @@ rule.
 
 ## Relationship to *httk* v1
 
-The `httk-v1` runner executor and `httk-v1-taskmanager` compatibility executor
-implement the following mapping for instantiated *httk* v1 task templates:
+The packaged `httk.workflow.languages.httk_v1.v1_runner` is an ordinary
+installed `path` runner used by converted packages. The normal manager applies
+the following mapping for instantiated *httk* v1 task templates:
 
 | *httk* v1 | This protocol |
 | --- | --- |
@@ -2620,13 +2682,14 @@ without those grandchildren, so a migrated workflow that requires subtree
 completion must make the child join its own descendants before succeeding or
 name the additional jobs explicitly in the ancestor's join.
 
-The shipped adapter makes each discovered direct subtask an explicit child.
-Each such child applies the same rule recursively, so ordinary nested *httk* v1 task
-trees retain subtree completion. It uses `all_terminal`, rather than
-`all_succeeded`, because *httk* v1 resumed a `waitsubtasks` parent once no descendant
-remained in an active state; broken descendants did not keep it waiting.
-Legacy `ht.task.*.<status>` symlinks are derived operator views only. The *httk₂*
-marker and journal remain authoritative.
+The shipped runner makes each discovered direct subtask an explicit native
+child. Each such child applies the same rule recursively, so ordinary nested
+*httk* v1 task trees retain subtree completion. It uses `all_terminal`, rather
+than `all_succeeded`, because *httk* v1 resumed a `waitsubtasks` parent once no
+descendant remained in an active state; broken descendants did not keep it
+waiting. The original legacy task directories remain in place; they are not
+mirrored with symlinks. Native child payloads, markers, and journal state are
+authoritative, and state-based deduplication prevents rediscovering a child.
 
 The principal improvements are:
 

@@ -16,16 +16,15 @@ package.** It is one nested command tree: each group answers `--help`, each
 command answers `--help`, and a mistyped action is reported by the group it was
 mistyped in.
 
-Two further executables are installed, and both are thin aliases that reuse the
-canonical tree's own parsers and handlers rather than a second implementation
-of it. They remain supported; prefer the canonical spelling in new work and in
-anything you write down.
+One further executable is installed as a thin alias that reuses the canonical
+tree's own parsers and handlers rather than a second implementation. It remains
+supported; prefer the canonical spelling in new work and in anything you write
+down.
 
 | Executable | Alias of | Kept for |
 | --- | --- | --- |
 | `httk workflow` | — | **canonical** |
 | `httk-taskmanager` | `httk workflow workspace`/`job`/`manager` leaves | operators and scripts predating `httk workflow` |
-| `httk-v1-taskmanager` | `httk workflow v1` | *httk* v1 compatibility operators |
 
 ```text
 httk-taskmanager init     ->  httk workflow workspace init
@@ -33,28 +32,25 @@ httk-taskmanager submit   ->  httk workflow job submit
 httk-taskmanager run      ->  httk workflow manager run
 httk-taskmanager status   ->  httk workflow workspace status
 httk-taskmanager request  ->  httk workflow job request
-
-httk-v1-taskmanager prepare  ->  httk workflow v1 prepare
-httk-v1-taskmanager submit   ->  httk workflow v1 submit
-httk-v1-taskmanager run      ->  httk workflow v1 run
 ```
 
-Both aliases keep their own flags, including the `--durable`/`--no-durable`
-switch they have always accepted *before* the subcommand. The canonical tree
+The alias keeps its own flags, including the `--durable`/`--no-durable`
+switch it has always accepted *before* the subcommand. The canonical tree
 carries the same switch on the leaf that acts on it, so both spellings work.
 
 ## The complete tree
 
 ```text
-httk workflow workspace  init | list | default | move | forget | delete | status | settings show | settings set | settings unset | policy show | policy set | fsck | gc | unlock
+httk workflow workspace  init | list | default | move | forget | delete | status | managers | settings show | settings set | settings unset | policy show | policy set | fsck | gc | unlock
 httk workflow runner     publish | describe
 httk workflow job        new | submit | request | list | show | log | why | debug
 httk workflow describe   TARGET [--json]
-httk workflow import     pwd | cwl
+httk workflow precheck   [WORKSPACE] [--placement P] [--json]
 httk workflow collect
+httk workflow postprocess
 httk workflow manager    run
 httk workflow campaign   init | show | submit | collect | start-managers
-httk workflow v1         prepare | submit | run
+httk workflow v1         collect
 httk workflow config     init | show | set | unset | import-v1
 httk workflow project    init | import-v1 | show | doctor | manifest create | manifest verify
 httk workflow remote     list | add | configure | install | import-v1 | show | remove
@@ -89,6 +85,7 @@ them to a remote workspace for execution.
 | `workspace forget NAME` | deregister a name, leaving the workspace on disk | |
 | `workspace delete NAME` | destroy the workspace and deregister it | `--force` (required) |
 | `workspace status NAME` | summarize the authoritative markers (remote: over the adapter) | `--json` |
+| `workspace managers NAME` | list the managers serving the workspace, live or stale | `--json` |
 | `workspace settings show NAME [KEY]` | print the application settings, or one | `--json` |
 | `workspace settings set NAME KEY VALUE` | store one application setting | |
 | `workspace settings unset NAME KEY` | remove one application setting | |
@@ -133,7 +130,7 @@ the marker is an honest inference rather than provenance metadata.
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `job new WORKSPACE` | scaffold and submit jobs from a workflow | `--workflow` or `--workflow-dir` (one required), `--parameter`, `--input`, `--input-from`, `--file`, `--tag`, `--placement`, `--json` |
+| `job new WORKSPACE` | scaffold and submit jobs from a workflow | `--workflow` or `--workflow-dir` (one required), `--parameter`, `--environment`, `--format`, `--input`, `--input-from`, `--file`, `--tag`, `--placement`, `--json` |
 | `job submit WORKSPACE SOURCE` | submit one prepared payload directory | `--placement` (required), `--move` |
 | `job request WORKSPACE JOB_ID ACTION` | publish an operator request | `--operator`, `--reason` (both required), `--priority`, `--step`, `--force` |
 | `job list WORKSPACE` | list the jobs as a cheap table | `--kind`, `--placement`, `--json` |
@@ -144,25 +141,53 @@ the marker is an honest inference rather than provenance metadata.
 
 `JOB` is a job UUID, a `tag--uuid` job key, or any unique prefix of either.
 
-### `import` — workflows written in another language
+Besides the per-state claim preconditions, `job why` also folds in, where they
+apply: a **runner-allowlist refusal** when a live manager's `runner_modules` or
+search paths cannot reach the job's runner (so a claim would fail with
+`runner_unavailable`); an **attempt-history** line — `N attempts across M
+activations at step 'X'; K after unclean exits` — summarizing the journal; a
+**flapping** flag when an unlimited-budget job has attempted well past a small
+threshold without progressing; and any **pending** operator request still in
+`requests/ready`, or the reason recorded for the most recent **retired** one.
 
-| Command | What it does | Notable options |
-| --- | --- | --- |
-| `import pwd WORKSPACE DOCUMENT` | import one Python Workflow Definition document as one job | `--module`, `--module-path`, `--input`, `--allow-module`, `--attempts`, `--allow-unknown-version`, `--placement`, `--tag`, `--name`, `--priority`, `--data-mode`, `--json` |
-| `import cwl WORKSPACE WORKFLOW INPUTS` | import one CWL workflow or command-line tool as one job | `--placement`, `--tag`, `--name`, `--priority`, `--data-mode`, `--json` |
-
-Both print one tab-separated `job_key<TAB>payload` line, or a JSON report with
-`--json`, exactly as `job new` does. Importing is one way, and neither writes a
-runner file: the job references the packaged runner of the format through the
-reserved installed form. `import cwl` needs `pip install httk-workflow[cwl]` on
-the machine that imports, and nothing extra on the machine that runs the result.
-See {doc}`importing_workflows`.
+Language documents use `job new --workflow DOCUMENT`; see
+{doc}`workflow_languages` for PWD, CWL, jobflow, and httk-v1 details.
 
 ### `collect` — the finished jobs, as summaries
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `collect WORKSPACE` | stream one collected summary per finished job | `--state`, `--placement`, `--raw`, `--allow-job-postprocessor`, `--into PATH` |
+| `collect WORKSPACE` | stream one collected summary per finished job | `--state`, `--placement`, `--degraded`, `--raw`, `--allow-job-collector`, `--into PATH` |
+
+`--degraded` prints only the degraded per-job lines; the trailing summary still
+counts the whole sweep, so a filtered listing never hides how many jobs ran. It
+cannot be combined with `--raw`.
+
+Every form except the pure-array `--json` ends with one
+`httk-workflow-collect-summary` line counting `collected`, `degraded`,
+`unfulfilled_roles`, `storage_errors`, and `skipped_unreadable`. The command
+exits nonzero when any job was degraded, failed to store, or was skipped for an
+unreadable `job.json`; unfulfilled roles alone keep the exit at `0`. See
+{doc}`collecting` for the triage members and `--into` partial-state semantics.
+
+### postprocess — run a curated script
+
+| Command | What it does | Notable options |
+| --- | --- | --- |
+| postprocess WORKSPACE | run one declared script for each selected collected job | --script NAME (required), --workflow-dir PKG, --state, --placement, --timeout, --json |
+
+~~~console
+httk workflow postprocess WS --script relaxation-report
+httk workflow postprocess WS --script report --workflow-dir ./my-workflow --json
+~~~
+
+With --json, each result is one JSON object in the
+httk-workflow-postprocess wire format, version 1, with workspace_id, job_id,
+job_key, script, and either returncode plus output_dir, or an error. Without
+--json, each result is tab-separated as
+job_key<TAB>script<TAB>returncode<TAB>output_dir; errors use ERROR in the
+return-code field. The command exits 0 only when every selected script ran
+and returned 0; any resolution error or nonzero script return exits 1.
 
 ### `describe` — inspect a workflow without publishing it
 
@@ -170,37 +195,103 @@ See {doc}`importing_workflows`.
 | --- | --- | --- |
 | `describe TARGET` | describe a registered id/alias, runner file, or package directory | `--json` |
 
+Resolving a workflow trusts a directory package's manifest and never executes
+anything. `describe` is a report, so for a directory package it additionally
+runs the runner entry's `--describe` (with any surrounding attempt context
+stripped) and prints a prominent `WARNING: step drift` line — and a
+`manifest_step_drift` field in `--json` — when the manifest's declared `steps`
+disagree with what the runner reports. The drift is reported, not gated:
+`describe` still exits `0`.
+
 Directory package authoring, manifest validation, publication, and hook trust
 tiers are documented in {doc}`workflow_packages`.
+
+### `precheck` — readiness before an attempt
+
+```console
+httk workflow precheck WORKSPACE
+httk workflow precheck WORKSPACE --json
+httk workflow precheck WORKSPACE --runner-search-path PATH --runner-search-path OTHER
+```
+
+This read-only report checks `submitted`, `ready`, `waiting`, and `paused` jobs:
+each declared environment entry is shown as `resolved`, `default`, or
+`unresolved`, with its source and setting name, and each runner reference is
+checked for availability and its pinned digest. `--placement` restricts the
+scan. The authoritative environment gate remains at attempt start;
+precheck is advisory and can become stale. Its `HTTK_*` environment layer is
+the current process environment, which may differ on compute nodes; JSON also
+carries this caveat once as `environment_variable_caveat`.
+Use repeatable `--runner-search-path` options to check installed runner
+references. A plain installed reference without one is reported as
+`indeterminate`, not as a broken runner, and does not by itself produce exit
+status `1`.
+
+Beyond the environment and runner reference, precheck measures each pending job
+against the **live managers** the workspace actually publishes:
+
+- **claimability** — a job no live manager can claim is a problem naming the
+  closest manager's unmet requirements exactly as `job why` renders them (for
+  example `lacks capabilities docker`, or `does not allow runner module …`).
+  Runner modules are validated against each manager's real `runner_modules`
+  allowlist, not a fixed default. When no manager is live at all, one
+  workspace-level `manager_notice` replaces per-job claim findings, and does not
+  fail the run;
+- **language engine** — a language job (the collect gate's pair,
+  `workflow_realization = language` with a `workflow_language`) has each module
+  that language needs checked (without importing it) and names the pip extra to
+  install, for example `pip install httk-workflow[jobflow]`. Because the extras
+  belong on the machine that runs the job, an absent module is only a problem
+  when no live manager serves the job's executor; when one does, the check is
+  `indeterminate` (the serving manager's environment may differ, verified only
+  at run time) and does not fail the run;
+- **required inputs** — a declared required input with a staged `destination`
+  must still be a member of the payload; a relocated or removed one is a
+  problem.
+- **step** — a job whose next step is not one of the runner's recorded
+  `runner_steps` (written into the state frame after the runner's first attempt)
+  is a problem. This is frame-based only; the runner is never executed, so a job
+  that has not recorded its steps yet is never faulted. The frame reflects the
+  last attempt's runner, so the check is advisory: a mutated payload runner may
+  implement a different set by the next attempt.
+
+The command exits `1` for an unresolved environment, a broken runner reference,
+an unclaimable job, a missing-and-unserved language engine, a missing required
+input, or a step outside the runner's recorded set; the `indeterminate` cases
+stay non-failing. The JSON summary carries `claim_problems`,
+`language_problems`, `language_indeterminate`, `input_problems`, and
+`step_problems` alongside the environment and runner counts.
 
 ### `manager` — the process that runs the jobs
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `run [WORKSPACE]` | run a manager until idle, or keep serving with `--idle` | `--workers`, `--count`, `--pool`, `--idle`, `--idle-timeout`, `--adapter-timeout`, `--log-level` |
-| `manager run WORKSPACE` | run a manager locally, or submit managers to a remote workspace's scheduler | `--workers`, `--count`, `--pool`, `--capability`, `--idle`, `--idle-timeout`, `--lease-seconds`, `--drain-timeout`, `--gc-interval`, `--runner-search-path`, `--adapter-timeout`, `--log-level`, `--log-file`, `--json-logs` |
+| `run [WORKSPACE]` | run a manager until idle, or keep serving with `--idle` | `--workers`, `--count`, `--pool`, `--capability`, `--placement-prefix`, `--idle`, `--idle-timeout`, `--adapter-timeout`, `--log-level` |
+| `manager run WORKSPACE` | run a manager locally, or submit managers to a remote workspace's scheduler | `--workers`, `--count`, `--pool`, `--capability`, `--placement-prefix`, `--idle`, `--idle-timeout`, `--join-grace-seconds`, `--lease-seconds`, `--drain-timeout`, `--gc-interval`, `--runner-search-path`, `--adapter-timeout`, `--log-level`, `--log-file`, `--json-logs` |
 
 `manager run` follows the binding: a local workspace runs the manager in this
 process as before, and a remote workspace submits managers through the remote's
 scheduler over its adapter — `--count N` managers, `--workers N` workers each.
-Both manager commands run until idle by default; `--idle` keeps serving. This is
-the command that subsumed the old `transfer start-manager`.
+Both manager commands run until idle by default; `--idle` keeps serving. The
+top-level `run` takes `--capability` and `--placement-prefix` too, so the quickstart command can
+claim a capability-gated job and scope its scan; without them a gated job would
+stay unclaimable. Both print one startup banner and, on idle exit, one summary
+line that names any jobs left not claimable by the pools, capabilities, or
+executors this manager serves, or left committing with an unreadable definition. This is the command that subsumed the old
+`transfer start-manager`.
 
-### `v1` — *httk* v1 task templates on the v2 engine
+### `v1` — harvesting finished *httk* v1 trees
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `v1 prepare SOURCE DESTINATION` | turn an instantiated v1 task into a payload | `--taskset` (default `default`), `--tag`, `--step`, `--priority`, `--attempts` |
-| `v1 submit WORKSPACE SOURCE` | prepare and submit one v1 task | `--placement` (required), `--taskset` (default `default`) |
-| `v1 run WORKSPACE` | run only the httk-v1 jobs of a workspace | `--taskset` (default `any`), `--wrap`, `--task-timeout`, `--workers`, `--idle`, `--idle-timeout` |
+| `v1 collect ROOT` | harvest a pre-existing v1 result tree | `--workflow-dir PKG`, `--into PATH` |
 
-`--taskset` deliberately defaults differently between siblings, because the
-siblings mean different things by it. `prepare` and `submit` **assign** a task
-set to the job they create, so their default is the ordinary `default` set;
-`run` **filters** the jobs it will claim, so its default is `any`, which accepts
-every set. Unifying them would either strand every submitted job under a manager
-filtering for one set, or quietly file every prepared task under a set literally
-named `any`.
+`v1 collect` ends with one `httk-workflow-v1-collect-summary` line reporting
+`finished`, `unfinished_by_status` (tasks the name regex matched that were not
+`.finished`, keyed by status), and `skipped_no_rundir` (finished tasks with no
+dated run directory). Each collected report carries `identity_stable`: `false`
+for a task whose identity is path-derived because it has no `ht.manifest`, and a
+warning names how many such tasks a harvest saw.
 
 ### `config` — the per-user configuration and identity
 
@@ -284,6 +375,11 @@ which stay in this filesystem follows entirely from where the two are bound:
 kinds a fetch moves, `--placement` restricts it to one subtree,
 `--destination-placement` lands the jobs somewhere other than the placement they
 had, and `--adapter-timeout` bounds every adapter operation the move runs.
+`--strict-environment` blocks before state moves when a checked destination
+environment is unresolved or cannot be read. Transfer checks intentionally use
+job overrides, destination settings, and declared defaults; they do not use the
+client process environment as a destination substitute. A remote settings read
+that is unavailable produces one immediate warning in non-strict mode.
 
 ### The protocol spellings, and what is gone
 
@@ -337,7 +433,7 @@ job again, or edit the one `runner.path` member.
 | `campaign init` | define the project's partition map and assignment policy | `--partition NAME=WORKSPACE`, `--assignment` |
 | `campaign show` | show the partition map | `--json` |
 | `campaign submit` | assign one root job to a partition and submit it there | `--workflow` (required), `--key` (required), `--index`, `--input`, `--input-from`, `--parameter`, `--file`, `--tag`, `--placement`, `--priority`, `--name`, `--json` |
-| `campaign collect` | collect every partition, one workspace after another | `--partition`, `--state`, `--placement`, `--json` |
+| `campaign collect` | collect every partition, one workspace after another | `--partition`, `--state`, `--placement`, `--raw`, `--allow-job-collector`, `--into PATH` |
 | `campaign start-managers` | start a manager per selected partition | `--partition`, `--workers`, `--count`, `--adapter-timeout` |
 
 A campaign is a thin convention over the *registered workspaces* above: a
@@ -349,7 +445,8 @@ children always inherit their parent's workspace. See {doc}`campaigns`.
 ## Creating jobs
 
 `job new` scaffolds and submits jobs from a workflow — a registered workflow id,
-alias, or the path of a runner file — and needs no prepared payload:
+alias, runner file, package directory, or bare language document — and needs no
+prepared payload:
 
 ```console
 httk workflow job new WORKSPACE --workflow vasp-relax --input structure=POSCAR --tag silicon
@@ -357,31 +454,55 @@ httk workflow job new WORKSPACE --workflow vasp-relax --input-from structure str
 httk workflow job new WORKSPACE --workflow ./my_runner.py --step characterize --parameter sites=8
 ```
 
-`--parameter NAME=VALUE` supplies an opaque implementation knob; `--input-from
+`--parameter NAME=VALUE` supplies an opaque implementation knob;
+`--environment NAME=VALUE` overrides one declared workflow environment entry;
+and `--format LANG` selects the language of a bare document or directory.
+`--input-from
 NAME SOURCE...` loads a file or the readable files in a directory, realizes the
-declared payload destination, and creates one job per file for a batch. `--file
+declared payload destination, and creates one job per file for a batch. A
+directory file with no registered reader whose name is a structure convention
+(`POSCAR*`, `*.vasp`) is read as POSCAR; any remaining unreadable files are
+skipped, and one stderr line names them:
+`httk workflow: skipped N of M files in DIR (no registered reader): …`. After a
+batch, one final stderr line reports `submitted N jobs`; if a batch fails partway
+it instead reports `submitted N of M jobs before failing` and exits `2`. In a
+batch, `--tag` becomes a *prefix* combined with each item's derived tag
+(`run7-si2o`) rather than replacing it; for a single job `--tag` is the whole
+tag. `--file
 NAME=PATH` stages anything else, `--input NAME=PATH` stages one declared input,
 and the command prints one
-tab-separated `job_key<TAB>payload` line per job, or `--json` reports. The runner
+tab-separated `job_key<TAB>payload` line per job, or `--json` reports. Any
+preparation warning a language raises (for example a CWL `DockerRequirement`) is
+printed once as `httk workflow: warning: …` on stderr. The runner
 file is published into the workspace runner store and pinned by digest unless
 `--publish installed` names a packaged runner where it is installed. See
 {doc}`quickstart`.
 
-## Importing workflows written elsewhere
+## Running language documents
 
-A Python Workflow Definition document or a CWL document becomes one job without
-being rewritten:
+Run a PWD, CWL, or jobflow document directly with `job new --workflow DOCUMENT`;
+the document or template directory is resolved as a language realization:
 
 ```console
-httk workflow import pwd WORKSPACE workflow.json --module workflow.py --tag arithmetic
-httk workflow import cwl WORKSPACE flow.cwl job.yml --tag echo --data-mode transactional
+httk workflow job new WS --workflow flow.cwl --input message=echo
+httk workflow job new WS --workflow workflow.json --parameter pwd_module_path='["."]'
+httk workflow job new WS --workflow maker.json
+httk workflow job new WS --workflow ./v1-template --format httk-v1 --parameter encut=520
 ```
 
-The imported job runs on httk's own runner and manager — no other engine is
-invoked, and `cwltool` is neither used nor bundled — and it is claimed, retried,
-journalled and collected like every other job. {doc}`importing_workflows`
-documents both formats, the supported CWL subset, everything that is refused and
-why, and what running a PWD document means for security.
+The same `--format` option accepts `cwl`, `pwd`, `jobflow`, and `httk-v1` for
+bare inputs. A bare v1 directory requires `--format httk-v1`; manifest packages
+and registered ids reject the option because their language is already known.
+
+See {doc}`workflow_languages` for package manifests, bare-document rules,
+the supported CWL subset, PWD security, jobflow Makers, and language collection.
+
+Harvest old v1 results without submitting them:
+
+```console
+httk workflow v1 collect ROOT --workflow-dir PKG
+httk workflow v1 collect ROOT --workflow-dir PKG --into results.sqlite
+```
 
 ## Inspecting and debugging jobs
 
@@ -839,6 +960,14 @@ workspace and imports it on the remote, at the placement it had here unless
 `--destination-placement` puts it elsewhere. `run kappa:runs` submits the
 generated manager through the remote adapter; `--workers` fixes its worker count.
 `manager run` is the advanced spelling for the same operation.
+
+Before a transfer moves state, it checks each job's declared environment against
+the destination workspace settings. Unresolved default-less entries produce a
+warning; `--strict-environment` blocks the transfer before detaching. Remote
+settings are read through the adapter when reachable. If that read cannot be
+completed, one warning says the environment could not be prechecked remotely;
+strict mode treats that as a block. The client process environment is not used
+as a substitute for destination settings.
 
 To bring stopped jobs home, use the reverse transfer and then collect:
 

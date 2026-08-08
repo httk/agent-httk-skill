@@ -19,6 +19,10 @@ The object keys are labels, unique per side. Targets are loose served-entry
 references. The declaration is carried verbatim by workflow; this page
 documents the collection used by `run_record`.
 
+File-valued output roles yield run edges with `type = "files"` and the
+corresponding `FileRecord` id, so stored provenance names the file entry
+directly.
+
 ## Declared and observed
 
 Inputs known while scaffolding can be declared in `JobSpec`:
@@ -42,6 +46,12 @@ a.declare("provenance", {
     "outputs": {"total_energy": {"type": "_httk_records", "id": "records/energy-1"}},
 })
 ```
+
+The runtime also records an observed `environment` declaration when the job
+declares workflow environment entries. Its
+`httk-workflow-environment-resolution` version 1 document carries each value
+and the layer that supplied it, so provenance can identify the settings that
+drove the run.
 
 Observed replaces declared wholesale; it is a full replacement document, not
 a merge. If no provenance document exists, `run_record` still uses the `$id`
@@ -69,4 +79,4 @@ the exact published package. See {doc}`workflow_packages`.
 
 VASP runners will adopt this declaration in future work.
 
-Built-in VASP result collection and postprocessing are documented in {doc}`collecting`.
+Built-in VASP result collection is documented in {doc}`collecting`.

@@ -6,14 +6,22 @@ Collecting is the read-only counterpart of running work. The low-level
 `job_records()` iterator reads each stopped job into a `JobRecord`, preserving
 where the files are, what produced them, and what happened on the way. The
 framework-level `collect()` iterator dispatches each record through its
-registered workflow postprocessor and yields a `CollectedJob` with role-keyed
-outputs, provenance, products, and any unfulfilled roles.
+registered workflow collector and yields a `CollectedJob` with role-keyed
+outputs, provenance, products, and any unfulfilled roles. A job that could not
+be collected at all is a *degraded* `CollectedJob`: `missing_collector` explains
+why, `outputs` is empty, and `unfulfilled` names **every** declared output role,
+so a degradation is never mistaken for a complete collection that happened to
+declare no outputs.
+
+When a collected output role is a file-valued single result, its run edge points
+to a standard `files` entry (`type = "files"`); file lists remain values within
+their role record.
 
 The job-embedded declaration governs the Run (immutable facts per job). ProductLinks
 come from the live registered provider's manifest and therefore apply today's
 curation; otherwise, for the job-pinned fallback, they come from that job's
 own verified pinned manifest and preserve its historical curation,
-not today's. Postprocessing is the workflow-owned substep of collecting. If no
+not today's. The workflow collect hook is the workflow-owned substep of collecting. If no
 provider or pinned manifest is reachable, no products are emitted.
 
 `JobRecord` is the layering boundary of *httk₂*. *httk-workflow* has no
@@ -101,6 +109,9 @@ understanding the vocabulary the document names itself — which is the consumer
 job, not this module's. An observed document that cannot be read is reported as
 `null` and sets `provenance.gaps`. The declared documents are not repeated inside
 `job`; `declarations` is where they are read. See {doc}`declarations`.
+The observed `environment` declaration, when present, is the exact resolved
+value/source snapshot that drove the run; its format is
+`httk-workflow-environment-resolution` version 1.
 The `provenance` declaration becomes a stored `httk.core.Run`; see
 {doc}`provenance`.
 
@@ -132,6 +143,56 @@ The workspace is attached read-only. The default `collect` command prints one
 the hidden compatibility `--json` form materializes those raw records as an
 array.
 
+### Summary line and exit codes
+
+Every `collect` invocation except the pure-array `--json` form ends with one
+trailing JSONL summary line:
+
+```text
+{"format":"httk-workflow-collect-summary","format_version":1,
+ "collected":N,"degraded":N,"unfulfilled_roles":N,
+ "storage_errors":N,"skipped_unreadable":N}
+```
+
+`collected` counts the jobs collected without degradation; `degraded` counts the
+degraded ones; `unfulfilled_roles` sums the declared roles left unfulfilled
+across all jobs; `storage_errors` counts jobs a `--into` store could not persist;
+`skipped_unreadable` counts jobs dropped because their `job.json` could not be
+read (these never appear as records — the count is the only place they surface).
+
+The command exits `0` only when `degraded`, `storage_errors`, and
+`skipped_unreadable` are all zero. Unfulfilled roles alone do **not** fail the
+sweep — a partially fulfilled job is a normal, honestly reported result. This
+makes `collect` usable as a gate: a nonzero exit means a job could not be
+collected, stored, or even read, and the summary counts say which.
+
+Per-job triage lives on each summary line: `missing_collector` explains a
+degradation, `products_unlinked` lists `product_of` links skipped because the
+output *was* produced but its curated source edge is absent from the observed
+provenance (`"<role> -> <source> (source edge absent in observed provenance)"`) —
+a product whose own output role went unfulfilled is reported through
+`unfulfilled` only, never here. `collector_exit_status` reports an executable
+collector that answered every record but still exited nonzero.
+
+### `--into` partial state
+
+With `--into PATH`, each collected job's entries, run, and product links are
+saved into a file-backed SQLite store, and its report gains
+`"stored": {...}`. A degraded job stores nothing — its report carries
+`"stored": null, "skipped": "degraded"` and **no** empty `Run` is written, so the
+store never fills with contentless provenance. A job whose entries cannot be
+stored keeps a `"storage_error"` and fails the exit code.
+
+Re-collection is safe because it is stateless: `collect --into` reads the
+workspace afresh every time and writes whatever it finds. Re-storing an
+already-stored job is de-duplicated on its stable entry, run, and product ids, so
+running the same collect twice into the same store changes nothing. A store built
+under a different entry-family layout is not migrated in place; point `--into` at
+a new store file when the layout changes. Reusing a store whose entry-type layout
+does not match the sweep fails fast with a teaching error that names the store
+path, the entry types this sweep needs, and the layout difference, and ends
+`Collect into a new store file.`
+
 ```console
 $ httk workflow collect workflow-workspace | head -1
 {"children":{},"data_generation":null,"data_path":null,"declarations":{},"failure":null,
@@ -160,11 +221,11 @@ With `--raw`, each line is exactly `JobRecord.as_mapping()`, and
 survives being written to a file, shipped, and read back by the process that
 stores it.
 
-## Workflow postprocessing
+## Workflow collect hooks
 
-`collect()` is the workflow-owned postprocessing layer. It resolves the record's
+`collect()` is the workflow-owned collection layer. It resolves the record's
 workflow id through `workflow_provider()`, calls that provider's callable or
-lazy `module:function` postprocessor, validates role names against declared
+lazy `module:function` collector, validates role names against declared
 `outputs` in the job's embedded workflow declaration, and assembles the
 `Run` and `ProductLink` values. Product curation is read from the live
 registered provider's manifest, or from the job's own verified pinned manifest
@@ -172,11 +233,54 @@ when the fallback is enabled; the embedded declaration supplies only the
 immutable Run facts. Old jobs without that declaration fall back to
 the currently registered provider declaration, so their role interpretation is
 necessarily live rather than historical. A workflow
-without a provider or postprocessor is represented as a degraded `CollectedJob`
-with `missing_postprocessor` set. With `--allow-job-postprocessor`, collecting
+without a provider or collector is represented as a degraded `CollectedJob`
+with `missing_collector` set. With `--allow-job-collector`, collecting
 can inspect the job-pinned package tree, validate its own manifest and digest,
-and load that tree's postprocess hook; refusals degrade only that job. See
+and load that tree's collect hook; refusals degrade only that job. See
 {doc}`workflow_packages` for the trust tiers and package hook contract.
+
+An executable `[workflow.collect]` member is run once for the matching sweep
+from its package tree. For direct package paths and the opt-in job-pinned
+fallback, that tree is published and digest-checked; a registered-directory
+provider is the explicit-consent current-source exception. The first stdin line is
+`{"format":"httk-workflow-collect-stream","format_version":1}`; each
+following line is `{"record": <JobRecord mapping>}`. The hook must return one
+JSONL response per record, in order: `{"job_id": ..., "outputs": {role:
+value}}` or `{"job_id": ..., "error": ...}`. Output values use exactly one
+wrapper: `{"entry": {...}}` for a registered entry record,
+`{"value": <json>}` for a `DataRecord`, or exactly `{"file": "<path>"}` for a
+workspace-confined `FileRecord`. A malformed, errored, missing, wrong-id, or
+unresolvable response degrades that job and does not stop the sweep. Response
+lines are drained as binary newline-delimited data and decoded as UTF-8 one line
+at a time. The limits are enforced during draining: a 1 MiB response line, a
+64 KiB stderr line, and 1 MiB total stderr; any limit breach terminates and
+degrades the affected executable collector group. Surplus blank response lines
+are ignored; a nonblank surplus response line likewise degrades the whole group. Other
+malformed or non-UTF-8 responses degrade only their individual job. A declared output
+`ref` makes `httk-data` validation hard-required at collect time; without a
+`ref`, the framework creates a `_httk_custom_*` property definition. Python
+`.py` hooks keep the in-process path and the same successful assembled-output
+semantics, but a registered Python collector exception aborts iteration rather
+than degrading the job.
+
+### Language fallback and degradation
+
+For a language job, provider dispatch is followed by the job's own
+`workflow_language` parameter. A provider-less CWL, PWD, or jobflow job then
+uses the language default collector: its output document is read from the
+workdir or transactional data tree, ports are mapped to declared roles, and
+values become `DataRecord` objects. CWL `File` values are accepted only when
+their paths remain inside the workspace, workdir, or data tree; the result
+records a file descriptor and sha256. Jobflow reads `jobflow-outputs.json`.
+
+A package with a custom hook records `workflow_collect = "package"`.
+Provider-less collection of that job degrades with a registration hint; it
+does not silently run the language default. httk-v1 has no default at all and
+degrades with a message to declare `[workflow.collect]`, whether it was
+submitted as a package or as a bare directory with `--format httk-v1`. The
+`allow_job_collector` pinned-tree fallback is attempted only after this
+language fallback, and only with a matching digest and manifest. Any
+collector failure degrades that job and does not stop the sweep.
 
 For the distinction between declared entry-typed inputs and opaque implementation
 parameters, see {doc}`workflow_packages` and {doc}`declarations`.

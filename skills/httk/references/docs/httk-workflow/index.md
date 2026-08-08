@@ -4,15 +4,23 @@ This site documents the *httk-workflow* module. For the full documentation of
 *httk₂*, see [docs.httk.org](https://docs.httk.org).
 
 The module implements a recoverable, language-neutral workflow protocol whose
-source of truth is a single atomically renamed state marker per job. It presents
-three layers, each with its own import home: the **filesystem protocol**
+source of truth is a single atomically renamed state marker per job. The
+`httk-taskmanager` executable remains a compatibility alias. It presents three
+layers, each with its own import home: the **filesystem protocol**
 (`httk.workflow.protocol`), the **execution and authoring** surface
 (`httk.workflow` — `Runner`, `Attempt` — with lower-level helpers in
 `httk.workflow.runtime`), and **orchestration and management** (`Workspace`,
 `TaskManager`, `collect`, and named submodules for transfers, remotes, and
 compatibility). Installations register the canonical `httk workflow` command
-tree, plus the `httk-taskmanager` and `httk-v1-taskmanager` executables, which
-are aliases of it.
+tree and the `httk-taskmanager` alias.
+
+*httk₂* workflows are language-independent: runners, hooks, and postprocess
+scripts can be written in any language; a workflow is a manifest plus the
+members it references. Python hooks remain first-class, with an in-process fast
+path. Successful hook outputs use the same assembly semantics as executable
+hooks; collector failures differ deliberately: registered `.py` exceptions
+abort iteration, while executable-hook errors degrade per job and continue the
+sweep.
 
 ```{admonition} Quick links
 :class: tip
@@ -29,13 +37,16 @@ directory to a finished relaxation, no runner written and no VASP required.
 
 - {doc}`runtime_helpers` — the Python authoring SDK: `Runner`, `Attempt`, steps
 - {doc}`native_bash_api` — the same surface in Bash
-- {doc}`sdk_parity` — the normative table both of the above must agree with
-- {doc}`vasp_runners` — the packaged runners, for campaigns that write none
+- {doc}`native_c_api` — the same surface in C, and the foundation for Fortran bindings
+- {doc}`native_fortran_api` — the same surface in modern Fortran, over the C bindings
+- {doc}`native_rust_api` — the same surface in safe, std-only Rust
+- {doc}`sdk_parity` — the normative table the language SDKs must agree with
+- {doc}`vasp_runners` — the packaged runners and relaxation report, for campaigns that write none
 - {doc}`workflow_packages` — authoring directory packages and their manifest
 - {doc}`declarations` — saying what a workflow *is*, for a data layer
 - {doc}`provenance` — turning one `JobRecord` into one `httk.core.Run`
-- {doc}`collecting` — collecting provider-postprocessed outputs and products
-- {doc}`importing_workflows` — running PWD and CWL documents as ordinary jobs
+- {doc}`collecting` — collecting provider-produced outputs and products
+- {doc}`workflow_languages` — CWL, PWD, jobflow, and httk-v1 runner realizations
 - {doc}`notebooks/examples` — worked examples as a notebook
 
 **Orchestration and management** — driving and inspecting a workspace
@@ -93,13 +104,16 @@ quickstart
 workflow_protocol_api
 runtime_helpers
 native_bash_api
+native_c_api
+native_fortran_api
+native_rust_api
 sdk_parity
 vasp_runners
 workflow_packages
 declarations
 provenance
 collecting
-importing_workflows
+workflow_languages
 taskmanager
 workflow_cli
 campaigns

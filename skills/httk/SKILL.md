@@ -47,7 +47,8 @@ Metapackage name is ASCII `httk2`; the project is written *httk₂* in prose.
   `references/architecture.md` (guiding ideas, backend/view pattern, exact
   numerics, registries).
 - **legacy httk v1**: out of scope except the v2 compatibility layer —
-  `httk workflow v1 …` runs v1 task templates on the v2 engine, and
+  converted v1 template packages run as `language = "httk-v1"` workflow
+  packages, `httk workflow v1 collect` harvests finished v1 trees, and
   `httk project import-v1` / `httk workflow remote import-v1` migrate v1
   projects and computer bundles. Do not recommend v1 APIs.
 
