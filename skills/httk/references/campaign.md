@@ -187,7 +187,7 @@ serve them over OPTIMADE with httk-serve.
 
 - **Single-file runner**: author with the `Runner`/`Attempt` SDK
   (`docs/httk-workflow/runtime_helpers.md`) or plain Bash
-  (`native_bash_api.md`); `job new --workflow ./my_runner.py` publishes and
+  (`sdks/native_bash_api.md`); `job new --workflow ./my_runner.py` publishes and
   pins it like a packaged one.
 - **Workflow package directory**: a directory with `httk_workflow.toml`
   declaring id, runner entry/steps, inputs (staged; `required` by default when
@@ -198,9 +198,8 @@ serve them over OPTIMADE with httk-serve.
   curated scripts — the whole directory is published content-addressed
   (`docs/httk-workflow/workflow_packages.md`).
 - **Runners in other languages**: the SDK exists in Python, Bash, C, Fortran,
-  and Rust (`native_bash_api.md`, `native_c_api.md`, `native_fortran_api.md`,
-  `native_rust_api.md`) — the native SDKs are bridge clients with identical
-  semantics.
+  Perl, Ada, C++, Java, and Rust (`docs/httk-workflow/sdks/`) — the native
+  SDKs are bridge clients with identical semantics.
 - **Existing workflow languages**: a manifest (or bare document with
   `--format cwl|pwd|jobflow|httk-v1`) runs CWL, Python Workflow Definition,
   jobflow/atomate2 (`maker = "atomate2…:RelaxMaker"`, with real DAG

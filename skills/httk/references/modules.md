@@ -92,7 +92,8 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   workflow-owned substep of collect. *Inputs* are declared staged objects;
   *parameters* are opaque knobs (`--parameter k=v`, `Attempt.parameter()`).
 - SDK: `Runner`/`Attempt` for authoring runners (`docs snapshot:
-  runtime_helpers.md`; Bash/C/Fortran/Rust in `native_*_api.md` — bridge
+  runtime_helpers.md`; Bash, C, Fortran, Rust, Perl, Ada, C++, and Java in
+  `docs/httk-workflow/sdks/native_*_api.md` — bridge
   clients with identical semantics); `Workspace`, `new_jobs()` streaming job
   creation; `collect()` yields `CollectedJob` (outputs, provenance `Run`,
   products); `job_records()` the mechanical readout.
