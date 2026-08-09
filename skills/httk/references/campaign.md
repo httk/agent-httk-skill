@@ -197,9 +197,19 @@ serve them over OPTIMADE with httk-serve.
   `+x` executable speaking the JSON envelope), and `[workflow.postprocess.NAME]`
   curated scripts — the whole directory is published content-addressed
   (`docs/httk-workflow/workflow_packages.md`).
+- **Compiled workflows** declare `[workflow.build]` (a one-liner `command`,
+  optional `platform` probe, `artifacts` globs): digests and transfers cover
+  SOURCES only, and the user runs `httk workflow build` once per machine (per
+  platform class on heterogeneous clusters) to build and register the
+  binaries — managers never compile; an unbuilt package fails jobs with an
+  actionable `runner_not_built` message and `precheck` warns first. After
+  transferring such a workflow to a remote, run `httk workflow build` there
+  before `run`.
 - **Runners in other languages**: the SDK exists in Python, Bash, C, Fortran,
   Perl, Ada, C++, Java, and Rust (`docs/httk-workflow/sdks/`) — the native
-  SDKs are bridge clients with identical semantics.
+  SDKs are bridge clients with identical semantics. Interpreted runners
+  transfer as-is; compiled single-file runners are architecture-bound (use the
+  package + `[workflow.build]` form for portability).
 - **Existing workflow languages**: a manifest (or bare document with
   `--format cwl|pwd|jobflow|httk-v1`) runs CWL, Python Workflow Definition,
   jobflow/atomate2 (`maker = "atomate2…:RelaxMaker"`, with real DAG

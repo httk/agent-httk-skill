@@ -14,7 +14,9 @@ sid = store.save(structure)
 back = store.fetch_by_content_id(UnitcellStructure, cid)
 ```
 
-- Built on SQLAlchemy Core; SQLite and DuckDB supported
+- Built on SQLAlchemy Core; SQLite and DuckDB supported (plus a MongoDB
+  backend — see `docs/httk-data/mongo.md`); bulk loads via
+  `store.bulk_ingest()` (optionally `workers=N` for parallel encoding)
   (`httk-data[duckdb]`). Domain objects stay ordinary frozen dataclasses; the
   store consumes their declared record classes.
 - The `entry_records` declaration is **required on first open**, stamped into

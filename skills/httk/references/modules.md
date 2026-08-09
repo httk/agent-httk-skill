@@ -87,7 +87,9 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   (`--workflow ./my_runner.py`), or a **workflow package directory** with
   `httk_workflow.toml` (declared inputs/outputs/parameters/environment,
   instantiate/collect hooks as Python or any executable, any-language
-  runner) — published content-addressed and digest-pinned per job.
+  runner, `[workflow.build]` for compiled workflows — sources-only digests,
+  binaries built and registered per machine via `httk workflow build`) —
+  published content-addressed and digest-pinned per job.
 - Lifecycle: **instantiate → run → collect**, with `postprocess` the
   workflow-owned substep of collect. *Inputs* are declared staged objects;
   *parameters* are opaque knobs (`--parameter k=v`, `Attempt.parameter()`).
