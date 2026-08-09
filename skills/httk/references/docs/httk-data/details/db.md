@@ -134,6 +134,58 @@ While a saved or fetched instance is alive, fetching its sid again returns the
 very same object. Join-objects pointing at a stored instance are found with
 `store.referring(TagClass, field="structure", to=record)`.
 
+## Permanentization, degraded writes, and fsck
+
+SQL stores use a storage-only `_httk_role` parent column: `1` marks a record
+saved at the public top level and `0` marks a recursively saved dependency.
+The column is not part of content identity, by-value matching, canonical
+encoding, hydrated records, or query results. Saving a dependency again at the
+top level promotes its existing row to main; bulk canonicalization likewise
+keeps the maximum role of all collapsed occurrences.
+
+The usual `Database.sqlite(...)` and `Database.duckdb(...)` stores have the
+persisted `transactional` write profile (the absent metadata value means the
+same thing). SQLite additionally exposes an explicitly opt-in, artificial
+transactionless conformance vehicle:
+
+```python
+db = Database.sqlite("recovery-test.sqlite", degraded=True)
+store = SqlStore(db, entry_records={})
+```
+
+That construction stamps the `degraded` profile and can only reopen through a
+similarly configured database. Opening validates the live SQLite DB-API
+autocommit state, not just the construction flag; a transactional profile also
+rejects an autocommit engine. It is SQLite-only in this release: it uses DB-API
+autocommit to model SQL-like backends that cannot provide transaction rollback.
+The profile is deliberately single-writer. A database-visible writer lease is
+acquired on mutation and held until `Database.dispose()`; another instance can
+inspect the holder/age and explicitly call `store.steal_lease()` when recovery
+authority is clear.
+
+Degraded saves permanently write dependencies first, then child-element rows
+under a preallocated monotonic sid, then the parent sid row last. Thus a visible
+parent means its subtree is complete; a failed write may leave only dependency
+or child residue. No compensation deletion is attempted. Per-operation dirty
+markers cost one lookup, one upsert, and one conditional delete per touched
+table; a leftover marker arranges a targeted ownerless-child sweep before the
+next write to that table. Sid counters are created and initialized lazily at
+the first allocation for each parent table. `bulk_ingest()` is intentionally unavailable for degraded stores in
+v2.3.0; use ordered `save()` calls.
+
+Run `store.fsck(known_types=(...))` after a failed degraded writer (or for an
+integrity audit). It repairs missing dispatch rows for main entries, sweeps
+ownerless child rows, marks from main and dispatch roots, removes unreachable
+dependency rows, and reports dangling logical references. It refuses garbage
+collection if it finds an ordinary application table it cannot attribute to
+the declared layout or `known_types`; no unrelated table is guessed or swept.
+SQLite transactional fsck uses `BEGIN IMMEDIATE`. DuckDB callers must pass
+`exclusive=True`, which is an explicit acknowledgement that the database is
+offline from all writers for the entire fsck; DuckDB cannot otherwise enforce
+the necessary read/delete exclusion. Invalid role values are violations; with
+`repair=True` fsck normalizes them to dependency role `0` rather than inventing
+a new root.
+
 ## Bulk ingestion
 
 `store.bulk_ingest()` is a faster path than a `save()` loop for **building a
@@ -165,16 +217,20 @@ Reach for it when the increment is large; for a handful of records the ordinary
 **Exclusive write ownership.** While a `bulk_ingest()` context is open the
 store's ordinary write path belongs to it: `save()`, `ensure_tables()`, and
 `transaction()` on the same `httk.data.db.SqlStore` raise `RuntimeError`, and a
-second `bulk_ingest()` context on the same store is refused. Reads are
-unaffected.
+second `bulk_ingest()` context on the same store is refused. Reads from an
+already-open store remain available; a new open is rejected while an
+empty-store ingest marker is present.
 
 **One spanning transaction, all-or-nothing.** The whole ingest runs in a single
 transaction that commits only on clean exit. Any exception — a metadata
 conflict, a uniqueness violation, or one you raise inside the block — rolls the
 transaction back, drops every table the context created, restores any index it
 dropped, removes its staging tables, and clears the store's identity caches,
-leaving the store exactly as it was before the context opened. Dropping the
-whole increment and retrying is therefore safe.
+leaving the store exactly as it was before the context opened. For an
+empty-store ingest, cleanup verifies that only the metadata table remains and
+then clears its marker, so retrying is safe. A hard crash can leave the marker
+behind; subsequent opens reject that store and require dropping and re-ingesting
+it.
 
 **Deduplication and uniqueness are post-conditions, not per-row checks.** Within
 the stream, records deduplicate set-wise in memory by the class's
@@ -216,6 +272,14 @@ reserves a dropped index's name until commit, a `"rebuild"` decision instead
 keeps the indexes in place — relying on their incremental maintenance — and
 verifies content-id uniqueness with a duplicate scan at finalize; the final
 indexes are identical either way.
+
+**`finalize`** (`"auto"`, `"parity"`, or `"deferred"`, default `"auto"`)
+chooses the finalization profile. `"deferred"` is an explicit fresh-store
+profile at any worker count; `"parity"` is the historical in-database path.
+`"auto"` selects deferred only for a physically empty, supported serial ingest;
+it selects parity for every other case, including `workers>1`. At current batch
+scales the parallel in-database merge is faster, while serial deferred gains
+about 36%.
 
 **Nested conflict paths differ by prefix.** Because the bulk encoder resolves
 referenced and child records eagerly and only discovers their existing-row hits
@@ -278,18 +342,10 @@ stronger — *any* pre-existing application table is refused, because the merge
 renumbers and deletes rows in place and DuckDB will not do that through a live
 foreign-key constraint.
 
-**DuckDB physical schema omits foreign keys.** To let the merge collapse and
-renumber in place, a parallel build on DuckDB creates its record and child
-tables *without* foreign-key constraints. Every other structure is identical to
-a serial build — the sid primary key and its sequence, the content-id uniqueness
-index, and all secondary indexes — and the referential integrity of the result
-is exactly the same (the merge enforces it directly). Only the physical
-constraints differ, which matters if you introspect the schema, dump it, or run
-your own `INSERT`/`UPDATE` against the file and rely on DuckDB to catch a
-dangling reference. A serial (`workers=1`) build keeps the constraints; SQLite
-parallel builds keep them too (SQLite does not enforce foreign keys by default,
-and a parallel ingest refuses to run against a SQLite engine that has turned
-`PRAGMA foreign_keys` on).
+**Physical schema is foreign-key free.** SQLite and DuckDB use the same FK-free
+physical DDL for serial and parallel builds. Logical reference, ownership,
+child-element, and dispatch edges remain available to the storage algorithms,
+while column types, keys, checks, and indexes are unchanged.
 
 **Provisional tokens.** Because a worker encodes each object asynchronously, the
 sid is not known when `save` returns; in parallel mode `save` returns an opaque
