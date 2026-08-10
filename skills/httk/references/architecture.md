@@ -10,7 +10,7 @@ property/entry-type definition model, record models, registries, and the
 blessed `DatasetLoader` for modules that ship static data. Anything imported to
 **declare** (types in signatures across module boundaries) goes in core;
 anything imported to **do** goes in a capability module (parsing in httk-io,
-storage in httk-data, serving in httk-serve, execution in httk-workflow).
+storage in httk-store, serving in httk-serve, execution in httk-workflow).
 Modules register their capabilities under reserved registry tiers
 (`httk.registry.{cli,entries,io,schemas}.<module>`), discovered automatically
 at `import httk.core`.

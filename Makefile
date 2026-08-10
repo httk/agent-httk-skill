@@ -1,5 +1,5 @@
 WORKSPACE ?= ..
-REPOS = httk-core httk-atomistic httk-io httk-data httk-workflow httk-analyse httk-serve
+REPOS = httk-core httk-atomistic httk-io httk-store httk-workflow httk-analyse httk-serve
 SKILL_DIR = skills/httk
 
 .PHONY: docs-snapshot check dist ci clean

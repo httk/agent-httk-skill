@@ -132,7 +132,7 @@ jobs are then ordinary local jobs. `collect` prints one summary per finished
 job; options: `--raw` (mechanical `JobRecord`s), `--jsonl`/`--json`,
 `--degraded` (show only jobs that degraded), `--allow-job-collector` (trust
 job-pinned collect hooks), `--into STORE` (store collected entries straight
-into an httk-data store — degraded jobs are skipped and the exit code says so).
+into an httk-store store — degraded jobs are skipped and the exit code says so).
 `httk workflow postprocess WS --script NAME` runs a workflow's curated
 post-collection script (e.g. a relaxation plot).
 
@@ -180,7 +180,7 @@ pd.plot()
 ```
 
 Persist collected entries with `collect --into mystore.sqlite` (or DuckDB), or
-programmatically via httk-data (`SqlStore`) — see `data-serving.md` — and
+programmatically via httk-store (`SqlStore`) — see `data-serving.md` — and
 serve them over OPTIMADE with httk-serve.
 
 ## Custom workflows

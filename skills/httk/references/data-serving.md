@@ -1,11 +1,11 @@
 # Data management, storage, and dissemination
 
-## httk-data: stores and validation
+## httk-store: stores and validation
 
 ### SqlStore — the backend-agnostic SQL store
 
 ```python
-from httk.data.db import Database, SqlStore
+from httk.store.db import Database, SqlStore
 from httk.atomistic import UnitcellStructure  # families register their records
 
 store = SqlStore(Database.sqlite("results.sqlite"),   # or Database.duckdb(...)
@@ -15,9 +15,9 @@ back = store.fetch_by_content_id(UnitcellStructure, cid)
 ```
 
 - Built on SQLAlchemy Core; SQLite and DuckDB supported (plus a MongoDB
-  backend — see `docs/httk-data/mongo.md`); bulk loads via
+  backend — see `docs/httk-store/mongo.md`); bulk loads via
   `store.bulk_ingest()` (optionally `workers=N` for parallel encoding)
-  (`httk-data[duckdb]`). Domain objects stay ordinary frozen dataclasses; the
+  (`httk-store[duckdb]`). Domain objects stay ordinary frozen dataclasses; the
   store consumes their declared record classes.
 - The `entry_records` declaration is **required on first open**, stamped into
   the store, and **trusted on reopen** (byte-identical check; a mismatch
@@ -25,9 +25,9 @@ back = store.fetch_by_content_id(UnitcellStructure, cid)
 - DDL happens only on write; read paths treat missing tables as empty.
 - Identity: `content_id` (content addressing) + local integer `sid`;
   duplicate saves dedup exactly, with metadata-conflict detection.
-- Queries: the neutral query layer (`httk.data.query`) — expressions,
+- Queries: the neutral query layer (`httk.store.query`) — expressions,
   portable queries, OPTIMADE filter *translation*
-  (`httk.data.query.optimade_filters`) — plus `Searcher`/`Store` protocols
+  (`httk.store.query.optimade_filters`) — plus `Searcher`/`Store` protocols
   every backend implements.
 - Federation: `FederatedStore` (live fan-out over already-open stores,
   read-only union) vs `db.stored_federation` (a persisted registry of
@@ -66,7 +66,7 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   base URLs, and `meta.warnings` (from the httk report channel) are handled by
   the engine. Mount-aware links; CORS strictly opt-in via
   `OptimadeConfig(cors_origins=(...))`.
-- `--validate`-style checking: run `httk.data.validate_record` over records
+- `--validate`-style checking: run `httk.store.validate_record` over records
   before serving (see the `example_website_httk` repo's `serve_optimade.py`
   for a complete worked service: CSVs + CONTCAR.bz2 → exact structures → 180
   served entries with custom properties and linked references).
@@ -88,7 +88,7 @@ create_asgi_app`) is the site engine behind httk.org:
   multi-worker deployments). `httk.serve.optimade_table` is a browser-side
   widget that queries any OPTIMADE API directly.
 - **To start a new site**: copy the `example_website_httk` repository — it
-  contains a working site + data model (httk-data `SqlStore`-backed with
+  contains a working site + data model (httk-store `SqlStore`-backed with
   in-memory fallback), the search table wired to the widget, per-material
   detail pages, plot-file records, custom OPTIMADE property definitions in
   YAML (rendered to JSON), and an optional combined mount of the site plus

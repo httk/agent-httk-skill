@@ -15,7 +15,7 @@ developing a provider: the whole API surface is available synchronously, and a
 failure is a normal Python traceback rather than a log line in a server that is
 still running.
 
-The data here comes from the ready-made providers *httk-data* registers for the
+The data here comes from the ready-made providers *httk-store* registers for the
 standard `files` and `calculations` entry types, so no provider class has to be
 written to have something to query — see
 [Serving entry providers](../optimade/serving_providers.md) for how to write your own,

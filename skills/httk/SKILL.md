@@ -17,7 +17,7 @@ scale. It is distributed as a family of packages sharing the `httk` namespace:
 | httk-core | `httk.core` | contracts and shared vocabulary: exact math, vectors, datastreams, records, registries, `load`/`save`/`fetch` (stdlib-only) |
 | httk-atomistic | `httk.atomistic` | crystal structures: cells, sites, species, symmetry/ASU, trajectories, ASE/pymatgen/VASP integrations |
 | httk-io | `httk.io` | file formats: CIF/mCIF, POSCAR, OUTCAR, XDATCAR, OSZICAR, POTCAR, WAVECAR, trajectory JSONL |
-| httk-data | `httk.data` | data management: SQL stores (SQLite/DuckDB), validation, query, federation, provenance serving |
+| httk-store | `httk.store` | data management: SQL stores (SQLite/DuckDB), validation, query, federation, provenance serving |
 | httk-workflow | `httk.workflow` | campaigns: projects, workspaces, runners, remotes/HPC, transfers, collection |
 | httk-analyse | `httk.analyse` | analysis: convex hulls (`generic`), phase diagrams + plotting (`matsci`) |
 | httk-serve | `httk.serve` | dissemination: websites (`httk.serve.web`) and a generic OPTIMADE server (`httk.serve.optimade`) |
@@ -36,7 +36,7 @@ Metapackage name is ASCII `httk2`; the project is written *httk₂* in prose.
   (`UnitcellStructureView(load("x.cif"))`); `httk.core.save(obj, path)` writes.
   Details: `references/modules.md` (httk-io, httk-atomistic sections).
 - **"Store results / build a database / validate / provenance"** →
-  `references/data-serving.md` (httk-data).
+  `references/data-serving.md` (httk-store).
 - **"Phase diagram / convex hull / stability"** → `references/modules.md`
   (httk-analyse section).
 - **"Serve an OPTIMADE API / build a website"** → `references/data-serving.md`
@@ -105,7 +105,7 @@ follow `references/campaign.md`.
   module's narrative documentation (Markdown). Grep it freely — e.g. the
   complete CLI tree is `references/docs/httk-workflow/workflow_cli.md`, runner
   authoring is `runtime_helpers.md`, storage is
-  `references/docs/httk-data/db.md`. The snapshot is refreshed with
+  `references/docs/httk-store/db.md`. The snapshot is refreshed with
   `make docs-snapshot` from a workspace checkout and may trail the online docs;
   when the two disagree, the online docs win.
 - The curated files under `references/` (architecture, modules, campaign,
