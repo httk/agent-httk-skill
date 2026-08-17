@@ -1,5 +1,13 @@
 # Serving entry providers
 
+:::{note}
+If the records already live in an `EntryStore`, do not build a provider that
+enumerates and copies them. Pass the store directly to `create_asgi_app`; see
+[Serving directly from an entry store](serving_stores.md). The provider path on
+this page is intentionally the in-memory path for generated or compatibility
+datasets.
+:::
+
 *httk-serve* is a generic implementation of the OPTIMADE protocol: it carries
 no knowledge of what it serves. Everything served — entry types, their
 properties, and the records — is supplied through the neutral
@@ -69,8 +77,8 @@ definition with `EntryTypeDefinition.extended({...})`.
 ## Serve it
 
 `adapter_from_providers` turns one or more providers into a fully wired
-backend adapter; `serve` runs a development server (or use `create_asgi_app`
-with any ASGI server):
+in-memory backend adapter; `serve` runs a development server (or use
+`create_asgi_app` with any ASGI server):
 
 ```python
 from httk.serve.optimade import adapter_from_providers, serve
@@ -129,6 +137,13 @@ Allowed origins receive CORS responses for `GET`, `HEAD`, and preflight
 slash), credentials, queries, or fragments. Hostnames must be ASCII; configure
 an internationalized domain name in browser-compatible punycode form so it
 matches the browser's `Origin` header exactly.
+
+The largest `page_limit` a client may request is `OptimadeConfig.page_limit_max`
+(default 50). Raise it to serve larger pages, e.g.
+`OptimadeConfig(page_limit_max=500)`. Per the OPTIMADE spec a request for a
+`page_limit` above this maximum is rejected with HTTP 403 Forbidden rather than
+silently clamped; the default page size (when no `page_limit` is given) is
+unaffected.
 
 ## Query programmatically
 

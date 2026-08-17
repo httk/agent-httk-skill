@@ -7,11 +7,12 @@ This page explains a core *httk₂* design pattern used across *httk-core*: in D
 
 The pattern has three pieces:
 
-- `X` or sometimes `XBackend`: internal carrier for one representation of data (`VectorFrac`, `VectorSurd`, `VectorNative`, `VectorNumpy`, `TextstreamFilename`, ...).
+- `X` or sometimes `XBackend`: internal carrier for one representation of data (`FracVector`, `SurdVector`, `VectorNativeBackend`, `VectorNumpyBackend`, `TextstreamFilename`, ...). An immutable value class may be its own backend and be adopted by identity.
 - `XView`: user-facing interface for *how you want to work with that data right now* (`VectorFracView`, `VectorSurdView`, `VectorNativeView`, `VectorNumpyView`, ...).
 - `XLike`: union type accepted by API functions so callers can pass many natural inputs (`VectorLike`, `TextstreamLike`, ...).
 
-Concrete backends are usually named `X`; only abstract family roots conventionally carry the
+Concrete backends are usually named `X`; immutable value classes may also serve as their own
+backend; only abstract family roots conventionally carry the
 `Backend` suffix. The corresponding view and input-union names are
 `XView` (`VectorFracView`, `VectorNumpyView`, ...) and `XLike` (`VectorLike`, `TextstreamLike`, ...).
 
@@ -50,6 +51,13 @@ def center(vector: VectorLike) -> VectorLike:
     view = VectorFracView(vector)
     result = view - view[0]
     return coerce_view(result, vector)
+
+
+import numpy
+from httk.core import FracVector
+
+print(center(FracVector(["1/2", "1/3", "1/4"])))  # prints: (1/144)*(0, -24, -36)
+print(center(numpy.array([0.5, 1 / 3, 0.25])))  # prints: [ 0.         -0.16666667 -0.25      ]
 ```
 
 The same function can accept a `FracVector`, `VectorNativeView`, or `VectorNumpyView`; the final

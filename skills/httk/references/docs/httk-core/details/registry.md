@@ -1,4 +1,4 @@
-# Registries and plugin discovery in detail
+# Module registry in detail
 
 `httk-core` keeps capability registration separate from capability imports. A
 capability module ships a package below one of the reserved namespaces:
@@ -34,7 +34,7 @@ without loading a file.
 
 ```python
 from httk.core import load, register_reader
-from httk.core.register import known_extensions, known_filenames
+from httk.core.register.io import known_extensions, known_filenames
 
 register_reader(
     name="demo",
@@ -119,12 +119,12 @@ other objects go through the registered format serializer for that tag.
 
 To discover the available dispatch options, use
 `httk.core.register.known_writer_formats()` for the tags accepted by
-`format=`, `known_writers()` for writer destination keys, and
-`has_writer_for(name)` to probe destination-name dispatch. The load direction
-has the corresponding `known_format_adapters()` accessor.
+`format=` and `known_writers()` for writer destination keys. The load direction
+has the corresponding `known_format_adapters()` accessor and, for probing
+reader dispatch by name, `has_reader_for(name)`.
 
 ```python
-from httk.core.register import known_writer_formats
+from httk.core.register.io import known_writer_formats
 
 assert known_writer_formats() == sorted(known_writer_formats())
 ```
@@ -209,7 +209,7 @@ surface and user-facing workflow are documented in {doc}`/cli`; see also
 OPTIMADE property-name prefix. `known_definition_prefixes` lists the current
 prefixes. Prefixes are lower-case alphanumeric tokens wrapped in underscores;
 the built-in `_httk_` prefix is already registered. See
-{doc}`optimade_definitions`.
+{doc}`property_definitions`.
 
 ## Compression codecs
 

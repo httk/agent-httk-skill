@@ -16,20 +16,25 @@ Public root surface (~76 names). The ones users touch most:
 - View grammar: `unwrap`, `unview`, `coerce_view`, `coerce`.
 - Records/definitions: `Reference`, `File`, `Calculation`, `Run`,
   `ProductLink`, `DataRecord`, `PropertyDefinition`, `EntryTypeDefinition`,
-  `load_entry_type_definition`, `register_definition_prefix`.
+  `load_entry_type_definition`, `register_definition_prefix`; DCAT-shaped
+  dataset/service metadata `Dataset`, `DatasetDistribution`, `Service` (+ the
+  storable `DatasetRecord`/`ServiceRecord`); URL/IRI predicates in
+  `httk.core.validation.iris`.
 - Registries: `register_reader`, `register_writer`, `register_entry_provider`,
   `register_entry_family`, `register_entry_record`, `register_citation`.
 - Datastreams: `TextstreamFileView`/`BytestreamFileView` etc. (open anything,
   decompress transparently), `DatastreamURL`.
 - Storage author vocabulary: `StorageInfo`, `Indexed`/`Unique`/`Skip`/
   `IdentitySkip`/`Shape`/`Related`, `stored_property`, `content_id`.
-- `DatasetLoader` — lazy packaged datasets for module authors.
+- `DatasetLoader` — lazy packaged datasets for module authors (JSON, or the
+  `.sqlar` SQLite-Archive shape written by `write_dataset_sqlar`).
 - Subpackages (import directly, not re-exported): `httk.core.optimade`
   (OPTIMADE documents + filter parser), `httk.core.storage`,
   `httk.core.crypto`, `httk.core.report`, `httk.core.docs` (the versioned-docs
   tooling and `httk docs` CLI).
-- Project anchor: `httk project init|show|import-v1`; `httk_project/`
-  directory marks a project root (Ed25519 identity/trust).
+- Project anchor: `httk project init|show|import-v1|seal|verify-seal`
+  (`seal` packs a signed redistribution ZIP, `verify-seal` checks the signer);
+  `httk_project/` directory marks a project root (Ed25519 identity/trust).
 
 ## httk-atomistic (`httk.atomistic`) — crystal structures
 

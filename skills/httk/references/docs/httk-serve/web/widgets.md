@@ -176,13 +176,30 @@ and its three internal assets in both live and published output:
 ```
 
 The declaration accepts `base_url`, `entry_type="structures"`, `columns`,
-`page_size=50`, `caption="OPTIMADE results"`, `filter`, `filter_query`,
-`sort`, `allowed_origins=()`, `detail_route`, `detail_column`, and
-`detail_query="id"`. URLs, identifiers, columns, origins, and display text are
+`page_size=50`, `page_size_options`, `page_size_query`, `caption="OPTIMADE results"`,
+`filter`, `filter_query`,
+`sort`, `sort_query`, `sort_aliases`, `allowed_origins=()`, `detail_route`, `detail_column`,
+`detail_query="id"`, `summary`, and `advanced_filter`. URLs, identifiers, columns, origins, and display text are
 strictly bounded and validated. `filter_query` names a browser URL parameter
-whose complete value overrides `filter`; neither is access control. Detail
+whose complete value overrides `filter`, while `sort_query` similarly overrides
+`sort`; neither is access control. `sort_aliases` maps display sort values (a
+human-facing `"rank"`) to complete OPTIMADE sort expressions: the browser
+resolves an authored or URL-supplied sort through it before querying, so a
+display alias is never sent to OPTIMADE and unmapped values pass through
+unchanged. Detail
 links require both a safe site-local `detail_route` and a selected
-`detail_column`.
+`detail_column`. A column mapping may set `format="formula"`, or use
+`{"name": "number", "digits": 2, "scale": 1, "suffix": " eV"}` or
+`{"name": "join", "separator": ", "}`. Formula digit runs are rendered in
+`sub` elements; all formatter output remains text-only.
+
+A column mapping may also carry an optional `description`. Every column header
+always gets a `title` hover hint that starts with the prefixed OPTIMADE field
+name (its `key`), so a reader can discover the exact filterable field name by
+hovering the header; when `description` is set, the hint becomes
+`<key> — <description>`. The hint is baked into the `<th>` at render time and
+needs no JavaScript. The `description` is bounded like other display text and,
+when present, is also carried in the inert configuration.
 
 At page load, the browser validates the local configuration and negotiates the
 remote OPTIMADE API. An unversioned base is negotiated through `/versions` for
@@ -206,7 +223,8 @@ punycode form that appears in `window.location.origin`.
 the browser URL contains that parameter, its **first complete value** replaces
 the authored `filter`; an empty value means no filter. Filters are never
 concatenated. The override is limited to 4096 characters, matching the shell
-limit, and an overlong value is shown as a recoverable table error. No URL,
+limit, and an overlong value is shown as a recoverable table error. `sort_query`
+uses the same replacement and limit rules for the authored `sort`. No URL,
 history, cookie, storage, or form field is modified by the table.
 
 Only the current page is rendered. A widget holds at most 100 previous page
@@ -226,11 +244,112 @@ route query values are retained. The widget dispatches a bubbling
 `httk-serve:optimade-table-updated` event only after a page commits; its detail has
 only the entry type, result count, page index, and next/previous availability.
 
-There is no interactive header sorting in this phase. Put sort and filter
-controls in ordinary GET forms; the original query snapshot reaches the provider
-and stays bound across pager requests. Page size defaults to 50 and is strictly
-limited to 500. Continuation requests, tokens, cursors, rows, rendered HTML, and
-JSON responses all have explicit size bounds.
+`summary` is an optional, off-by-default results summary rendered above the
+table. `summary=None` disables it and changes nothing else; `summary=True`
+enables it with defaults (noun `"entries"`); a mapping may set `noun` and a
+`fields` mapping of property name to a `{label, format, values}` presentation
+overlay. Each field's label and number/formula/join `format` default to the
+matching column's, so `fields` only needs entries for filter-only properties or
+overridden labels; `values` maps enum values to display labels. Once enabled, the
+summary shows a `Showing X of Y <noun>.` count (from the OPTIMADE `data_returned`
+and `data_available` meta counts) and describes the active filter and sort as
+pills. Filter description is all-or-nothing: a filter containing `OR`, `NOT`,
+parentheses, or any clause the widget cannot render in human terms produces no
+filter pills rather than a misleading partial description. The sort pill drops
+`id` components, which are pagination tiebreakers, and is omitted entirely when
+the effective sort equals the authored default. No summary output is emitted when
+`summary` is unset.
+
+When `sort_query` is set, column headers whose field the OPTIMADE service
+advertises as sortable (a strict `sortable: true` on the property in
+`/info/<entry_type>`) become sort links after discovery succeeds. Clicking one
+navigates to the current URL with only the `sort_query` parameter changed:
+ascending by default, appending an `,id` tiebreaker except for the `id` column
+itself. Clicking the current primary sort column again reverses its direction,
+and that column's header carries `aria-sort="ascending"` or `"descending"`.
+Every other URL parameter, including the filter, is preserved verbatim. Headers
+of non-advertised columns, and all headers when `sort_query` is unset, are never
+linked. Navigation is a full page load; there is no dynamic (no-reload) sorting.
+
+`advanced_filter` is an optional, off-by-default fold-out disclosure rendered
+above the table. `advanced_filter=None` disables it and changes nothing else;
+`advanced_filter=True` enables it with defaults; a mapping may set `label` (the
+disclosure heading) and `help_url` (an absolute HTTP(S) URL or site-relative
+path to an "available fields" reference, linked only when given and opened in a
+new tab). It requires
+`filter_query`, because the disclosure is a plain GET `<details>`/`<form>` that
+submits a raw OPTIMADE filter under that parameter name; enabling it without
+`filter_query` is rejected. The input is prefilled with the effective (authored
+or URL-selected) filter, and when `sort_query` is set and present in the URL, a
+single hidden input carries that **raw** parameter value (the user's alias, not
+the resolved sort) so the form round-trips the current sort. No other URL
+parameters are re-emitted: a site's own filter-building form would re-normalize
+the filter from its own field parameters, so carrying them would fight the raw
+filter the disclosure submits.
+
+The disclosure's own `<form>` also submits a hidden marker parameter named
+`<filter_query>_advanced` (for `filter_query="filter"` that is
+`filter_advanced`). The disclosure renders **open** on load exactly when that
+marker parameter is present in the URL — that is, only when the current view was
+submitted from the advanced form itself. Three flows follow: a sidebar-style
+search that writes only `?filter=…` (no marker) leaves the disclosure **closed**;
+an advanced submit produces `?filter=…&filter_advanced=1` (plus the raw `sort`
+when configured) and the disclosure is **open** on the next load; and because the
+header-sort links preserve every existing URL parameter, the marker survives a
+sort click, so the disclosure stays open after re-sorting an advanced search.
+Sites must not use the `<filter_query>_advanced` parameter name for anything
+else, since its mere presence controls the disclosure's open state.
+
+Put any other sort and filter controls in ordinary GET forms; the original query
+snapshot reaches the provider and stays bound across pager requests. Page size
+defaults to 50; the widget configuration accepts up to 500, but the size a
+service actually serves is bounded by that service's own maximum page limit.
+Continuation requests, tokens,
+cursors, rows, rendered HTML, and JSON responses all have explicit size bounds.
+
+A page-size dropdown follows the same opt-in URL-wiring grammar as `filter_query`
+and `sort_query`: it renders only when `page_size_query` names the URL parameter
+that carries the chosen size, and `page_size_options` lists the offered sizes (a
+sequence of 1-8 distinct integers, each 1..500; default `(50, 100, 500)`). The
+options are sorted ascending and always include the current `page_size` so the
+active state is selectable. On load the browser reads that parameter and uses it
+as the page size only when it exactly matches one of the options, otherwise it
+falls back to the authored `page_size`. Changing the dropdown navigates (via
+`location.assign`) to the same URL with only the page-size parameter changed —
+every other parameter, including the filter, sort, and the advanced-form marker,
+is preserved — so the effective size survives sort clicks and vice versa. Like
+the other controls it writes no history, cookie, or storage state of its own.
+The achievable page size is capped by the OPTIMADE service's own maximum page
+limit — for httk-serve services this is `OptimadeConfig.page_limit_max` (default
+50), and a larger `page_limit` is rejected with HTTP 403 per the OPTIMADE spec —
+so pick `page_size_options` your service actually accepts.
+
+## OPTIMADE field definitions
+
+`httk.serve.optimade_fields` (also available as `optimade_fields`) renders a
+static, server-side table of OPTIMADE property definitions. Unlike
+`optimade_table` it performs no browser fetch and ships no JavaScript: a served
+site knows its property definitions at startup, so the table is rendered once
+from a `properties` mapping the site supplies. Its only asset is a stylesheet.
+
+The declaration accepts `properties` and `caption="Field definitions"`.
+`properties` is a mapping of served property name to that property's OPTIMADE
+property-definition mapping — the same `{served_name: definition}` shape a
+served schema exposes, where each definition carries `$id`, `title`,
+`description`, and `sortable`. It must be a non-empty mapping of at most 512
+identifier-named entries, each value itself a mapping. A site wrapper normally
+passes its `ServedSchema.property_definitions[entry]` mapping straight in.
+
+Rows are sorted alphabetically by name. Each row shows the property name in a
+`<code>` element and the **first paragraph** of its `description` (the text up
+to the first blank line, truncated — not rejected — at the display-text bound). A missing or
+non-string `description` renders an empty cell rather than raising. The name is
+linked to the human-readable definition page at the property's `$id` (opened in
+a new tab) when that `$id` is an HTTP(S) URL with a host and no credentials;
+ad-hoc synthesized ids — those whose path contains `/ad-hoc/`, which are not
+published anywhere — and any non-HTTP(S) or malformed id render the name as
+plain unlinked text. A bad `$id` never raises. All names, links, and text are
+escaped.
 
 Widget invocations must occupy their complete source paragraph/block. Code
 examples in Markdown fences or indented code, RST literal/doctest blocks, and

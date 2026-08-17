@@ -14,7 +14,17 @@ The SQL layer is an optional extra (plain `import httk.store` works without it):
 ```bash
 python -m pip install "httk-store[db]"      # SQLite (built into Python) via sqlalchemy
 python -m pip install "httk-store[duckdb]"  # additionally the DuckDB backend
+python -m pip install "httk-store[postgresql]"  # PostgreSQL backend (psycopg 3)
+python -m pip install "httk-store[clickhouse]"  # ClickHouse backend
 ```
+
+`Database.postgres(url)` opens a PostgreSQL store from a `postgresql://` URL.
+It is fully transactional and rides the ordinary `transactional` write profile
+with no special-casing, and it supports bulk ingestion (`store.bulk_ingest()`)
+with the same parity/deferred/parallel behavior as SQLite and DuckDB. Only the
+psycopg 3 driver is supported: a bare `postgresql://` URL is normalized to
+`postgresql+psycopg://` and any other explicit driver is rejected. See the
+[PostgreSQL testing guide](../postgres-testing.md) for local setup.
 
 Touching a SQL-backed name (such as `httk.store.db.Database`) without the extra
 installed raises an `ImportError` naming it.
@@ -84,8 +94,78 @@ store = SqlStore(db, entry_records={})  # first-time custom-record store
 with store.transaction():
     sid = store.save(record)  # returns the integer sid; dedups; recurses
 
-same_record = store.fetch(StructureRecord, sid)  # reconstructed exactly
+same_record = store.fetch(StructureRecord, sid)  # a lazy row, decoded on access
+eager = store.fetch(StructureRecord, sid, eager=True)  # fully materialized now
 ```
+
+### Lazy records
+
+`fetch()`, `fetch_many()`, `fetch_by_content_id()`, `fetch_entry()`, and
+`referring()` return **lazy rows** by default: the parent row is read now, but
+every child, reference, and derived field decodes only when first accessed, and
+recursively — a lazy record's children are lazy rows too. Pass `eager=True` to
+any of them to fully materialize the base dataclass up front. A lazy row is a
+subclass of the storable class (`isinstance(row, StructureRecord)` holds, and
+`type(row)` is the row subclass), exposes its database `sid`, and reuses the
+memoized value on repeated access to one field.
+
+**Identity.** Repeated default fetches of one live `(class, sid)` return the
+same object; a live materialized instance takes precedence over creating a
+proxy, so an `eager=True` fetch after a lazy one hands back a fresh instance and
+replaces the cached slot (materialized-wins). Mixing eager and lazy access can
+therefore yield two distinct but equal objects for one sid while a caller still
+holds the older one. Eager materialization reuses live *materialized* nested
+objects but not lazily fetched ones (the exact-type guard skips a proxy).
+Internal cache maintenance — a failed write, dedup compensation after a save —
+may re-materialize a later fetch. Strict `is` identity across arbitrary call
+sequences is **not** promised, and never truly was: these cache clears already
+qualified the older "very same object" wording.
+
+**Lifetime.** A lazy row's deferred reads open a *fresh* connection outside the
+originating transaction, so a record that must outlive its transaction,
+connection, or engine should be fetched with `eager=True`. Accessing a lazy row
+whose originating transaction rolled back raises `ExpiredLazyRecordError`
+(naming the class and sid) — including on a field that was read before the
+rollback, and including a child sequence whose deferred read executed inside the
+rolled-back transaction. Committed-transaction rows and rows fetched outside any
+transaction are unaffected. Engine disposal does **not** invalidate proxies: the
+pool silently reconnects for file-backed databases, so the lifetime rule is
+correctness discipline, not an enforced guard.
+
+**Memory and cost.** A single live lazy row pins not just its own chunk (up to
+500 parent rows plus any child blocks already read) but the transitive closure
+of chunks and hydrators reached through its shared hydration context —
+reference targets are pinned wholesale when first read, so one held record can
+retain a broad slice of the graph until the cyclic garbage collector reclaims
+it (proxies sit in reference cycles with their pinned chunk, so `gc.collect()`
+is what frees them). Reading a field is a descriptor call plus the liveness
+guard, so a repeated read of an already-decoded field costs a few hundred
+nanoseconds rather than a plain-attribute access — bind a field to a local in
+hot loops.
+
+**Append-only framing.** The public store API is append-only, so rows a caller
+fetched are not deleted or mutated in normal use. Under the lazy default, two
+abnormal-deletion cases are honest caveats rather than guarded errors: abnormal
+external deletion of a *referenced* row surfaces at attribute access as
+`StaleResultError` naming the referenced class and sid, while abnormally deleted
+*child* rows are indistinguishable from a legitimately empty sequence (child
+rows carry no tombstones) and cannot raise. `KeyError` remains the at-call-time
+contract for an absent parent sid, in both modes. A reference *field* memoizes
+its target proxy without recording a per-field rollback token (unlike a child
+sequence, which does): correctness still holds because the target's own chunk
+carries the token and raises `ExpiredLazyRecordError` when the target's fields
+are touched.
+
+**Other behaviors.** A lazy row exposes stored/codec values without re-running
+`__post_init__` (record authors keep `__post_init__` idempotent with respect to
+stored representations); `eager=True` runs it. `dataclasses.replace(row, ...)`
+returns a plain instance of the row class and does run `__post_init__`. Lazy
+rows reject `copy.copy`, `copy.deepcopy`, and pickling (materialize with
+`eager=True` first). Reference cycles are tolerated lazily — each hop is a fresh
+proxy — whereas `eager=True` on a cyclic graph raises `SchemaError`. Storable
+records must not declare `@dataclass(order=True)` — ordering comparisons
+between a lazy row and a materialized instance raise `TypeError` (the generated
+`__lt__` requires the exact class) — and none do in the workspace today.
 
 ### Vocabulary
 
@@ -107,6 +187,37 @@ store = SqlStore(
 )
 ```
 
+Applications may keep a private entry family out of global plugin discovery.
+Supply its stable persistence names and classes directly with
+`EntryFamilyDeclaration` and `EntryRecordDeclaration`:
+
+```python
+from httk.store import EntryFamilyDeclaration, EntryRecordDeclaration
+
+private_entries = EntryFamilyDeclaration(
+    name="my-application-publications",
+    family=PublicationEntry,
+    records=(
+        EntryRecordDeclaration(
+            name="my-application-publication",
+            record=PublicationRecord,
+        ),
+    ),
+)
+store = SqlStore(db, entry_families=(private_entries,))
+```
+
+This is a store-local binding, not a registry operation. The store persists
+the stable names and optional entry-definition IRIs but never persists or
+imports arbitrary Python paths. Consequently, every reopen of a store with
+application-owned declarations must supply the same `entry_families` value.
+Omitting it raises `EntryLayoutBindingError`. Installed reusable modules should
+continue to use registry-backed `entry_records`, which permits automatic
+resolution on `SqlStore(db)`.
+Both arguments may be supplied together when one store combines reusable
+module families with application-private families; name or class collisions
+are rejected while constructing the combined layout.
+
 A single record is queried directly. A tuple of two or more records creates
 a small family dispatch table, while the representation-specific data remains
 in its normalized Record tables. Saving an exact configured record (including
@@ -114,7 +225,7 @@ saving a naturally bound domain object) makes it discoverable through
 `fetch_entry(StructureEntry, content_id)`; that method returns the actual
 concrete Record.
 
-Later `SqlStore(db)` calls trust the persisted declaration; there is no layout
+Later registry-backed `SqlStore(db)` calls trust the persisted declaration; there is no layout
 mode or schema diffing. Missing or edited record tables fail with the database's
 own errors when used. Tables are created lazily on the first write; reads never
 issue DDL. Old, unversioned, or incompatible layouts raise
@@ -130,9 +241,141 @@ Record validation runs at this storage boundary through `__httk_validate__`.
 Optional child fields use presence columns, so `None` remains distinct from an
 empty child value.
 
-While a saved or fetched instance is alive, fetching its sid again returns the
-very same object. Join-objects pointing at a stored instance are found with
-`store.referring(TagClass, field="structure", to=record)`.
+Repeated default fetches of one live `(class, sid)` return the same object (see
+[Lazy records](#lazy-records) for the full identity contract). Join-objects
+pointing at a stored instance are found with
+`store.referring(TagClass, field="structure", to=record)`, which returns lazy
+rows by default and accepts `eager=True`.
+
+## Record replacement and lineages
+
+The store is append-only, but a record can be marked as the logical successor
+of an earlier one. Every stored row carries a `logical_id` lineage identity:
+a freshly saved record starts a lineage whose id is its own sid, while
+`store.replace(predecessor, obj)` saves `obj` copying the predecessor's
+`logical_id` instead of starting a new one. Nothing is updated or deleted —
+both rows remain fetchable — and the lineage's *latest* row is simply the one
+with the highest sid.
+
+```python
+from dataclasses import dataclass
+from typing import Annotated
+
+from httk.core.storage import Indexed
+from httk.store.db import Database, SqlStore
+
+
+@dataclass(frozen=True)
+class Note:
+    key: Annotated[str, Indexed()]
+    text: str
+
+
+store = SqlStore(Database.sqlite(), entry_records={})
+with store.transaction():
+    first = Note("n", "first")
+    store.save(first)
+    second = store.replace(first, Note("n", "second"))            # replace the stored instance
+    latest = store.replace(store.fetch(Note, second), Note("n", "third"))  # a lazy proxy works too
+```
+
+`replace()` goes through the ordinary `save()` path, so its dedup policy,
+timestamp capture, identity caching, and entry dispatch behave exactly as they
+do there; it returns the new row's sid. The `predecessor` (a stored instance or
+lazy proxy) need not itself be the latest row of its lineage — replacing an
+already-replaced row extends the same lineage. If `obj` deduplicates onto an
+existing row, an equal lineage (including replacing a record with itself) is an
+idempotent no-op returning that sid, while a different lineage raises
+`EntryReplacementError`. Replacing across record tables raises `ValueError`.
+
+`store.history(obj)` returns every record sharing that lineage, oldest first
+(the fresh record, then each replacement), reconstructed lazily like `fetch()`:
+
+```python
+[record.text for record in store.history(store.fetch(Note, latest))]
+# ['first', 'second', 'third']
+```
+
+Plain `fetch()` and `searcher()` queries keep returning **all** rows of a
+lineage. Pass `only_latest=True` to `store.searcher()` to restrict *root*
+variables to the highest-sid row of each `logical_id` (bounded by `as_of` when
+given); reference and child variables stay unfiltered, and it does not require
+`store_timestamps=True`:
+
+```python
+search = store.searcher(only_latest=True)
+note = search.variable(Note)
+search.output(note, "note")
+current = [row.values[0] for row in search]  # one row per lineage
+```
+
+## Store timestamps
+
+`SqlStore` enables store-managed timestamps by default:
+
+```python
+store = SqlStore(
+    db,
+    entry_records={},
+    store_timestamps=True,
+    store_timestamp_resolution=1_000,  # nanoseconds per stored unit; default: 1,000 (microseconds)
+)
+```
+
+The stored value is `time.time_ns() // store_timestamp_resolution`. The public
+query API accepts a canonical nanosecond integer or an RFC3339/ISO-8601
+timezone-aware value and converts it to the store's units. For example, this
+historic query returns rows present at `T`:
+
+```python
+searcher = store.searcher()
+record = searcher.variable(StructureRecord)
+searcher.output(record, "record")
+searcher.add(record.store_timestamp <= "2026-01-01T00:00:00Z")
+rows = searcher.results(record=record)
+```
+
+The equivalent OPTIMADE filter is:
+
+```python
+from httk.store.db import optimade_filter_searcher
+
+rows = optimade_filter_searcher(
+    store, StructureRecord, '_httk_store_timestamp <= "2026-01-01T00:00:00Z"'
+)
+```
+
+`present at time T` means exactly `store_timestamp <= T`. FIRST-STORED-WINS
+applies: a deduplication re-save does not replace the original timestamp, and
+promoting a dependency to a main row does not replace it. One timestamp is
+captured per save transaction and one per bulk batch, so all rows written by
+that unit share its value.
+
+Before capture, the writer checks a process-local high-water mark. A clock
+regression smaller than 1 ms waits briefly when `clock_regression_grace=True`
+(the default); larger regressions, or a failed grace wait, raise
+`StoreClockRegressionError`. Set `clock_regression_grace=False` to skip the
+wait, or `allow_clock_regression=True` to disable the guard. The mark is
+per-process: reopening seeds it from stored rows, but it is not a cross-process
+clock-coordination protocol.
+
+`store.fsck()` checks for timestamps beyond the current clock plus the allowed
+future slack. An administrative repair can clamp them:
+
+```python
+store.fsck(repair=True, clamp_future_timestamps=True, known_types=(StructureRecord,))
+```
+
+Clamping is destructive to historic-query fidelity; inspect a non-repair fsck
+report and confirm the skew before using it.
+
+The query stack also exposes `as_of=T` on stored-property federation
+`query()`/`fetch()` and on the general `FederatedStore.searcher()`. The serving
+layer accepts `_httk_as_of` and includes it in stable pagination plans. Stored
+federation is availability-first: a source with `store_timestamps=False`
+deliberately ignores the cutoff and serves that source's current state; sources
+with timestamps enabled apply their own-resolution cutoff. Existing layouts do
+not require an enable/disable migration for reading this capability.
 
 ## Permanentization, degraded writes, and fsck
 
@@ -186,14 +429,69 @@ the necessary read/delete exclusion. Invalid role values are violations; with
 `repair=True` fsck normalizes them to dependency role `0` rather than inventing
 a new root.
 
+### ClickHouse bulk-fenced writes
+
+For local/CI server setup and the required `_httk_bootstrap` KeeperMap DDL,
+see the [ClickHouse testing guide](../clickhouse-testing.md).
+
+ClickHouse uses KeeperMap metadata and the persisted `bulk-fenced` profile.
+Reads do not acquire a lease. A bulk writer acquires a fresh, never-reused
+token with a strict insert, verifies that exact value during the P2 bulk-entry
+and marker operations, and releases it with an exact-value delete when
+`Database.dispose()` runs. P3 adds verification around its durable phases. The
+`ingest_state` marker is also a strict insert and carries the lease token plus
+a fresh per-ingest nonce; it is cleared only by an exact-value delete after a
+successful ingest.
+`steal_lease()` is intentionally unavailable.
+
+If a writer dies with only a lease residue, inspect `_httk_store_metadata`,
+verify that the writer is no longer alive, and delete only the observed lease
+value with a ClickHouse client:
+
+```sql
+SELECT key, value FROM _httk_store_metadata WHERE key = 'lease';
+SET keeper_map_strict_mode = 1;
+DELETE FROM _httk_store_metadata
+WHERE key = 'lease' AND value = '<observed lease JSON>';
+```
+
+Never clear `ingest_state` merely because its lease was removed. Its presence
+means the store may contain partial or inconsistent physical state, so the
+default remedy is `DROP DATABASE`, recreate the bootstrap table, and re-ingest.
+Only after a verified cleanup/rebuild has restored the declared empty-store
+invariant may an operator clear the exact observed marker value. Use the same
+strict setting:
+
+```sql
+SET keeper_map_strict_mode = 1;
+DELETE FROM _httk_store_metadata
+WHERE key = 'ingest_state' AND value = '<observed marker JSON>';
+```
+
+Do not delete values belonging to a live writer or use broad key-only deletes.
+
 ## Bulk ingestion
 
-`store.bulk_ingest()` is a faster path than a `save()` loop for **building a
-store from scratch or appending a large increment** to one. It returns a
+For SQLite, DuckDB, and PostgreSQL, `store.bulk_ingest()` is a faster path than
+a `save()` loop for **building a store from scratch or appending a large
+increment** to one. It returns a
 `httk.store.db.bulk.BulkIngest` context manager that mirrors `save()` but buffers
 encoded rows with pre-assigned sids and appends them in `executemany` batches
 inside one transaction, instead of one statement round-trip and an in-database
 deduplication protocol per record. It is a near drop-in for the save loop:
+
+ClickHouse bulk ingestion is currently fresh-store-only and stops at the P2
+lease-plus-marker boundary until P3 supplies its nontransactional loader and
+finalizer. It does not provide rollback or exact restoration; marker residue
+fails closed and the default recovery is drop-and-reingest.
+
+**Known limitation — PostgreSQL bulk `NaN` in a list-of-floats field.** Under
+PostgreSQL bulk ingest, a `NaN` value inside a stored **list-of-floats (child)
+field** is not preserved: it reads back as `NULL`. Bulk ingest stages rows
+through SQLite shards, which cannot represent `NaN`, so the value is lost in the
+list column. A **scalar** float `NaN` IS preserved under bulk ingest, and the
+serial `save()` path preserves `NaN` in both scalar and list-of-floats fields on
+every backend.
 
 ```python
 # Per-record save loop
@@ -221,8 +519,8 @@ second `bulk_ingest()` context on the same store is refused. Reads from an
 already-open store remain available; a new open is rejected while an
 empty-store ingest marker is present.
 
-**One spanning transaction, all-or-nothing.** The whole ingest runs in a single
-transaction that commits only on clean exit. Any exception — a metadata
+**SQLite/DuckDB transaction and restoration.** On SQLite and DuckDB, the whole
+ingest runs in a single transaction that commits only on clean exit. Any exception — a metadata
 conflict, a uniqueness violation, or one you raise inside the block — rolls the
 transaction back, drops every table the context created, restores any index it
 dropped, removes its staging tables, and clears the store's identity caches,
@@ -231,6 +529,10 @@ empty-store ingest, cleanup verifies that only the metadata table remains and
 then clears its marker, so retrying is safe. A hard crash can leave the marker
 behind; subsequent opens reject that store and require dropping and re-ingesting
 it.
+
+These transaction and restoration guarantees do not apply to ClickHouse. Its
+nontransactional P3 ingest will use the marker as a fail-closed recovery gate;
+an interrupted marker defaults to drop-and-re-ingest.
 
 **Deduplication and uniqueness are post-conditions, not per-row checks.** Within
 the stream, records deduplicate set-wise in memory by the class's
@@ -254,6 +556,13 @@ sid at flush. After the context exits cleanly,
 or final — to its durable stored sid. It keys on the bare sid value, so resolve
 a returned sid against the type it was saved as (sids are allocated per table,
 and one value can recur across tables).
+
+**Nested entry promotion.** `bulk.save(envelope, promote=StructureRecord)`
+makes every nested `StructureRecord` occurrence a top-level entry while keeping
+the envelope as the returned root. Pass an iterable of classes to promote more
+than one record type. Each class must be reachable from the envelope's stored
+schema; projection, role marking, and entry dispatch all remain inside the same
+worker task.
 
 **`verify_metadata`** (default `True`, a plain `bool`) controls whether a
 content-id hit compares its identity-excluded metadata against the first
@@ -555,8 +864,8 @@ rejected for lazy rows. Each row also exposes its database `sid`.
 the lazy row class and runs validation. Lazy rows intentionally reject
 `copy.copy`, `copy.deepcopy`, and pickling. Search rows bypass the store's
 identity cache: two result rows for one sid are not an identity guarantee.
-`fetch()` retains identity-while-alive, so repeated fetches of a sid return
-the same live object.
+`fetch()` returns lazy rows too (see [Lazy records](#lazy-records)); repeated
+default fetches of one live sid return the same object.
 
 An object output from an outer join can be `None`; the result row is retained,
 not dropped. If a matched sid is deleted before an object output's lazy row is
@@ -609,3 +918,8 @@ provider handoff uses the httk-core contract, while *httk-serve* also consumes
 representation (`bytes`, custom codecs) are not served, and rationals are
 served as their nearest floats. The provider is also registered (as
 `store-db-store`) for discovery through the `httk.core` registry.
+
+Each served record also exposes its lineage identity as the integer property
+`_httk_logical_id` (see [Record replacement and lineages](#record-replacement-and-lineages)),
+filterable like any other served field. Pass `only_latest=True` to
+`StoreEntryProvider` to serve only the latest row of each lineage.

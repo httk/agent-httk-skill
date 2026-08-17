@@ -9,4 +9,5 @@ demo_server/serve
 in_memory_backend
 provider_server/serve
 query_in_process
+store_server/serve
 ```

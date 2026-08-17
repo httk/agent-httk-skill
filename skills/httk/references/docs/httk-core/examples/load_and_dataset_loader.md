@@ -48,7 +48,7 @@ The file itself may be either shape:
   fields, a `data` object and an optional `indicies` object. Then `.meta` is a
   `DatasetMeta` carrying the header, the per-dataset `@id`s and the per-field
   property URLs harvested from the context; `.data` and `.index` are
-  `DatasetRecord` views whose top-level keys are reachable both as attributes
+  `DatasetLoaderRecord` views whose top-level keys are reachable both as attributes
   (`data.spacegroups`) and as items (`data["spacegroups"]`).
 
 Compression is invisible to all of this: `symmetry.json.gz` loads exactly like

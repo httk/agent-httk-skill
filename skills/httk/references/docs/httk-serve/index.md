@@ -3,7 +3,7 @@
 This site documents specifically the *httk-serve* module. For the full
 documentation of *httk₂* as a whole, see [docs.httk.org](https://docs.httk.org).
 
-*httk-serve* provides the web and OPTIMADE capabilities of *httk₂*: it turns
+*httk-serve* provides HTTP, DSP, web, and OPTIMADE capabilities for *httk₂*: it turns
 data supplied through the neutral `httk.core.EntryProvider` contract into a
 standards-compliant OPTIMADE API, and ships the website machinery (widgets,
 templates, deployment) that presents it. It carries no knowledge of what it
@@ -19,6 +19,10 @@ protocol.
 - **How the OPTIMADE side works**: {doc}`optimade/how_it_works`
 - **Build and deploy the website**: {doc}`web/index` — widgets, templates,
   Apache/nginx deployment
+- **Serve a small protocol contract**: {doc}`http/openapi` — caller-owned schemas
+  and operation handlers
+- **Serve standalone JSON or files**: {doc}`http/index` — lightweight HTTP
+  applications without a website source tree
 - **API reference**: {doc}`reference/index`
 ```
 
@@ -48,6 +52,8 @@ to running service.
 ```{toctree}
 :maxdepth: 2
 
+dsp
+http/index
 web/index
 optimade/index
 reference/index

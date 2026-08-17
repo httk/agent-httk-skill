@@ -76,7 +76,7 @@ with `job new --environment NAME=VALUE`.
 $ httk workflow remote add kappa --template ssh-slurm
 $ httk workflow remote configure kappa \
       --set host=kappa.example.org --set username=rar --set check_connectivity=yes
-$ httk workflow remote install kappa                  # installs httk-workflow there
+$ httk workflow remote check kappa                    # verifies httk answers there
 $ httk workflow workspace init kappa:/scratch/rar/httk/runs
 $ httk workflow workspace settings set kappa:runs slurm.partition batch
 $ httk workflow workspace settings set kappa:runs vasp.command "srun -n 32 vasp_std"
@@ -86,6 +86,14 @@ A *remote* is one reachable machine (named like `git remote`). The owning
 machine chooses the workspace path; it registers under its basename, so it is
 addressed as `kappa:runs` from then on. Templates cover ssh + scheduler
 combinations; `remote show` never prints credential values.
+
+httk₂ is never installed on the remote for you — set up *httk-workflow* there
+yourself (a venv, `pipx install httk-workflow`, a module) so it answers from a
+*non-interactive* shell; `remote check` only verifies that and reports the
+version it found. Software the runners need at execution time (`module load
+VASP`, a `source activate`) belongs in a **prelude**, not in `vasp.command`:
+`environment.prelude` applies workspace-wide, `workspace workflow-prelude set
+WS ID "…"` is per workflow (both run under `set -e`); see `taskmanager.md`.
 
 **Pitfall:** the adapters read JSON over the remote's stdout. A login banner or
 shell greeting printed on stdout on the remote breaks transfers ("remote offer

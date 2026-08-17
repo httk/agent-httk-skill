@@ -14,24 +14,32 @@ sid = store.save(structure)
 back = store.fetch_by_content_id(UnitcellStructure, cid)
 ```
 
-- Built on SQLAlchemy Core; SQLite and DuckDB supported (plus a MongoDB
-  backend — see `docs/httk-store/mongo.md`); bulk loads via
+- Built on SQLAlchemy Core; SQLite, DuckDB, and PostgreSQL supported (plus a
+  MongoDB backend — see `docs/httk-store/mongo.md`); bulk loads via
   `store.bulk_ingest()` (optionally `workers=N` for parallel encoding)
-  (`httk-store[duckdb]`). Domain objects stay ordinary frozen dataclasses; the
-  store consumes their declared record classes.
+  (`httk-store[duckdb]` / `httk-store[postgresql]`). Domain objects stay
+  ordinary frozen dataclasses; the store consumes their declared record classes.
 - The `entry_records` declaration is **required on first open**, stamped into
   the store, and **trusted on reopen** (byte-identical check; a mismatch
   raises `StorageLayoutUpgradeRequiredError` — rebuild, no migration).
 - DDL happens only on write; read paths treat missing tables as empty.
 - Identity: `content_id` (content addressing) + local integer `sid`;
   duplicate saves dedup exactly, with metadata-conflict detection.
+- Append-only versioning: every row carries a `logical_id` lineage.
+  `store.replace(predecessor, obj)` saves a successor sharing that lineage
+  (nothing is updated or deleted), `store.history()` walks a lineage
+  oldest-first, and `searcher(only_latest=True)` restricts roots to the latest
+  row of each. Store-managed timestamps + `searcher(as_of=T)` historic search
+  are on by default.
 - Queries: the neutral query layer (`httk.store.query`) — expressions,
   portable queries, OPTIMADE filter *translation*
   (`httk.store.query.optimade_filters`) — plus `Searcher`/`Store` protocols
   every backend implements.
 - Federation: `FederatedStore` (live fan-out over already-open stores,
   read-only union) vs `db.stored_federation` (a persisted registry of
-  (store, family, prefix) sources with audits).
+  (store, family, prefix) sources with audits). `searcher(as_of=, only_latest=)`
+  are forwarded to every child; a child without store timestamps raises
+  `FederatedSourceError` on `as_of` rather than silently serving current state.
 
 ### Validation and provenance serving
 
@@ -70,6 +78,10 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   before serving (see the `example_website_httk` repo's `serve_optimade.py`
   for a complete worked service: CSVs + CONTCAR.bz2 → exact structures → 180
   served entries with custom properties and linked references).
+- Serve a store directly with `StoreEntryProvider` (registered as
+  `store-db-store`): each record also exposes its lineage as the integer
+  property `_httk_logical_id`, filterable like any field; pass
+  `only_latest=True` to serve only the latest row of each lineage.
 - `OptimadeStore` is the read-only *client*: point it at any OPTIMADE API and
   query it through the same neutral Store/Searcher protocols; combine remote
   and local stores with `FederatedStore`.

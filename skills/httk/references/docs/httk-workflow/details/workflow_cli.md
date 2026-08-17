@@ -41,7 +41,7 @@ carries the same switch on the leaf that acts on it, so both spellings work.
 ## The complete tree
 
 ```text
-httk workflow workspace  init | list | default | move | forget | delete | status | managers | settings show | settings set | settings unset | policy show | policy set | fsck | gc | unlock
+httk workflow workspace  init | list | default | move | forget | delete | status | managers | settings show | settings set | settings unset | workflow-prelude show | workflow-prelude set | workflow-prelude unset | policy show | policy set | fsck | gc | unlock
 httk workflow runner     publish | describe
 httk workflow build      [WORKSPACE] TARGET
 httk workflow job        new | submit | request | list | show | log | why | debug
@@ -49,12 +49,13 @@ httk workflow describe   TARGET [--json]
 httk workflow precheck   [WORKSPACE] [--placement P] [--json]
 httk workflow collect
 httk workflow postprocess
+httk workflow run        [WORKSPACE]  (the recommended spelling of `manager run`)
 httk workflow manager    run
 httk workflow campaign   init | show | submit | collect | start-managers
 httk workflow v1         collect
 httk workflow config     init | show | set | unset | import-v1
 httk workflow project    init | import-v1 | show | doctor | manifest create | manifest verify
-httk workflow remote     list | add | configure | install | import-v1 | show | remove
+httk workflow remote     list | add | configure | check | import-v1 | show | remove
 httk workflow transfer   SRC DST      (plus the protocol spellings: receive | offer | retire)
 ```
 
@@ -90,6 +91,9 @@ them to a remote workspace for execution.
 | `workspace settings show NAME [KEY]` | print the application settings, or one | `--json` |
 | `workspace settings set NAME KEY VALUE` | store one application setting | |
 | `workspace settings unset NAME KEY` | remove one application setting | |
+| `workspace workflow-prelude show NAME [WORKFLOW]` | print the per-workflow preludes, or one | `--json` |
+| `workspace workflow-prelude set NAME WORKFLOW VALUE` | store one workflow's prelude (`VALUE` may be `@FILE`) | `--no-durable` |
+| `workspace workflow-prelude unset NAME WORKFLOW` | remove one workflow's prelude | `--no-durable` |
 | `workspace policy show NAME` | print the workspace policy | `--json` |
 | `workspace policy set NAME KEY VALUE` | store one policy member | `--json` |
 | `workspace fsck NAME` | check every marker against its journal frame (remote: over the adapter) | `--repair`, `--quarantine-unrepairable`, `--json` |
@@ -148,6 +152,12 @@ published source tree. `--list` does no build and prints the workspace's
 registrations; `--json` emits machine-readable build or list records. Exit 0
 means the registration completed (or the list was read); malformed targets,
 probe/build failures, and missing artifacts are nonzero failures.
+
+The build vocabulary and engine come from `httk.core.building`; this layer keeps
+the workspace runner-build store, platform-tagged registrations, and manager
+artifact overlay. A plugin-sourced workflow is first resolved and pinned into
+the workspace like any other package, then built with the same command using
+its job or store runner target.
 
 ### `job` — making jobs, and finding out about them
 
@@ -228,6 +238,11 @@ disagree with what the runner reports. The drift is reported, not gated:
 
 Directory package authoring, manifest validation, publication, and hook trust
 tiers are documented in {doc}`workflow_packages`.
+
+Installed-plugin workflow names are included in the registered-workflow
+listings. Listing and unknown-workflow hint entries carry `[plugin PLUGIN_NAME]`
+for their owner; `describe` resolves a plugin name and reports its source as
+`installed-package`.
 
 ### `precheck` — readiness before an attempt
 
@@ -360,7 +375,7 @@ unambiguous.
 | `remote list` | list the remotes this project can reach | |
 | `remote add NAME` | create a remote from a packaged adapter template | `--template`, `--global`, `--non-interactive` |
 | `remote configure REMOTE` | run the adapter's `configure` operation | `--set KEY=VALUE`, `--adapter-timeout` |
-| `remote install REMOTE` | run the adapter's `install` operation | `--set KEY=VALUE`, `--adapter-timeout` |
+| `remote check REMOTE` | check that `httk` answers on the remote | `--set KEY=VALUE`, `--adapter-timeout` |
 | `remote import-v1 SOURCE` | map a legacy *httk* v1 computer bundle | `--name`, `--global` |
 | `remote show NAME` | describe one remote and its settings | `--json` |
 | `remote remove NAME` | remove one remote bundle | `--force` |
@@ -765,6 +780,34 @@ environment (`vasp.command` becomes `HTTK_VASP_COMMAND`) and snapshots them into
 `context.json`, so a runner sees the values the workspace held when its job was
 claimed. See {doc}`/vasp_runners` and {doc}`/sdks/sdk_parity`.
 
+### Workflow preludes
+
+Two layers of shell setup run before a job's runner, both sourced under `set -e`
+so a failing line aborts the job rather than running the calculation in a broken
+environment:
+
+- **`environment.prelude`** — the workspace-wide layer, one shell fragment that
+  applies to every job. It is an ordinary application setting: `workspace
+  settings set NAME environment.prelude "…"`.
+- **`workflow-prelude`** — the per-workflow layer, keyed by workflow id (the
+  `[workflow].id` of the manifest, `=` the job's `workflow`). It applies only to
+  jobs of that workflow and runs *after* the workspace-wide prelude:
+
+  ```console
+  httk workflow workspace workflow-prelude set my-workspace relax-vasp "module load VASP/6.2.1"
+  httk workflow workspace workflow-prelude set my-workspace relax-vasp @prelude.sh
+  httk workflow workspace workflow-prelude show my-workspace
+  httk workflow workspace workflow-prelude unset my-workspace relax-vasp
+  ```
+
+  `VALUE` is stored verbatim (never JSON-parsed); `@FILE` reads the shell text
+  from a file, for a multi-line module-load script kept on disk. Without
+  `--json`, `show` is line-oriented (`WORKFLOW⇥text`), so a multi-line prelude's
+  continuation lines carry no id prefix — machine consumers should use `--json`.
+
+See {doc}`/taskmanager` for how each layer is delivered on a local versus a
+remote (slurm) manager, and why preludes stay behind when a job is transferred.
+
 ## Workspace policy and integrity
 
 The tunables a workspace shares with every process attaching it — the
@@ -869,7 +912,7 @@ copied or run. Any other `kind` in a `remote.json` is refused rather than
 executed in the wrong place.
 
 `remote configure --set KEY=VALUE` persists only the machine-level keys
-`bootstrap`, `check_connectivity`, `host`, `httk_command`, `legacy_settings`,
+`check_connectivity`, `host`, `httk_command`, `legacy_settings`,
 `port`, `username`, `vasp_command`, and `vasp_pseudo_library`
 in the shareable `remote.json`. Scheduler profile values are workspace
 settings: use `slurm.account`, `slurm.partition`, `slurm.time_limit`,
@@ -899,7 +942,7 @@ configured host, where the manager is submitted with `sbatch`. Only `ssh` and
 | Operation | `ssh-slurm` behaviour | Settings used |
 | --- | --- | --- |
 | `configure` | verifies the host answers with a cheap remote `true`, so a mistyped host fails immediately instead of at the first transfer | `host`, `username`, `port`, `check_connectivity` |
-| `install` | checks that `httk` answers on the far side and reports its version | `host`, `username`, `port`, `httk_command`, `bootstrap` |
+| `install` (the `remote check` verb) | checks that `httk` answers on the far side and reports its version | `host`, `username`, `port`, `httk_command` |
 | `push` / `pull` | one `rsync --archive` transfer, creating missing destination components; a `pull` is always the whole remote directory, a `push` is the whole tree or the request's explicit relative `files` batch | `host`, `username`, `port` |
 | `invoke` | runs the request's argument vector on the host, optionally in the request's directory, and returns its status, stdout and stderr | `host`, `username`, `port`, `httk_command` |
 | `status` | the same machinery running `httk workflow workspace status NAME --json` remotely | as `invoke` |
@@ -933,13 +976,31 @@ built by a single helper that quotes element-wise; nothing else composes a
 command string. `rsync` transfers pass `--protect-args` so that even file names
 travel in the protocol rather than through the remote shell.
 
-### Installing httk on the target
+### httk on the target: `remote check`
 
-`remote install` never installs software behind your back. It reports the
-`httk` it found and the workspace directory it ensured; when nothing answers it
-fails with a message pointing at `pipx install httk-workflow` on the target.
-Configuring the remote with `bootstrap=pip` opts into one attempt at
-`python3 -m pip install --user httk-workflow` before that check is repeated.
+httk is never installed on a remote for you: setting up software on an HPC
+account is yours to do, because every cluster does it differently (modules,
+venvs, conda, pipx, ...). The contract is simply that the connection the
+adapter opens — a *non-interactive* shell — can run `httk`, with the
+*httk-workflow* package installed beside the core.
+
+`remote check` verifies exactly that, and running it once after configuring a
+new remote is recommended: it confirms the host answers, that `httk` is found
+(also trying `python3 -m httk.core.cli`), that the workflow command group
+exists, and reports the command and version it found. `--version` alone would
+only prove httk-core.
+
+When the check fails, log in on the remote and make sure httk₂ is set up and
+available there — for example with `pipx install httk-workflow` — and note
+that it must be reachable from a *non-interactive* shell: a `module load` or
+conda activation guarded by an interactivity test in `.bashrc` works when you
+log in but not over the adapter's connection. If `httk` deliberately lives
+elsewhere (a project venv, a wrapper script), point the remote at it with
+`remote configure REMOTE --set httk_command="/proj/venv/bin/httk"` instead.
+
+In the adapter protocol this operation keeps its historical spelling
+`install`; the earlier `bootstrap=pip` opt-in that attempted a
+`pip install --user` is retired.
 
 ## Detached transfers
 
@@ -961,15 +1022,16 @@ destination.
 
 ## Running on a remote and fetching the results
 
-Add and configure the machine, install *httk-workflow* there, create its
-workspace, then send and run a job:
+Add and configure the machine, make sure *httk-workflow* is installed there
+(log in and set it up, e.g. `pipx install httk-workflow`), verify with
+`remote check`, create its workspace, then send and run a job:
 
 ```console
 httk workflow remote add kappa --template ssh-slurm
 httk workflow remote configure kappa \
     --set host=kappa.example.org --set username=rar \
     --set check_connectivity=yes
-httk workflow remote install kappa
+httk workflow remote check kappa
 httk workflow workspace init kappa:/scratch/rar/httk/runs
 httk workflow workspace settings set kappa:runs slurm.partition batch
 httk workflow workspace settings set kappa:runs vasp.command "srun -n 32 vasp_std"

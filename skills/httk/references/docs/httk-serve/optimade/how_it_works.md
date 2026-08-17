@@ -57,13 +57,13 @@ callback. The standard implementation is provided by `BackendAdapter`:
   one generically from a property-key map and the entry's property types. When a
   `BackendAdapter` is given no handlers, it derives them from its schema.
 
-*httk-serve* is a generic implementation of the OPTIMADE *protocol*: it
-carries no materials-science knowledge of its own. The served entry types,
-their properties, and their records are supplied from outside — see
-[Entry providers](#entry-providers). A backend can also plug in at the lower
-level by implementing the store protocols directly; the repository's
-`examples/optimade/demo_server/` shows a complete in-memory implementation serving
-several entry types.
+*httk-serve* is a generic implementation of the OPTIMADE *protocol*: it carries
+no materials-science knowledge of its own. In a durable deployment, configured
+entry families are discovered from `EntryStore` and queried lazily through
+`adapter_from_store`; see [Serving directly from an entry
+store](serving_stores.md). A record saved after application construction is
+visible without rebuilding an adapter. `EntryProvider` is the separate
+in-memory ingestion path for generated and compatibility datasets.
 
 (entry-providers)=
 ## Entry providers
@@ -88,6 +88,13 @@ providers into a fully wired `BackendAdapter` over an in-memory store: it builds
 the `ServedSchema` from the definitions (validating each served property
 against the definition), the filter handlers from the property keys, and the
 response-field extractors from the property keys, then loads the records.
+
+`adapter_from_store(store)` (`backend/stores.py`) instead reads the store's
+declared entry layout, ignores families without an OPTIMADE definition, and
+builds a `StoredBackendAdapter`. Its query callback delegates filtering,
+sorting, counting, pagination, and record hydration to durable entry
+federations. It never calls `EntryProvider.records()` and never copies the
+database into an `InMemoryStore`.
 
 The materials provider itself lives in *httk-atomistic*
 (`httk.atomistic.entries.structures.StructureEntryProvider`), which serves
@@ -136,8 +143,33 @@ Optional parts of the specification that are not implemented: cross-source sort
 merging, filtering on relationship paths nested deeper than one level
 (`references.structures.x`), on relationship `meta`
 (`.description`/`.role`), and dotted `LENGTH` filters, the sparse JSON Lines
-layout, index meta-databases, transaction mechanisms, and rejection of
-unrecognized query parameters.
+layout, transaction mechanisms, and rejection of unrecognized query parameters.
+
+## Index meta-databases and composition
+
+An index is configured separately from a normal backend-backed OPTIMADE
+service. Its links contain one `root` and any `child`, `external`, or
+`providers` entries; `default_link_id` optionally selects a child:
+
+```python
+from httk.serve import ASGIAppMount, compose_asgi_apps
+from httk.serve.optimade import OptimadeIndexConfig, create_index_asgi_app
+
+index = create_index_asgi_app(
+    OptimadeIndexConfig(links=[root_link, amdb_link], default_link_id="amdb"),
+    baseurl="https://example.org/optimade/index/",
+)
+app = compose_asgi_apps(
+    [ASGIAppMount("/optimade/index", index), ASGIAppMount("/optimade/amdb", amdb_app)],
+    root=ASGIAppMount("/", website_app),
+)
+```
+
+`compose_asgi_apps` orders nested mounts from most specific to least specific
+and coordinates the Starlette lifespan of every child. The index has no
+backend adapter: its `/info`, `/links`, and unversioned `/versions` responses
+are produced by the same request, version, rendering, reporting, and CORS
+pipeline as an ordinary service.
 
 ## Serving additional entry types
 

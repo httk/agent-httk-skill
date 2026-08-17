@@ -17,7 +17,7 @@ scale. It is distributed as a family of packages sharing the `httk` namespace:
 | httk-core | `httk.core` | contracts and shared vocabulary: exact math, vectors, datastreams, records, registries, `load`/`save`/`fetch` (stdlib-only) |
 | httk-atomistic | `httk.atomistic` | crystal structures: cells, sites, species, symmetry/ASU, trajectories, ASE/pymatgen/VASP integrations |
 | httk-io | `httk.io` | file formats: CIF/mCIF, POSCAR, OUTCAR, XDATCAR, OSZICAR, POTCAR, WAVECAR, trajectory JSONL |
-| httk-store | `httk.store` | data management: SQL stores (SQLite/DuckDB), validation, query, federation, provenance serving |
+| httk-store | `httk.store` | data management: SQL stores (SQLite/DuckDB/PostgreSQL), validation, query, federation, versioning, provenance serving |
 | httk-workflow | `httk.workflow` | campaigns: projects, workspaces, runners, remotes/HPC, transfers, collection |
 | httk-analyse | `httk.analyse` | analysis: convex hulls (`generic`), phase diagrams + plotting (`matsci`) |
 | httk-serve | `httk.serve` | dissemination: websites (`httk.serve.web`) and a generic OPTIMADE server (`httk.serve.optimade`) |

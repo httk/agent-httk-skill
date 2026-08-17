@@ -84,6 +84,12 @@ store = MongoStore(
 )
 ```
 
+Application-private families can instead use the same explicit
+`EntryFamilyDeclaration`/`EntryRecordDeclaration` and `entry_families=` API as
+`SqlStore`. Such declarations bypass global discovery and must be supplied
+again on every reopen; see [Vocabulary](db.md#vocabulary) for the complete
+example and binding rules.
+
 The document layout is backend-specific, while the vocabulary of entry
 families, records, content ids, sids, projections, and stored properties is
 shared with the SQL layer. See [Vocabulary](db.md#vocabulary) for those
@@ -95,7 +101,11 @@ reserved counters collection; they are local to a store and are never reused.
 
 `save()` recursively stores a record graph and returns its integer sid.
 `fetch()` reconstructs the record, while `fetch_by_content_id()` and
-`fetch_entry()` provide content-addressed and entry-family access. The three
+`fetch_entry()` provide content-addressed and entry-family access. `MongoStore`
+has no lazy-row machinery: the whole document is already in memory at read, so
+the fetch verbs accept the `eager` keyword for backend transparency with
+`SqlStore` but always return a fully materialized record (values and semantics
+are identical either way). The three
 `StorageInfo.dedup` policies are supported with the same content, value, and
 non-deduplicating meanings as `SqlStore`; identity-excluded metadata conflicts
 are still checked. Nested non-storable children are embedded in the owning
@@ -110,6 +120,85 @@ transaction mode the backing and dispatch writes share one transaction. In
 degraded mode the backing is written first, so a crash can temporarily make
 `fetch_entry()` report dispatch integrity failure; re-saving the record or
 running fsck repairs the main-role case.
+
+## Record replacement and lineages
+
+`MongoStore` carries the same `logical_id` lineage identity and append-only
+replacement API as the SQL backend: `store.replace(predecessor, obj)` saves a
+logical successor sharing the predecessor's lineage, `store.history(obj)` walks
+that lineage oldest-first, and `store.searcher(only_latest=True)` restricts
+root variables to each lineage's latest document. The semantics — idempotent
+same-lineage replacement, `EntryReplacementError` on a cross-lineage dedup hit,
+and `only_latest` leaving reference/child scopes unfiltered — match SQL exactly;
+see [Record replacement and lineages](db.md#record-replacement-and-lineages).
+
+## Store timestamps
+
+`MongoStore` enables store-managed timestamps by default:
+
+```python
+store = MongoStore(
+    database,
+    entry_records={},
+    store_timestamps=True,
+    store_timestamp_resolution=1_000,  # nanoseconds per stored unit; default: 1,000 (microseconds)
+)
+```
+
+The stored value is `time.time_ns() // store_timestamp_resolution`. The public
+query API accepts a canonical nanosecond integer or an RFC3339/ISO-8601
+timezone-aware value and converts it to the store's units. For example, this
+historic query returns rows present at `T`:
+
+```python
+searcher = store.searcher()
+record = searcher.variable(StructureRecord)
+searcher.output(record, "record")
+searcher.add(record.store_timestamp <= "2026-01-01T00:00:00Z")
+rows = searcher.results(record=record)
+```
+
+The equivalent OPTIMADE filter is:
+
+```python
+from httk.store.mongo import optimade_filter_searcher
+
+rows = optimade_filter_searcher(
+    store, StructureRecord, '_httk_store_timestamp <= "2026-01-01T00:00:00Z"'
+)
+```
+
+`present at time T` means exactly `store_timestamp <= T`. FIRST-STORED-WINS
+applies: a deduplication re-save does not replace the original timestamp, and
+promoting a dependency to a main row does not replace it. One timestamp is
+captured per save transaction and one per bulk batch, so all rows written by
+that unit share its value.
+
+Before capture, the writer checks a process-local high-water mark. A clock
+regression smaller than 1 ms waits briefly when `clock_regression_grace=True`
+(the default); larger regressions, or a failed grace wait, raise
+`StoreClockRegressionError`. Set `clock_regression_grace=False` to skip the
+wait, or `allow_clock_regression=True` to disable the guard. The mark is
+per-process: reopening seeds it from stored rows, but it is not a cross-process
+clock-coordination protocol.
+
+`store.fsck()` checks for timestamps beyond the current clock plus the allowed
+future slack. An administrative repair can clamp them:
+
+```python
+store.fsck(repair=True, clamp_future_timestamps=True, known_types=(StructureRecord,))
+```
+
+Clamping is destructive to historic-query fidelity; inspect a non-repair fsck
+report and confirm the skew before using it.
+
+The query stack also exposes `as_of=T` on stored-property federation
+`query()`/`fetch()` and on the general `FederatedStore.searcher()`. The serving
+layer accepts `_httk_as_of` and includes it in stable pagination plans. Stored
+federation is availability-first: a source with `store_timestamps=False`
+deliberately ignores the cutoff and serves that source's current state; sources
+with timestamps enabled apply their own-resolution cutoff. Existing layouts do
+not require an enable/disable migration for reading this capability.
 
 ## Roles, leases, and fsck
 
