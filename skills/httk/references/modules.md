@@ -8,7 +8,9 @@ Public root surface (~76 names). The ones users touch most:
   with transparent `.gz`/`.bz2`/`.xz` handling; dispatch by extension or exact
   basename (`POSCAR`, `OUTCAR`, `WAVECAR`, …); `raw=True` returns the neutral
   payload instead of the domain object. `fetch` requires the explicit
-  `DatastreamURL` consent for network sources.
+  `DatastreamURL` consent for network sources. The `httk convert INPUT OUTPUT
+  [--format FORMAT]` CLI is the shell wrapper (load → save; formats come from
+  installed modules, e.g. CIF↔POSCAR with httk-io + httk-atomistic).
 - Exact numerics: `FracVector`, `MutableFracVector`, `SurdVector`,
   `SurdScalar`, `httk.core.exactmath` (sqrt/cos/sin/…, exact or
   correctly-rounded Decimal), `to_numeric`/`to_numeric_scalar`, `precision`
