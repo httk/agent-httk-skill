@@ -5,10 +5,10 @@
 ### SqlStore — the backend-agnostic SQL store
 
 ```python
-from httk.store.db import Database, SqlStore
+from httk.store import Backend, SqlStore
 from httk.atomistic import UnitcellStructure  # families register their records
 
-store = SqlStore(Database.sqlite("results.sqlite"),   # or Database.duckdb(...)
+store = SqlStore(Backend.sqlite("results.sqlite"),   # or Backend.duckdb(...)
                  entry_records={...})                  # family → record classes
 sid = store.save(structure)
 back = store.fetch_by_content_id(UnitcellStructure, cid)
@@ -36,7 +36,7 @@ back = store.fetch_by_content_id(UnitcellStructure, cid)
   (`httk.store.query.optimade_filters`) — plus `Searcher`/`Store` protocols
   every backend implements.
 - Federation: `FederatedStore` (live fan-out over already-open stores,
-  read-only union) vs `db.stored_federation` (a persisted registry of
+  read-only union) vs `httk.store.backend.sql.stored_federation` (a persisted registry of
   (store, family, prefix) sources with audits). `searcher(as_of=, only_latest=)`
   are forwarded to every child; a child without store timestamps raises
   `FederatedSourceError` on `as_of` rather than silently serving current state.

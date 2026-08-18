@@ -1,6 +1,6 @@
 # Storing frozen dataclasses in a database, exactly
 
-`httk.store.db` stores **plain frozen dataclasses**. There is no base class to
+`httk.store.backend.sql` stores **plain frozen dataclasses**. There is no base class to
 inherit, no metaclass, no ORM session: any frozen dataclass whose field types
 resolve is storable, and the vocabulary that fine-tunes how it is stored lives
 in *httk-core* (`Indexed`, `Unique`, `Skip`, `Shape`, `StorageInfo`,
@@ -60,9 +60,9 @@ the foreign key, without writing a query.
 
 ## Persistence
 
-`Database.sqlite(path)` is a file; `Database.sqlite()` is in memory. The last
+`Backend.sqlite(path)` is a file; `Backend.sqlite()` is in memory. The last
 section saves into a file, disposes the database entirely, reopens it in a
-second `Database`/`SqlStore` pair, and fetches the same sid back.
+second `Backend`/`SqlStore` pair, and fetches the same sid back.
 
 ```{literalinclude} ../../examples/storable_records.py
 :language: python
