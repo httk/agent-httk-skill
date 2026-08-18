@@ -3,7 +3,7 @@
 A POSCAR (or its relaxed sibling CONTCAR) is VASP's structure file: a comment
 line, a scaling factor, three lattice vectors, the species and how many atoms of
 each, a coordinate-mode line, and then the coordinates. It is a small format
-with a surprising number of variants, and `httk.io.read_poscar` handles them
+with a surprising number of variants, and `read_poscar` handles them
 while making one strong promise: **it never converts a number**. Every numeric
 field comes back as the verbatim string found in the file, so no rounding
 happens at the I/O layer. Turning that mapping into an exact `UnitcellStructure`
@@ -53,7 +53,7 @@ truncated file points at where it stopped making sense rather than failing
 somewhere far away.
 
 The last section shows the reader reached through `httk.core.load` instead of
-directly. Importing `httk.core` discovers the `httk.registry.io.io` registry
+directly. Importing `httk.core` discovers the `httk.registry.io.atomistic` registry
 package, which registers this loader under the extensions `.poscar` / `.vasp`
 *and* under the exact basenames `POSCAR` / `CONTCAR` — because the canonical
 VASP files have no extension at all. `load` therefore dispatches a plain

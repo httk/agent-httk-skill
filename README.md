@@ -124,7 +124,7 @@ source trees produce byte-identical ZIP files.
 ## Refresh the documentation snapshot
 
 From a checkout that has the httk₂ module repositories as siblings
-(`httk-core`, `httk-atomistic`, `httk-io`, `httk-store`, `httk-workflow`,
+(`httk-core`, `httk-atomistic`, `httk-store`, `httk-workflow`,
 `httk-analyse`, and `httk-serve`):
 
 ```console

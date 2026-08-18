@@ -1,7 +1,7 @@
 # Reading, inspecting and writing CIF files
 
 The Crystallographic Information File (CIF) format is the standard exchange
-format for crystal structures. *httk-io* provides a low-level CIF stack that
+format for crystal structures. *httk-atomistic* provides a low-level CIF stack that
 treats a CIF as what it literally is — a sequence of named data blocks, each a
 set of tag/value pairs plus tabular `loop_` sections — and refuses to guess what
 any of it *means*. Interpreting the tags (turning a cell and an asymmetric unit
@@ -67,8 +67,8 @@ the point of the round-trip section below: read → write → read yields an
 identical mapping.
 
 The final section shows the same file arriving through `httk.core.load`, which
-dispatches `.cif` (and `.cif.bz2`) to *httk-io* because importing `httk.core`
-discovers the `httk.registry.io.io` registry package. By default, `load(path)` returns
+dispatches `.cif` (and `.cif.bz2`) to the atomistic CIF reader because importing `httk.core`
+discovers the `httk.registry.io.atomistic` registry package. By default, `load(path)` returns
 the native `ASUStructure` when *httk-atomistic* is installed. This example uses
 `load(path, raw=True)`, which returns the neutral payload mapping instead. Blocks
 that are not structures are reported rather than raising, since a CIF may hold

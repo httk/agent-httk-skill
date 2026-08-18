@@ -1,20 +1,24 @@
 # Reading VASP output files
 
-The VASP readers keep numeric lexemes as strings. The I/O layer does not parse
-numbers into floats; counts and iteration indices are the small structural
-integer exceptions.
+*httk-atomistic* ships string-preserving readers for the VASP output files under
+`httk.atomistic.integrations.vasp.io`. The I/O layer does not parse numbers into
+floats; numeric lexemes are kept as strings, and counts and iteration indices are
+the small structural integer exceptions. The domain-level `VASPStructure` and
+`VASPTrajectory` wrappers that build on these readers are covered in
+{doc}`integrations`.
 
 ## POSCAR and CONTCAR
 
 `read_poscar` accepts a path, text stream, or line iterable and returns a
-neutral `vasp-poscar` mapping. Path and stream reads include `raw`, the original
-decompressed text, when it is available; line iterables set `raw` to `None`.
-Saving a payload with `raw` writes that text verbatim, so it takes precedence
-over edited tokens and preserves CRLF as well as other formatting:
+neutral `vasp-poscar` mapping (see {doc}`poscar` for the full field-by-field
+description). Path and stream reads include `raw`, the original decompressed
+text, when it is available; line iterables set `raw` to `None`. Saving a payload
+with `raw` writes that text verbatim, so it takes precedence over edited tokens
+and preserves CRLF as well as other formatting:
 
 ```python
 import httk.core
-from httk.io.vasp import read_poscar
+from httk.atomistic.integrations.vasp.io import read_poscar
 
 text = "c\r\n1.0\r\n1 0 0\r\n0 1 0\r\n0 0 1\r\nHe\r\n1\r\nDirect\r\n0 0 0\r\n"
 payload = read_poscar(text.splitlines(keepends=True))
@@ -64,7 +68,7 @@ positive. `stress_gpa_voigt()` multiplies by `0.1`, flips the sign to make
 tension positive, and returns `[xx, yy, zz, yz, xz, xy]`:
 
 ```python
-from httk.io.vasp import OutcarFrame
+from httk.atomistic.integrations.vasp.io import OutcarFrame
 
 frame = OutcarFrame(0, None, None, None, ("1", "2", "3", "4", "5", "6"), None, None, None, None)
 assert frame.stress_gpa_voigt() == (-0.1, -0.2, -0.30000000000000004, -0.5, -0.6000000000000001, -0.4)
@@ -102,9 +106,12 @@ properties hold no handles; the composite owns and closes the `OutcarFile` and
 `XdatcarFile` objects it constructs:
 
 ```python
-from httk.io.vasp import VASPOutputs
+from httk.atomistic.integrations.vasp.io import VASPOutputs
 
 with VASPOutputs("calculation") as outputs:
     assert outputs.poscar is not None
     assert outputs.outcar is None or outputs.outcar.version_string.startswith("vasp.")
 ```
+
+The runnable {doc}`/examples/parse_vasp_outputs` walks the composite reader
+end to end. For WAVECAR files, see {doc}`wavecar`.

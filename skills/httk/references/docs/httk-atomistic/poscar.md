@@ -1,11 +1,12 @@
 # Reading VASP POSCAR / CONTCAR files
 
-*httk-io* ships a string-preserving reader for VASP POSCAR/CONTCAR files,
-`httk.io.read_poscar`. It parses the file into a neutral, JSON-able mapping whose
-numeric fields are kept as the **verbatim strings** found in the file — no
-floating-point rounding happens at the I/O layer. Turning that mapping into an
-exact `UnitcellStructure` is the separate result of `httk.core.load`
-(see the *httk-atomistic* docs).
+*httk-atomistic* ships a string-preserving reader for VASP POSCAR/CONTCAR files,
+`httk.atomistic.integrations.vasp.io.read_poscar`. It parses the file into a
+neutral, JSON-able mapping whose numeric fields are kept as the **verbatim
+strings** found in the file — no floating-point rounding happens at the I/O
+layer. Turning that mapping into an exact `UnitcellStructure` is the separate
+result of `httk.core.load` (see {doc}`structures` and the POSCAR-loading section
+of {doc}`details/structures`).
 
 ## The neutral mapping
 
@@ -14,7 +15,7 @@ or a plain iterable of lines. Here we parse a small VASP-5 cell given as a list
 of lines:
 
 ```python
-from httk.io import read_poscar
+from httk.atomistic.integrations.vasp.io import read_poscar
 
 poscar_lines = [
     "Si primitive\n",
@@ -54,12 +55,12 @@ per-line species labels and velocity blocks are ignored.
 
 ## Loader registration and `load`
 
-Importing `httk.core` discovers `httk.registry.io.io`, which registers the POSCAR
-loader under the extensions `.poscar` / `.vasp` and the exact basenames `POSCAR`
-/ `CONTCAR`. `httk.core.load` therefore dispatches these files automatically,
-including compressed ones such as `CONTCAR.bz2` (the compression suffix is
-stripped to recognize the basename, and the file is decompressed transparently
-on read):
+Importing `httk.core` discovers `httk.registry.io.atomistic`, which registers the
+POSCAR loader under the extensions `.poscar` / `.vasp` and the exact basenames
+`POSCAR` / `CONTCAR`. `httk.core.load` therefore dispatches these files
+automatically, including compressed ones such as `CONTCAR.bz2` (the compression
+suffix is stripped to recognize the basename, and the file is decompressed
+transparently on read):
 
 ```python
 import bz2
@@ -80,3 +81,8 @@ with tempfile.TemporaryDirectory() as tmp:
 assert data["format"] == "vasp-poscar"
 assert data["symbols"] == ["He"]
 ```
+
+The domain-level `VASPStructure` wraps this loader to load a POSCAR/CONTCAR
+lazily and round-trip it byte-for-byte; see {doc}`integrations`. For the other
+VASP output files (OUTCAR, XDATCAR, OSZICAR, POTCAR) see {doc}`vasp_outputs`, and
+for the runnable walk-through see {doc}`/examples/parse_poscar`.

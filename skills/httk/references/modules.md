@@ -10,7 +10,7 @@ Public root surface (~76 names). The ones users touch most:
   payload instead of the domain object. `fetch` requires the explicit
   `DatastreamURL` consent for network sources. The `httk convert INPUT OUTPUT
   [--format FORMAT]` CLI is the shell wrapper (load → save; formats come from
-  installed modules, e.g. CIF↔POSCAR with httk-io + httk-atomistic).
+  installed modules, e.g. CIF↔POSCAR with httk-atomistic).
 - Exact numerics: `FracVector`, `MutableFracVector`, `SurdVector`,
   `SurdScalar`, `httk.core.exactmath` (sqrt/cos/sin/…, exact or
   correctly-rounded Decimal), `to_numeric`/`to_numeric_scalar`, `precision`
@@ -65,23 +65,28 @@ Public root surface (~76 names). The ones users touch most:
 - Extras: `httk-atomistic[numpy]` for the numeric layer, `[default]` for
   spglib.
 
-## httk-io (`httk.io`) — file formats
+### File formats (part of httk-atomistic)
 
-Registered into `httk.core.load`/`save`; direct APIs also public:
+File I/O lives in httk-atomistic since the separate file-formats distribution
+was merged in and retired (August 18 2026). Registered into
+`httk.core.load`/`save` via
+`httk.registry.io.atomistic`; direct APIs also public:
 
-- CIF/mCIF: `read_cif`, exact dual-channel payloads
+- CIF/mCIF (`httk.atomistic.io.cif`): `read_cif`, exact dual-channel payloads
   (`_httk_*_exact` companion tags preserve exactness through write/read);
   magnetic mCIF parsed to neutral payloads.
-- VASP: POSCAR read/write (string-preserving, byte-exact `raw` round-trip),
-  `OutcarFile` (lazy, streaming `frames()`, stress conventions via
-  `stress_gpa_voigt()`), `XdatcarFile`, `read_oszicar`,
-  `read_potcar_summary` (never retains POTCAR text — license), `VASPOutputs`
-  (lazy directory composite), `WavecarFile` (lazy per-band coefficients;
-  refuses compressed files), `write_vasp_volumetric` (VESTA-readable grids).
-  OUTCAR/XDATCAR accept compressed input (streaming).
-- Trajectory holding format: `httk-trajectory-jsonl` (OPTIMADE
-  partial-data-compatible JSON Lines; streaming writer, lazy reader).
-- numpy only via the optional `httk-io[numpy]` extra (WAVECAR).
+- VASP (`httk.atomistic.integrations.vasp.io`): POSCAR read/write
+  (string-preserving, byte-exact `raw` round-trip), `OutcarFile` (lazy,
+  streaming `frames()`, stress conventions via `stress_gpa_voigt()`),
+  `XdatcarFile`, `read_oszicar`, `read_potcar_summary` (never retains POTCAR
+  text — license), `VASPOutputs` (lazy directory composite), `WavecarFile`
+  (lazy per-band coefficients; refuses compressed files),
+  `write_vasp_volumetric` (VESTA-readable grids). OUTCAR/XDATCAR accept
+  compressed input (streaming).
+- Trajectory holding format (`httk.atomistic.io.optimade_jsonl`):
+  `httk-trajectory-jsonl` (OPTIMADE partial-data-compatible JSON Lines;
+  streaming writer, lazy reader).
+- numpy only via the optional `httk-atomistic[numpy]` extra (WAVECAR).
 
 ## httk-workflow (`httk.workflow`) — campaigns and execution
 

@@ -1,9 +1,11 @@
 # Reading and writing VASP WAVECAR files
 
-*httk-io* provides the numpy-backed binary WAVECAR layer through
-`httk.io.vasp`. It reads the small metadata headers eagerly and reads one
-coefficient vector at a time, which keeps the large coefficient data on disk
-until requested.
+*httk-atomistic* provides the numpy-backed binary WAVECAR layer through
+`httk.atomistic.integrations.vasp.io`. It reads the small metadata headers
+eagerly and reads one coefficient vector at a time, which keeps the large
+coefficient data on disk until requested. This is the low-level binary
+reader/writer; for the domain-level `PlaneWaveFunctions` object built on top of
+it, see {doc}`wavefunctions`.
 
 ## Installation and dispatch
 
@@ -13,9 +15,9 @@ WAVECAR support requires the optional numpy extra:
 python -m pip install -e '.[numpy]'
 ```
 
-Importing `httk.core` discovers the WAVECAR reader and writer. Files named
-`WAVECAR` and files with the `.wavecar` extension are registered. The core
-loader returns a neutral payload:
+Importing `httk.core` discovers the WAVECAR reader and writer (registered through
+`httk.registry.io.atomistic`). Files named `WAVECAR` and files with the
+`.wavecar` extension are registered. The core loader returns a neutral payload:
 
 ```python
 import httk.core
@@ -52,7 +54,7 @@ reading it. Writing likewise requires a binary filesystem path rather than a
 compressed or text stream.
 
 ```python
-from httk.io.vasp import read_wavecar, write_wavecar
+from httk.atomistic.integrations.vasp.io import read_wavecar, write_wavecar
 
 payload = read_wavecar("WAVECAR")
 write_wavecar("WAVECAR.copy", payload)
@@ -70,7 +72,7 @@ wavefunction or other scalar field needs to be opened by VESTA; pass
 `grid.real` or `grid.imag` explicitly for a complex array.
 
 ```python
-from httk.io.vasp import write_vasp_volumetric
+from httk.atomistic.integrations.vasp.io import write_vasp_volumetric
 
 write_vasp_volumetric("wave_r.vasp", poscar_payload, wave.real)
 write_vasp_volumetric("wave_i.vasp", poscar_payload, wave.imag)
