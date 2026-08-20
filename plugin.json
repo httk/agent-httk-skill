@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "httk",
-  "version": "0.1.0",
+  "version": "2.1.0",
   "description": "Work with the high-throughput toolkit (httk₂) to prepare and run large-scale distributed computational projects, and to analyze, store, and disseminate the results.",
   "author": {
     "name": "Rickard Armiento",
