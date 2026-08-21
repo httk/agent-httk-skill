@@ -21,4 +21,4 @@ operator concepts behind it.
 
 The full reference, {doc}`details/workflow_cli`, documents every command and
 option — projects and signed manifests, configuration, remotes and transfers,
-the protocol spellings, and the `httk-taskmanager`/`httk-workflow-*` aliases.
+and the protocol spellings.

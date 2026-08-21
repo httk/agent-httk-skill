@@ -133,20 +133,17 @@ placement, exactly as `httk workflow job list --placement` does.
 ## From the command line
 
 ```console
-httk workflow collect WORKSPACE
-httk workflow collect WORKSPACE --state succeeded --state failed
-httk workflow collect WORKSPACE --placement project/campaign --raw
+httk workflow collect --workspace WORKSPACE
+httk workflow collect --workspace WORKSPACE --state succeeded --state failed
+httk workflow collect --workspace WORKSPACE --placement project/campaign --raw
 ```
 
 The workspace is attached read-only. The default `collect` command prints one
-`CollectedJob` summary per line. `--raw` prints one `JobRecord` per line, while
-the hidden compatibility `--json` form materializes those raw records as an
-array.
+`CollectedJob` summary per line. `--raw` prints one `JobRecord` per line.
 
 ### Summary line and exit codes
 
-Every `collect` invocation except the pure-array `--json` form ends with one
-trailing JSONL summary line:
+Every `collect` invocation ends with one trailing JSONL summary line:
 
 ```text
 {"format":"httk-workflow-collect-summary","format_version":1,
@@ -194,7 +191,7 @@ path, the entry types this sweep needs, and the layout difference, and ends
 `Collect into a new store file.`
 
 ```console
-$ httk workflow collect workflow-workspace | head -1
+$ httk workflow collect --workspace workflow-workspace | head -1
 {"children":{},"data_generation":null,"data_path":null,"declarations":{},"failure":null,
  "format":"httk-workflow-collect","format_version":1,
  "job":{"claim":{"pool":"default","required_capabilities":[]},"data":{"mode":"none"},

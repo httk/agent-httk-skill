@@ -56,19 +56,20 @@ Metapackage name is ASCII `httk2`; the project is written *httk₂* in prose.
 From an empty directory containing a VASP-5 `POSCAR`:
 
 ```console
-$ httk project init --name myproject
-$ httk workflow workspace init . --name default
+$ httk project init --name myproject .
+$ httk workflow workspace init --name default .
 $ httk workflow job new --workflow vasp-relax --input structure=POSCAR --tag silicon
-$ httk workflow workspace settings set vasp.command "srun -n 32 vasp_std"
+$ httk workflow workspace settings set --key vasp.command --value "srun -n 32 vasp_std" default
 $ httk workflow run
 $ httk workflow collect
 ```
 
 `job new` publishes the packaged relaxation runner into the workspace and pins
 its digest (upgrading httk cannot change queued jobs); `run` drives every job
-until idle; `collect` prints one JSON `JobRecord` summary per finished job.
+until idle; `collect` prints one JSON `CollectedJob` summary per finished job
+(`--raw` emits mechanical `JobRecord` summaries).
 Monitor with `job list`, `job show JOB`, `job why JOB` (explains a stuck job),
-`job debug WS JOB` (foreground single-job loop). Registered VASP workflows:
+`job debug --workspace WS JOB` (foreground single-job loop). Registered VASP workflows:
 `vasp-relax`, `httk.vasp.static`, `httk.vasp.relax-static`, `vasp-relax-bash`.
 
 For a remote/HPC campaign (remotes, `kappa:runs` colon workspaces, `transfer`,

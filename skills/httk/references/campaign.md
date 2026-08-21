@@ -9,8 +9,8 @@ monitor, fetch results home, collect, and analyse. Everything below is
 ## 1. Project and local workspace
 
 ```console
-$ httk project init --name screening        # creates the httk_project/ anchor
-$ httk workflow workspace init . --name default
+$ httk project init --name screening .        # creates the httk_project/ anchor
+$ httk workflow workspace init --name default .
 ```
 
 A *project* is the directory a campaign lives in (identity, settings, the
@@ -59,7 +59,7 @@ for job in new_jobs(ws, "vasp-relax", items, parameters={"kpoint_density": 30.0}
 ## 3. Workspace settings (travel with the jobs)
 
 ```console
-$ httk workflow workspace settings set vasp.command "srun -n 32 vasp_std"
+$ httk workflow workspace settings set --key vasp.command --value "srun -n 32 vasp_std" default
 ```
 
 Scalar settings are exported into each attempt's environment
@@ -73,13 +73,13 @@ with `job new --environment NAME=VALUE`.
 ## 4. A remote (HPC) workspace
 
 ```console
-$ httk workflow remote add kappa --template ssh-slurm
-$ httk workflow remote configure kappa \
-      --set host=kappa.example.org --set username=rar --set check_connectivity=yes
+$ httk workflow remote add --template ssh-slurm kappa
+$ httk workflow remote configure \
+      --set host=kappa.example.org --set username=rar --set check_connectivity=yes kappa
 $ httk workflow remote check kappa                    # verifies httk answers there
 $ httk workflow workspace init kappa:/scratch/rar/httk/runs
-$ httk workflow workspace settings set kappa:runs slurm.partition batch
-$ httk workflow workspace settings set kappa:runs vasp.command "srun -n 32 vasp_std"
+$ httk workflow workspace settings set --key slurm.partition --value batch kappa:runs
+$ httk workflow workspace settings set --key vasp.command --value "srun -n 32 vasp_std" kappa:runs
 ```
 
 A *remote* is one reachable machine (named like `git remote`). The owning
@@ -93,7 +93,8 @@ yourself (a venv, `pipx install httk-workflow`, a module) so it answers from a
 version it found. Software the runners need at execution time (`module load
 VASP`, a `source activate`) belongs in a **prelude**, not in `vasp.command`:
 `environment.prelude` applies workspace-wide, `workspace workflow-prelude set
-WS ID "…"` is per workflow (both run under `set -e`); see `taskmanager.md`.
+--workflow ID --value "…" WS` is per workflow (both run under `set -e`); see
+`taskmanager.md`.
 
 **Pitfall:** the adapters read JSON over the remote's stdout. A login banner or
 shell greeting printed on stdout on the remote breaks transfers ("remote offer
@@ -103,8 +104,8 @@ a non-interactive-shell test.
 ## 5. Send, run, monitor
 
 ```console
-$ httk workflow transfer default kappa:runs --job silicon--0c4f
-$ httk workflow run kappa:runs --workers 8
+$ httk workflow transfer --job silicon--0c4f default kappa:runs
+$ httk workflow run --workspace kappa:runs --workers 8
 $ httk workflow workspace status kappa:runs
 ```
 
@@ -113,35 +114,37 @@ $ httk workflow workspace status kappa:runs
   Transfers are idempotent and resumable: rerunning the same command resumes.
   The sealed digest pins every path, content, executable bit and symlink
   target — corruption is detected, never silent.
-- `run kappa:runs` submits a manager through the remote's scheduler
+- `run --workspace kappa:runs` submits a manager through the remote's scheduler
   (`manager run` is the advanced spelling; `run` locally serves until idle,
   `--idle` keeps serving). Managers drive jobs through their steps
   (`prepare` → `run` → `publish` for the VASP runners) with the reviewed
   remedy ladder retrying known VASP failure modes.
-- Before submitting a manager, `httk workflow precheck WS` reports readiness
+- Before submitting a manager, `httk workflow precheck --workspace WS` reports readiness
   read-only: declared-environment resolution, runner reachability, per-job
   claimability against live managers, missing required inputs.
 - Monitor: `workspace status kappa:runs` (marker counts),
   `workspace managers WS` (which managers serve it, live or stale),
-  `job list [WS]`, `job show JOB`, `job why JOB` (explains a job that is
+  `job list [--workspace WS]`, `job show --workspace WS JOB`, `job why
+  --workspace WS JOB` (explains a job that is
   *not* progressing), `job log JOB`. While authoring a runner,
-  `job debug WS JOB` drives one job in the foreground printing transitions.
+  `job debug --workspace WS JOB` drives one job in the foreground printing
+  transitions.
 
 ## 6. Fetch results home and collect
 
 ```console
-$ httk workflow transfer kappa:runs default --state succeeded --state failed
+$ httk workflow transfer --state succeeded --state failed kappa:runs default
 $ httk workflow collect
 ```
 
 The reverse transfer offers finished jobs on the remote, pulls, imports, and
 retires the sources (rename, never delete; recovery bundles retained). Fetched
 jobs are then ordinary local jobs. `collect` prints one summary per finished
-job; options: `--raw` (mechanical `JobRecord`s), `--jsonl`/`--json`,
+job; options: `--raw` (mechanical `JobRecord`s),
 `--degraded` (show only jobs that degraded), `--allow-job-collector` (trust
 job-pinned collect hooks), `--into STORE` (store collected entries straight
 into an httk-store store — degraded jobs are skipped and the exit code says so).
-`httk workflow postprocess WS --script NAME` runs a workflow's curated
+`httk workflow postprocess --workspace WS --script NAME` runs a workflow's curated
 post-collection script (e.g. a relaxation plot).
 
 In Python, `collect()` yields `CollectedJob`s with typed `outputs` per declared
@@ -223,6 +226,6 @@ serve them over OPTIMADE with httk-serve.
   jobflow/atomate2 (`maker = "atomate2…:RelaxMaker"`, with real DAG
   parallelism as child jobs), or converted httk v1 template packages without
   rewriting (`docs/httk-workflow/workflow_languages.md`).
-- **Finished v1 trees**: `httk workflow v1 collect ROOT --workflow-dir PKG`
+- **Finished v1 trees**: `httk workflow v1 collect --workflow-dir PKG ROOT...`
   harvests already-computed v1 runs (`docs/httk-workflow/v1_compatibility.md`);
   this is the only v1 surface to recommend.
