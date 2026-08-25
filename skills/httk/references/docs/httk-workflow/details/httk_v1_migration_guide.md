@@ -117,10 +117,9 @@ keys or the *httk* v1 queue. Imported project metadata records
 default, but the core-v2 workspace itself remains outside the project; detached
 transfer and transactional data are available to native jobs.
 
-The workspace registry is machine-owned in *httk₂*. An old `workspaces.json`
-is refused with a teaching error; remove it and re-register local workspaces
-with `workspace init PATH` (remote names are registered on their owning
-machine). `workspace default NAME` replaces project workspace bindings: it
+The workspace registry is machine-owned in *httk₂*: local workspaces are
+registered with `workspace init PATH`, and remote names are registered on
+their owning machine. `workspace default NAME` replaces project workspace bindings: it
 records only the name in `project.json`, while the workspace remains outside
 the project.
 
@@ -133,7 +132,7 @@ httk workflow workspace init --name default cluster-a:/remote/path/to/workflow-w
 ```
 
 `workspace_root` is retired. `workspace init REMOTE:PATH` performs the remote
-initialization and registration; `workspace settings set --key KEY --value VALUE REMOTE:NAME` then
+initialization and registration; `workspace settings set REMOTE:NAME …` then
 sets scheduler and application settings on that workspace. `remote import-v1`
 does not create a workspace: it preserves the legacy Runs hint in the remote's
 `legacy_settings` so an operator can choose the path explicitly.
@@ -386,7 +385,7 @@ For application-specific monitoring, write a checker spec:
 ```json
 {
   "format": "httk-workflow-checker-spec",
-  "format_version": 1,
+  "format_version": 2,
   "argv": ["./checker.py"],
   "required": true,
   "sources": [
@@ -417,7 +416,7 @@ for line in sys.stdin:
             json.dumps(
                 {
                     "format": "httk-workflow-checker-result",
-                    "format_version": 1,
+                    "format_version": 2,
                     "code": "application_fatal",
                     "severity": "fatal",
                     "summary": "application reported a fatal error",
@@ -760,7 +759,6 @@ terminal state or cancel them through recorded operator requests:
 
 ```console
 httk workflow job request cancel --workspace workflow-workspace \
-  --operator "$USER" \
   --reason "replaced by validated native workflow" JOB_UUID
 ```
 

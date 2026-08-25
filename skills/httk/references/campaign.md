@@ -126,7 +126,7 @@ $ httk workflow workspace status kappa:runs
   `workspace managers WS` (which managers serve it, live or stale),
   `job list [--workspace WS]`, `job show --workspace WS JOB`, `job why
   --workspace WS JOB` (explains a job that is
-  *not* progressing), `job log JOB`. While authoring a runner,
+  *not* progressing), `job log --workspace WS JOB`. While authoring a runner,
   `job debug --workspace WS JOB` drives one job in the foreground printing
   transitions.
 

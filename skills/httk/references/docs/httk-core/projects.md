@@ -27,8 +27,8 @@ httk project seal OUT.ZIP
 httk project verify-seal [--expect-key FINGERPRINT] [--trusted-key FINGERPRINT ...] ZIP...
 ```
 
-`init` makes each `PATH` a project. At least one path is required; `--name`
-is available when initializing one path and defaults to its directory name.
+`init` makes each `PATH` a project. At least one path is required. `--name`
+is available when initializing one path and defaults to its directory name;
 `--description` defaults to an empty string. It refuses an existing project and creates
 `httk_project/project.json`, the project's Ed25519 key under
 `httk_project/keys/`, and `httk_project/remotes/`. It creates no workflow
@@ -170,7 +170,7 @@ template files already copied. The request envelope is:
 ```json
 {
   "format": "httk-project-template-instantiate",
-  "format_version": 1,
+  "format_version": 2,
   "template": "starter",
   "parameters": {"name": "Ada", "count": 1},
   "project": {
@@ -284,19 +284,6 @@ httk project: found an httk v1 project ('ht.project') at /path/to/project; creat
 Run the shown `httk project import-v1 /path/to/project`. It reads
 `/path/to/project/ht.project/config`, copies the public keys, pins the readable
 legacy keys as trusted, and creates `/path/to/project/httk_project/`.
-
-A pre-release v2 project containing `.httk-project/project.json` produces:
-
-```console
-$ httk project show
-httk project: found a project anchor from a pre-release httk v2 ('.httk-project') at /path/to/project; rename it: mv /path/to/project/.httk-project /path/to/project/httk_project
-```
-
-Apply the shown remedy from the project root:
-
-```console
-mv .httk-project httk_project
-```
 
 ## Identity keys, pinning, and trust
 

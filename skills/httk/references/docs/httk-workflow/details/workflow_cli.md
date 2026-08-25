@@ -23,7 +23,7 @@ httk workflow workspace  init | list | default | move | forget | delete | status
 httk workflow runner     publish | describe
 httk workflow build      [--workspace WORKSPACE] TARGET...
 httk workflow job        new | submit | request | list | show | log | why | debug
-httk workflow describe   [--json] TARGET...
+httk workflow describe   TARGET [--json]
 httk workflow precheck   [--workspace WORKSPACE] [--placement P] [--json]
 httk workflow collect
 httk workflow postprocess
@@ -34,7 +34,7 @@ httk workflow v1         collect
 httk workflow config     init | show | set | unset | import-v1
 httk workflow project    init | import-v1 | show | doctor | manifest create | manifest verify
 httk workflow remote     list | add | configure | check | import-v1 | show | remove
-httk workflow transfer   SRC DST      (plus the protocol spellings: receive | offer | retire)
+httk workflow transfer   [OPTIONS] SRC DST      (plus the protocol spellings: receive | offer | retire)
 ```
 
 ### Workspace selection
@@ -50,31 +50,44 @@ workspace, the far side resolves the plain name in its own registry. The Python
 API keeps `Workspace(path)` for library use; the registry is what the command
 line speaks.
 
-Remote-capable workspace commands use the adapter; this includes status and
-settings. Jobs are created in the local default workspace, then `transfer` moves
-them to a remote workspace for execution.
+Remote-capable workspace commands use the adapter; this includes status,
+settings, and `job request`. Most job commands remain local-only. Jobs are
+created in the local default workspace, then `transfer` moves them to a remote
+workspace for execution.
+
+`job request ACTION --workspace REMOTE:NAME JOB_ID ...` asks the owning machine for unsigned envelopes,
+signs those envelopes with the control-center identity selected by
+`--operator`, and sends the signed documents back for verbatim publication.
+An older far side that cannot parse the additive protocol vectors fails with
+its own argparse error; upgrade `httk-workflow` on the remote. If both are supplied, make
+`--adapter-timeout` longer than `--timeout` or the adapter may cut the session
+off first. An adapter timeout during publication has an indeterminate outcome:
+requests may already be published; retrying creates fresh request IDs, and
+generation pinning makes such duplicates harmless because stale requests
+retire. With prefix or tag selectors, the remote resolves the match; use full
+job UUIDs when precise attribution matters.
 
 ### `workspace` — the workspace itself, not its jobs
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `workspace init [OPTIONS] PATH...` | create or adopt workspaces and register their basenames | `--name`, `--setting`, `--no-durable` |
+| `workspace init [OPTIONS] PATH...` | create or adopt workspaces and register their basenames | `--name` (one path only), `--setting`, `--no-durable` |
 | `workspace list [--json] [REMOTE:]` | list local or owning-machine workspaces | |
 | `workspace default [--unset] [NAME]` | read or record this project's default name | |
 | `workspace move [--no-durable] NAME DEST_DIR` | move a local workspace and update its registry path | |
-| `workspace forget [--force] NAME...` | deregister names, leaving the workspaces on disk | |
+| `workspace forget [--force] NAME...` | deregister names, leaving workspaces on disk | |
 | `workspace delete --force NAME...` | destroy workspaces and deregister them | |
 | `workspace status [--json] [NAME...]` | summarize authoritative markers (remote: over the adapter) | |
 | `workspace managers [--json] [NAME...]` | list managers serving workspaces, live or stale | |
-| `workspace settings show [--key KEY] [--json] [NAME...]` | print application settings, or one | |
-| `workspace settings set --key KEY --value VALUE NAME...` | store one application setting | |
-| `workspace settings unset --key KEY NAME...` | remove one application setting | |
-| `workspace workflow-prelude show [--workflow WORKFLOW] [--json] [NAME...]` | print per-workflow preludes, or one | |
-| `workspace workflow-prelude set --workflow WORKFLOW --value VALUE NAME...` | store one workflow's prelude (`VALUE` may be `@FILE`) | `--no-durable` |
-| `workspace workflow-prelude unset --workflow WORKFLOW NAME...` | remove one workflow's prelude | `--no-durable` |
+| `workspace settings show [--key KEY] [--json] [NAME...]` | print application settings, or one selected key | |
+| `workspace settings set --key KEY --value VALUE NAME...` | store one application setting in each workspace | |
+| `workspace settings unset --key KEY NAME...` | remove one application setting from each workspace | |
+| `workspace workflow-prelude show [--workflow WORKFLOW] [--json] [NAME...]` | print per-workflow preludes, or one selected workflow | |
+| `workspace workflow-prelude set --workflow WORKFLOW --value VALUE [--no-durable] NAME...` | store one workflow's prelude in each workspace | `VALUE` may be `@FILE` |
+| `workspace workflow-prelude unset --workflow WORKFLOW [--no-durable] NAME...` | remove one workflow's prelude from each workspace | |
 | `workspace policy show [--json] [NAME...]` | print workspace policies | |
-| `workspace policy set --key KEY --value VALUE [--json] NAME...` | store one policy member | |
-| `workspace fsck [OPTIONS] [NAME...]` | check markers against journal frames (remote: over the adapter) | `--repair`, `--quarantine-unrepairable`, `--json` |
+| `workspace policy set --key KEY --value VALUE [--json] NAME...` | store one policy member in each workspace | |
+| `workspace fsck [OPTIONS] [NAME...]` | check markers against journal frames; repair modes require names | `--repair`, `--quarantine-unrepairable`, `--json` |
 | `workspace gc [--dry-run] [--json] NAME...` | collect what retention policies allow (remote: over the adapter) | |
 | `workspace unlock [--force] NAME...` | release maintenance locks | |
 
@@ -101,14 +114,14 @@ name, and re-register it with `workspace init --name NAME <newpath>` instead.
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `runner publish [OPTIONS] FILE_OR_DIRECTORY...` | publish runners, pinned by digest | `--workspace`, `--name`, `--replace`, `--json` |
+| `runner publish [OPTIONS] FILE_OR_DIRECTORY...` | publish runner files or directories, pinned by digest | `--workspace`, `--name` (one source only), `--replace`, `--json` |
 | `runner describe [OPTIONS] [NAME...]` | report published runners and their digests | `--workspace`, `--json` |
 
 ### `build` — foreground registration of compiled workflow packages
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `build [--workspace WORKSPACE] [--json] TARGET...` | build and register packages, store runners, or jobs' workspace runners | `--list` |
+| `build [OPTIONS] TARGET...` | build and register packages, store runners, or jobs' workspace runners | `--workspace`, `--list`, `--json` |
 
 Directory rows are reported as `tree (inferred)` because the store format
 identifies a tree by its `run` entry. New nested file publishes named `run` are
@@ -141,14 +154,30 @@ its job or store runner target.
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `job new [--workspace WORKSPACE] OPTIONS` | scaffold and submit jobs from a workflow | `--workflow` or `--workflow-dir` (one required), `--parameter`, `--environment`, `--format`, `--input`, `--input-from`, `--file`, `--tag`, `--placement`, `--json` |
-| `job submit --placement PLACEMENT [--workspace WORKSPACE] SOURCE...` | submit prepared payload directories | `--move`, `--json` |
-| `job request ACTION [--workspace WORKSPACE] OPTIONS JOB_ID...` | publish an operator request for each job | `--operator`, `--reason` (required), `--priority`, `--step`, `--force`, `--wait`, `--timeout` |
-| `job list [--workspace WORKSPACE]` | list jobs as a cheap table | `--kind`, `--placement`, `--json` |
-| `job show [--workspace WORKSPACE] [--json] JOB...` | describe jobs from their state | |
-| `job log [--workspace WORKSPACE] [--limit COUNT] [--json] JOB...` | print transition histories | |
-| `job why [--workspace WORKSPACE] [--json] JOB...` | explain why jobs are not running | |
-| `job debug [--workspace WORKSPACE] OPTIONS JOB` | drive one job to a terminal state, in front of you | `--step`, `--placement`, `--follow-children`, `--timeout`, `--log-level` |
+| `job new [OPTIONS]` | scaffold and submit jobs from a workflow | `--workspace`, `--workflow` or `--workflow-dir` (one required), `--parameter`, `--environment`, `--format`, `--input`, `--input-from`, `--file`, `--tag`, `--placement`, `--json` |
+| `job submit [OPTIONS] SOURCE...` | submit prepared payload directories | `--workspace`, `--placement` (required), `--move` |
+| `job request ACTION [OPTIONS] JOB_ID...` | publish one request per job ID (remote: over the adapter) | `--workspace`, optional `--operator` (configured short name or literal `Name <email>`; default identity when omitted), required `--reason`, `--priority`, `--step`, `--force`, `--wait`, `--timeout`, `--adapter-timeout` |
+| `job list [OPTIONS]` | list jobs as a cheap table | `--workspace`, `--kind`, `--placement`, `--json` |
+| `job show [OPTIONS] JOB...` | describe jobs from their state | `--workspace`, `--json` |
+| `job log [OPTIONS] JOB...` | print transition histories | `--workspace`, `--limit`, `--json` |
+| `job why [OPTIONS] JOB...` | explain why jobs are not running | `--workspace`, `--json` |
+| `job debug [OPTIONS] JOB` | drive one job to a terminal state in front of you | `--workspace`, `--step`, `--placement`, `--follow-children`, `--timeout`, `--log-level` |
+
+When giving more than one `JOB_ID`, name the workspace explicitly.
+
+An operator `pause` request against `claimed`, `running`, or `committing` is
+deferred: the manager records it and pauses the job at the next attempt
+boundary; a terminal outcome supersedes it. An older manager that does not
+understand this in-flight pause request quarantines it as invalid.
+
+`JOB_ID` is repeatable, so one command publishes one request per job. `--wait`
+is valid only for `pause` and exits 0 only when each requested job was observed
+`paused` at some point during the wait; jobs are confirmed individually, not
+simultaneously. A concurrent operator may already have resumed an earlier job
+when the command exits, and any pause (for example, a runner-declared step
+pause), not specifically this command's published request, may satisfy it.
+Terminal, retired, quarantined, or timed-out requests exit 1. `--timeout
+SECONDS` requires `--wait`; timed-out requests remain published.
 
 `JOB` is a job UUID, a `tag--uuid` job key, or any unique prefix of either.
 
@@ -168,14 +197,14 @@ Language documents use `job new --workflow DOCUMENT`; see
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `collect [--workspace WORKSPACE]` | stream one collected summary per finished job | `--state`, `--placement`, `--degraded`, `--raw`, `--allow-job-collector`, `--into PATH` |
+| `collect WORKSPACE` | stream one collected summary per finished job | `--state`, `--placement`, `--degraded`, `--raw`, `--allow-job-collector`, `--into PATH` |
 
 `--degraded` prints only the degraded per-job lines; the trailing summary still
 counts the whole sweep, so a filtered listing never hides how many jobs ran. It
 cannot be combined with `--raw`.
 
-Every form ends with one `httk-workflow-collect-summary` line counting
-`collected`, `degraded`,
+Every form except the pure-array `--json` ends with one
+`httk-workflow-collect-summary` line counting `collected`, `degraded`,
 `unfulfilled_roles`, `storage_errors`, and `skipped_unreadable`. The command
 exits nonzero when any job was degraded, failed to store, or was skipped for an
 unreadable `job.json`; unfulfilled roles alone keep the exit at `0`. See
@@ -185,7 +214,7 @@ unreadable `job.json`; unfulfilled roles alone keep the exit at `0`. See
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `postprocess --script NAME [--workspace WORKSPACE]` | run one declared script for each selected collected job | `--workflow-dir PKG`, `--state`, `--placement`, `--timeout`, `--json` |
+| postprocess [OPTIONS] | run one declared script for each selected collected job | --workspace WS, --script NAME (required), --workflow-dir PKG, --state, --placement, --timeout, --json |
 
 ~~~console
 httk workflow postprocess --workspace WS --script relaxation-report
@@ -193,7 +222,7 @@ httk workflow postprocess --workspace WS --script report --workflow-dir ./my-wor
 ~~~
 
 With --json, each result is one JSON object in the
-httk-workflow-postprocess wire format, version 1, with workspace_id, job_id,
+httk-workflow-postprocess wire format, version 2, with workspace_id, job_id,
 job_key, script, and either returncode plus output_dir, or an error. Without
 --json, each result is tab-separated as
 job_key<TAB>script<TAB>returncode<TAB>output_dir; errors use ERROR in the
@@ -282,8 +311,8 @@ stay non-failing. The JSON summary carries `claim_problems`,
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `run [--workspace WORKSPACE]` | run a manager until idle, or keep serving with `--idle` | `--workers`, `--count`, `--pool`, `--capability`, `--placement-prefix`, `--idle`, `--idle-timeout`, `--adapter-timeout`, `--log-level` |
-| `manager run [--workspace WORKSPACE]` | run a manager locally, or submit managers to a remote workspace's scheduler | `--workers`, `--count`, `--pool`, `--capability`, `--placement-prefix`, `--idle`, `--idle-timeout`, `--join-grace-seconds`, `--lease-seconds`, `--drain-timeout`, `--gc-interval`, `--runner-search-path`, `--adapter-timeout`, `--log-level`, `--log-file`, `--json-logs` |
+| `run` | run a manager until idle, or keep serving with `--idle` | `--workspace`, `--workers`, `--count`, `--pool`, `--capability`, `--placement-prefix`, `--idle`, `--idle-timeout`, `--adapter-timeout`, `--log-level` |
+| `manager run` | run a manager locally, or submit managers to a remote workspace's scheduler | `--workspace`, `--workers`, `--count`, `--pool`, `--capability`, `--placement-prefix`, `--idle`, `--idle-timeout`, `--join-grace-seconds`, `--lease-seconds`, `--drain-timeout`, `--gc-interval`, `--runner-search-path`, `--adapter-timeout`, `--log-level`, `--log-file`, `--json-logs` |
 
 `manager run` follows the binding: a local workspace runs the manager in this
 process as before, and a remote workspace submits managers through the remote's
@@ -300,7 +329,7 @@ executors this manager serves, or left committing with an unreadable definition.
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `v1 collect --workflow-dir PKG ROOT...` | harvest pre-existing v1 result trees | `--into PATH` |
+| `v1 collect ROOT` | harvest a pre-existing v1 result tree | `--workflow-dir PKG`, `--into PATH` |
 
 `v1 collect` ends with one `httk-workflow-v1-collect-summary` line reporting
 `finished`, `unfinished_by_status` (tasks the name regex matched that were not
@@ -316,8 +345,12 @@ warning names how many such tasks a harvest saw.
 | `config init` | write the configuration and the identity key | `--name`, `--email`, `--non-interactive` |
 | `config show [KEY]` | print the configuration, or one member | |
 | `config set KEY VALUE` | store one member | `machine_names` is a comma-separated list of names this machine answers to |
-| `config unset KEY...` | remove members | |
+| `config unset KEY` | remove one member | |
 | `config import-v1 [SOURCE]` | read a legacy `~/.httk` configuration | |
+| `config identity add SHORT` | add a named operator identity and its key | `--name`, `--email`, `--default` |
+| `config identity list` | list named identities and public keys | `--json` |
+| `config identity default SHORT` | select the default named identity | |
+| `config identity remove SHORT` | remove an identity from config, leaving its key files | |
 
 ### `project` — the directory a campaign lives in
 
@@ -333,12 +366,12 @@ separately with `workspace init PATH`:
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `project init [OPTIONS] PATH...` | create projects and their keys | `--name`, `--description`, `--exclude`, `--non-interactive` |
-| `project import-v1 [OPTIONS] PATH...` | read legacy `ht.project` directories without creating workspaces | `--source`, `--name` |
+| `project init [OPTIONS] PATH...` | create projects and their keys | `--name` (one path only), `--description`, `--exclude`, `--non-interactive` |
+| `project import-v1 [OPTIONS] PATH...` | read legacy `ht.project` trees without creating workspaces | `--source` and `--name` (one path only) |
 | `project show [OPTIONS] [PATH...]` | describe projects, their keys, workspace defaults, and manifests | `--no-verify`, `--json` |
-| `project doctor [OPTIONS] [PATH...]` | check, and optionally repair, projects | `--repair`, `--json` |
+| `project doctor [OPTIONS] [PATH...]` | check projects; `--repair` requires explicit paths | `--repair`, `--json` |
 | `project manifest create [--manifest PATH] PROJECT...` | write signed manifests | |
-| `project manifest verify [OPTIONS] [PROJECT...]` | verify manifests against trees | `--manifest`, `--trusted-key` |
+| `project manifest verify [OPTIONS] [PROJECT...]` | verify manifests against their trees | `--manifest` (one project only), `--trusted-key` |
 
 ### `remote` — the adapters that reach other machines
 
@@ -382,20 +415,28 @@ which stay in this filesystem follows entirely from where the two are bound:
 
 | Direction | What happens | `--job` |
 | --- | --- | --- |
-| local → remote | each named job is detached, its sealed bundle pushed to the remote, and imported there | at least one required |
-| remote → local | the jobs that have finished on the remote are offered, pulled home, imported, and their sources retired | optional; a `--state`/`--placement` filter selects them |
-| local → local | each named job is detached from the source and imported into the destination directly, in this filesystem | at least one required |
-| remote → remote | the client relays: it fetches from the source into local staging and pushes on to the destination (v1; a direct source-to-destination path is deferred) | optional |
+| local → remote | each named job is detached, its sealed bundle pushed to the remote, and imported there | honored; required |
+| remote → local | the selected jobs are offered, pulled home, imported, and their sources retired | honored; optional sweep |
+| local → local | each named job is detached from the source and imported into the destination directly, in this filesystem | honored; required |
+| remote → remote | the client relays the selected offers through local staging and pushes them to the destination (v1; a direct source-to-destination path is deferred) | honored; optional sweep |
 
 `--state` (repeatable, default `succeeded` and `failed`) chooses which finished
-kinds a fetch moves, `--placement` restricts it to one subtree,
+kinds a sweep moves, `--placement` restricts it to one subtree,
 `--destination-placement` lands the jobs somewhere other than the placement they
 had, and `--adapter-timeout` bounds every adapter operation the move runs.
+When `--job` is supplied, each named job must be eligible before any job is
+sealed; by-id moves accept any quiescent state, while an explicit `--state`
+remains an additional filter. With no `--job`, the sweep remains skip-tolerant
+and defaults to `succeeded` and `failed`.
 `--strict-environment` blocks before state moves when a checked destination
 environment is unresolved or cannot be read. Transfer checks intentionally use
 job overrides, destination settings, and declared defaults; they do not use the
 client process environment as a destination substitute. A remote settings read
 that is unavailable produces one immediate warning in non-strict mode.
+
+For remote → remote, repeated `--job` values constrain the source offer before
+the relay pulls anything; omitting them keeps the skip-tolerant terminal-state
+sweep.
 
 Bundles carry sources only for workflows that declare `[workflow.build]`;
 compiled artifacts are machine-local and are never transferred. After importing
@@ -414,10 +455,12 @@ or newer than yours:
 
 ```text
 httk workflow transfer receive --workspace PATH --bundle BUNDLE
-httk workflow transfer offer --destination-workspace-id UUID --json PATH
+httk workflow transfer offer --destination-workspace-id UUID [--job JOB_ID …] --json PATH
 httk workflow transfer retire --destination-workspace-id UUID --json PATH JOB_ID …
+httk workflow job request-envelopes ACTION --workspace WORKSPACE --operator=LABEL --reason=TEXT [--priority N] [--step S] [--force] --json JOB_ID …
+httk workflow job publish-requests --workspace WORKSPACE --document JSON [--document JSON …] [--wait] [--timeout S] [--durable|--no-durable]
 httk workflow workspace status --by-path --json PATH
-httk workflow manager run --workspace PATH --by-path
+httk workflow manager run --by-path --workspace PATH
 ```
 
 `receive` is an import half rather than an operator command, so it is not
@@ -521,8 +564,8 @@ the supported CWL subset, PWD security, jobflow Makers, and language collection.
 Harvest old v1 results without submitting them:
 
 ```console
-httk workflow v1 collect --workflow-dir PKG ROOT...
-httk workflow v1 collect --workflow-dir PKG --into results.sqlite ROOT...
+httk workflow v1 collect --workflow-dir PKG ROOT
+httk workflow v1 collect --workflow-dir PKG --into results.sqlite ROOT
 ```
 
 ## Inspecting and debugging jobs
@@ -561,15 +604,6 @@ per-user this package keeps is *configuration*:
 overrides. Legacy `~/.httk` data is read only through `config import-v1`; its
 64-byte private material is not converted.
 
-An earlier release kept the keys and the global definitions below
-`$XDG_DATA_HOME/httk/` instead, as `keys/` and `computers/`. The first command
-that needs either one moves what is there to its configuration home, preserving
-the `0600`/`0700` modes, and says so in one line on stderr. The move happens
-once and is idempotent. If both roots somehow exist, the configuration home wins
-and the stale legacy copy is reported in the log rather than merged: guessing
-which of two definitions of one remote was meant would be worse than saying
-nothing was.
-
 ```console
 httk workflow config init --name "A User" --email user@example.org
 httk workflow config set name "Another User"
@@ -587,10 +621,9 @@ provided by
 `config set` accepts only the keys the configuration actually has — including
 `machine_names`, `name`, and `email` — and names them when it refuses another, so a typo cannot become a
 member that nothing ever reads. `format` and `format_version` describe the
-document and are written by *httk* itself. A configuration whose `format` is
-something else is refused rather than read as if its members meant what *httk*
-means by them; one with no `format_version` at all predates versioning and is
-read as version 1.
+document and are written by *httk* itself. A configuration whose `format` or
+`format_version` is missing or something else is refused rather than read as if
+its members meant what *httk* means by them.
 
 A project has `httk_project/project.json` and a standard 32-byte Ed25519 seed
 stored with mode `0600`. Its default workflow workspace is recorded by name and
@@ -698,19 +731,47 @@ with a different job.
 
 ### Operator identity
 
-`httk workflow config init` creates `identity.seed`/`identity.pub` below
-`$XDG_DATA_HOME/httk/keys/`. That key signs the small documents an operator
-publishes: an operator request (`httk workflow job request …`) and a transfer
-acknowledgement. The signature is detached, covers the canonical JSON of the
-whole document, and is domain-separated from every other httk signature.
+`httk workflow config init` creates the legacy `identity.seed`/`identity.pub`
+pair below `$XDG_CONFIG_HOME/httk/keys/`. Named identities are managed with
+`httk workflow config identity add --name NAME --email EMAIL SHORT`; each gets
+its own `identity-SHORT.seed`/`.pub` pair. The first named identity becomes the
+default, and `config identity default SHORT` changes it. Removing an identity
+leaves its key files on disk; removing the default with exactly one identity
+remaining selects that identity automatically, while removal with multiple
+remaining identities requires selecting another default first.
 
-It is optional in both directions, deliberately. An installation with no
-identity key publishes unsigned documents, and a manager or a transfer source
-accepts them exactly as before — so a mixed deployment needs no flag day. A
-signature that *is* present must verify: a request with a broken signature is
-quarantined with the reason, and an acknowledgement with a broken signature will
-not retire a sealed bundle. A verified request records its `operator_key` in the
-journalled state frame beside the operator name and reason.
+The default signing identity resolves in this order: `default_identity`, the
+only configured identity when there is exactly one, then the legacy top-level
+`name`/`email` and `identity.seed`. A selector containing `<` is a literal
+`Name <email>` attribution label (the name may be empty) and uses the resolved
+default identity's key; other selectors must be configured short names.
+
+`job request` records the selected identity's `Name <email>` label and signs
+the request with that identity's key. Omitting `--operator` selects the
+configured default; a short name selects that identity, while a literal label
+is passed through and signed with the default identity's key.
+
+For remote requests, the control-center identity builds the signature locally
+after the far side returns unsigned envelopes. The remote publishes those
+signed documents verbatim, so attribution and signer are the same identity.
+If a configured identity's key file is missing or unreadable, the request fails
+loudly; remove and re-add it with `httk workflow config identity remove SHORT`
+then `httk workflow config identity add SHORT ...`, or restore the key file.
+The two request protocol spellings are additive; when a remote cannot parse
+them, upgrade `httk-workflow` on the remote.
+
+The selected key signs operator requests (`httk workflow job request …`).
+Transfer acknowledgements always use the DEFAULT identity resolution; they do
+not carry a per-request identity selection. Signatures are detached, cover the
+canonical JSON of the whole document, and are domain-separated from every
+other httk signature.
+
+Document signing remains optional for lower-level callers, and a manager or a
+transfer source accepts unsigned documents exactly as before. A signature that
+*is* present must verify: a request with a broken signature is quarantined with
+the reason, and an acknowledgement with a broken signature will not retire a
+sealed bundle. A verified request records its `operator_key` in the journalled
+state frame beside the operator name and reason.
 
 The semantics are attribution, not authorization. The key says *which identity
 published this document*; it grants nothing, and no operation is permitted
@@ -966,7 +1027,7 @@ new remote is recommended: it confirms the host answers, that `httk` is found
 exists, and reports the command and version it found. `--version` alone would
 only prove httk-core.
 
-When the check fails, log in on the remote and make sure httk₂ is set up and
+When the check fails, log in on the remote and make sure *httk₂* is set up and
 available there — for example with `pipx install httk-workflow` — and note
 that it must be reachable from a *non-interactive* shell: a `module load` or
 conda activation guarded by an interactivity test in `.bashrc` works when you
@@ -1038,35 +1099,40 @@ as a substitute for destination settings.
 To bring stopped jobs home, use the reverse transfer and then collect:
 
 ```console
-httk workflow transfer --state succeeded --state failed \
-    --placement project/screening --json kappa:runs default
+httk workflow transfer --state succeeded --state failed --placement project/screening --json \
+    kappa:runs default
 ```
 
 `--state` accepts the kinds a stopped job can be in and defaults to `succeeded`
 and `failed`; `--placement` restricts the fetch to one subtree; `--adapter-timeout`
-bounds every adapter operation the fetch runs. A fetched job arrives as an
-ordinary job of the local default workspace, in the terminal state and at the
-placement it had on the remote, so `httk workflow collect` then reports it
-exactly like a job that ran at home.
+bounds every adapter operation the fetch runs. With `--job`, any quiescent state
+is eligible unless an explicit `--state` filters it. A fetched job arrives as an
+ordinary job of the local default workspace, in its offered state and at the
+placement it had on the remote, so `httk workflow collect` then reports terminal
+results exactly like jobs that ran at home.
 
 Under the fetch leg run the two far-side protocol commands, invoked over the
 adapter but usable on their own on the remote itself. They use literal paths
 because they bypass the owning machine's registry:
 
 ```console
-httk workflow transfer offer --destination-workspace-id UUID --json PATH
+httk workflow transfer offer --destination-workspace-id UUID [--job JOB_ID …] --json PATH
 httk workflow transfer retire --destination-workspace-id UUID PATH JOB_ID ...
 ```
 
-`offer` detaches every finished job into its sealed bundle and prints one entry
+`offer` detaches every selected job into its sealed bundle and prints one entry
 per bundle; it requires `--destination-workspace-id`, because a bundle is sealed
-for exactly one destination. `retire` moves the sealed source of an already
+for exactly one destination. `--job` is repeatable, accepts any quiescent state
+when no `--state` is supplied, and fails all-or-nothing if an id is missing or
+filtered. `retire` moves the sealed source of an already
 imported job under `.httk-workflow/transfers/retired/` — a rename, never a
 delete, so a source is only ever whole or moved whole; its
 `--destination-workspace-id` is optional and, when given, refuses a bundle that
 was sealed for somebody else. `offer` narrows what it seals with the same
 `--state` and `--placement` `fetch` passes through; both print their report as
-JSON with `--json` and as tab-separated lines otherwise.
+JSON with `--json` and as tab-separated lines otherwise. A client that sends
+`--job` requires a new far side: an older remote rejects the additive flag with
+its argparse error, which the client relays.
 
 Every step is idempotent and the whole pipeline is resumable: `offer` reports an
 already sealed bundle from its ledger instead of sealing it again, a `pull` onto

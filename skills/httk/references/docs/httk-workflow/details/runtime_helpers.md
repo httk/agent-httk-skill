@@ -139,7 +139,7 @@ the `step` of a `ChildSpec` that inherits this runner.
 | the handler raises | an `error.json` breadcrumb, then the exception reaches the manager, whose retry policy decides |
 
 `HTTK_WORKFLOW_DESCRIBE=1` (or `--describe`) makes `main` print
-`{"format": "httk-workflow-runner-description", "format_version": 1, "workflow":
+`{"format": "httk-workflow-runner-description", "format_version": 2, "workflow":
 ..., "steps": [...]}` and exit without binding an attempt or touching anything,
 so a tool can enumerate the steps of a runner it is not running. The step set is
 also recorded in the job's state frame as `runner_steps`, from the first outcome
@@ -321,8 +321,8 @@ apply.
 `a.run(argv, timeout=...)` runs an argv array in the workdir and terminates its
 whole process group on timeout. `ProcessSupervisor` adds streamed stdout/stderr
 and followed-file monitoring, process-group timeout handling, and versioned
-executable checkers; a checker receives `httk-workflow-checker-event` version 1
-JSON lines and emits `httk-workflow-checker-result` version 1 JSON lines.
+executable checkers; a checker receives `httk-workflow-checker-event` version 2
+JSON lines and emits `httk-workflow-checker-result` version 2 JSON lines.
 Commands and checker commands are always argument arrays: this API deliberately
 does not reproduce the *httk* v1 exit-code and `ht.nextstep` interface.
 
@@ -387,8 +387,7 @@ it cannot execute — a `bump_bands` for an INCAR without `NBANDS`, a KPOINTS ch
 with no KPOINTS staged — so `apply_vasp_remedy` never receives a remedy it would
 have to refuse. Both resolve a relative history path against that same directory;
 `job_remedy_history_path(payload)` is where a runner should keep it, beside the job
-state, so an isolated workdir does not silently restart the escalation. The
-pre-0.2 workdir location is still read when the job-scoped file does not exist yet.
+state, so an isolated workdir does not silently restart the escalation.
 
 Policies are a registry rather than module source: `register_remedy_policy(name,
 sequences, precedence)` adds one, `remedy_policy_names()` lists what is registered,

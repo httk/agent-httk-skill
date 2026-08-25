@@ -1,5 +1,9 @@
 # Reading and writing CIF files
 
+The full description of exact numeric handling, repair policy, atom-type symbols,
+disorder, magnetic expansion, and spatial mCIF projection is in
+{doc}`details/cif`.
+
 *httk-atomistic* ships the CIF/mCIF parser, reader and writer stack under
 `httk.atomistic.io.cif`, and registers its readers with *httk-core* through
 `httk.registry.io.atomistic`. Importing `httk.core` therefore discovers the
@@ -34,16 +38,73 @@ Two conveniences smooth over real-world files:
 
 - **Inferred element symbols.** `_atom_site_type_symbol` is optional in the CIF
   core dictionary. When it is absent, each site's element is inferred from the
-  leading element run of its `_atom_site_label` (`"MgM1"` → `Mg`), with a
-  `RuntimeWarning`. A label whose prefix names no element is not guessed at: its
-  block cannot be interpreted, so `load` omits it from `blocks` and records the
-  reason in `unparsed` (the underlying parser raises a `ValueError` that the
-  loader catches per block).
-- **Repair.** Passing `repair=True` to `load` (or to `read_cif` /
-  `read_cif_asus`) drops a malformed *auxiliary* loop — one whose column counts do
-  not line up and whose tags are not a protected structural family — warning about
-  each repair instead of refusing the file, and stamps `repair=True` on the
-  payload. Without it, such a loop is a hard `ValueError`.
+  leading element run of its `_atom_site_label` (`"MgM1"` → `Mg`), with a warning
+  on the report channel, because inferring chemistry from a label is a guess. A
+  label whose prefix names no element is not guessed at in strict mode: its block
+  cannot be interpreted, so `load` omits it from `blocks` and records the reason in
+  `unparsed` (the underlying parser raises a `ValueError` that the loader catches
+  per block). With `repair=True` such a label is instead mapped to the non-chemical
+  `"X"` with a warning.
+- **Repair.** Passing `repair=True` enables a bounded set of warning-emitting
+  repairs and stamps `repair=True` on neutral payloads. The low-level reader drops
+  malformed *auxiliary* loops whose column counts do not line up and retries legacy
+  non-UTF-8 path inputs as Latin-1. During `load`, the structure adapter additionally
+  ignores invalid declared Wyckoff metadata in favor of the coordinates and clamps
+  an individual refined occupancy no more than `0.1` outside `[0, 1]` to the nearest
+  boundary. Larger violations remain errors. Strict loading rejects each of those cases.
+
+### Partial occupancy and disorder
+
+Site occupancy is represented without discarding chemistry. When several atom-site rows
+generate exactly the same symmetry orbit, the reader combines their elements, occupancies,
+charges, and source labels into one mixed `Species`. When a site's total occupancy is below
+one, the remaining fraction is represented by an explicit `"vacancy"` constituent. A
+co-located total above one that lies outside its stated-precision interval is normalized
+without repair when the excess is no larger than `1/1000` and every constituent has a stated
+precision, with a DEBUG diagnostic (a total within its stated precision is kept unchanged, as
+before). An excess no larger
+than `1/10` is rescaled with a warning under `repair=True`, or rejected with a `repair=True`
+remedy hint otherwise; larger excesses are rejected. For the moment-free spatial report of an
+mCIF, the same `1/10` cap applies under repair, and a partial mass channel may also be omitted.
+These projections emit warnings where repair changes or omits source data and leave the native
+magnetic structure unchanged.
+
+Orbits that only partly overlap remain invalid, because they do not describe one shared
+crystallographic site and cannot be combined as a species composition.
+
+The CIF writer emits one atom-site row per non-vacancy constituent, preserving occupancies,
+source labels, integral charge spellings, isotope/pseudo-site labels, and declared masses.
+Read→write→read is covered over the disorder fixture corpus. State without an exact CIF
+channel—fractional charges, spins, non-hydrogen attachments, assemblies, a net structure
+charge, or an independently declared composition—is rejected rather than projected away.
+
+### Atom-type symbols and isotopes
+
+The CIF core dictionary's standard `_atom_type_symbol` values are interpreted as their
+elements and optional oxidation states. Both magnitude-before-sign (`Fe3+`) and the common
+sign-before-magnitude spelling (`Fe+3`) are accepted when the remaining token is an element.
+The widespread isotope symbols `D` and `T` become
+hydrogen constituents with species labels `D` and `T`. No default mass is invented for them:
+the label already records the isotope, so a mass is set only when an `_atom_type_mass` or
+`_atom_type.atomic_mass` table states one, and a write does not emit that loop when the source
+had none. `X` maps to OPTIMADE's non-chemical `"X"`; `Vac`, `Va`, and `vacancy` map to
+`"vacancy"` with zero mass.
+
+Any other CIF-valid type symbol remains readable in strict mode. The reader emits one
+warning per distinct unrecognized symbol, represents its chemistry as `"X"`, and preserves
+the symbol without a charge suffix in the aligned species label. This covers conventional
+pseudo-sites such as `M`, `R`, `LP`, and `Lp`, as well as arbitrary values such as `dummy`
+or `FeNi`, without pretending that they name chemical elements.
+
+### Declared Wyckoff data
+
+The modern CIF atom-site declarations `_atom_site_site_symmetry_multiplicity`
+(International Tables multiplicity) and `_atom_site_site_symmetry_order` (the
+site-symmetry order) are honored when identifying Wyckoff positions. The deprecated
+`_atom_site_symmetry_multiplicity` tag is never parsed: if it is the only
+multiplicity-like tag in a block, httk ignores it and emits one debug-level note for
+that block because legacy values are ambiguous between the two conventions. If a
+modern declaration is present as well, the deprecated tag is ignored silently.
 
 ## Lower-level API
 

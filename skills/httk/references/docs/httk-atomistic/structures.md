@@ -19,8 +19,23 @@ Every backend produces the same canonical quartet — `cell`, `sites`,
 there is no pairwise conversion between representations. `unwrap()` always
 recovers the exact original.
 
+`Structure` is the exact-geometry, assigned-species cell of the three-row
+material-information taxonomy; {doc}`prototypes` lays out that matrix and the
+coarser levels (`Structuretype`, `Protostructure`, `Prototype`, and
+`Formulatype`) that a structure projects to. A middle-row value may additionally carry an exact representative
+and/or a discriminator when the user constructs it with them (recognition and
+derivation return a base value); those optional fields affect equality and content
+identity while remaining separate from its label.
+
+`structure_delta(first, second)` is the public total Cartesian atom travel
+between compatible exact representatives after common-subgroup alignment. It
+uses each endpoint's cell and shortest periodic images; it is not a label or
+content-id distance.
+
 The full guide, {doc}`details/structures`, covers `DatastreamStructure` and
 lazy remote sources, the component families (`Cell`, `Sites`, `Species`),
 exact geometry (surd matrices, Cartesian positions), the numeric float/numpy
 layer, POSCAR loading, supercells, serving structures over OPTIMADE, and
-`unwrap`/`unview` semantics.
+`unwrap`/`unview` semantics. Storage tables for the retained middle-row records
+are `atomistic_prototype` and `atomistic_protostructure`; stores using the
+retired layout must be rebuilt.

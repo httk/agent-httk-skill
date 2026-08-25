@@ -37,7 +37,7 @@ job whose state cannot be read until `workspace fsck --repair` restores it.
 ## Running on a remote
 
 The canonical remote flow keeps scheduler settings with the remote workspace.
-httk₂ must already be set up on the remote (log in there and install it, e.g.
+*httk₂* must already be set up on the remote (log in there and install it, e.g.
 with `pipx install httk-workflow`); `remote check` verifies that:
 
 ```console
@@ -457,10 +457,10 @@ httk workflow workspace status WORKSPACE
 httk workflow workspace status --json WORKSPACE
 
 httk workflow job request pause --workspace WORKSPACE \
-  --operator "$USER" --reason "inspection" JOB_UUID
+  --reason "inspection" JOB_UUID
 
 httk workflow job request continue --workspace WORKSPACE \
-  --operator "$USER" --reason "inputs repaired" JOB_UUID
+  --reason "inputs repaired" JOB_UUID
 ```
 
 An `override_step --step X` request is pre-validated on the client: when the
@@ -495,7 +495,7 @@ applied. It is attribution and not authorization; see
 
 ```console
 httk workflow job request cancel --workspace WORKSPACE \
-  --operator "$USER" --reason "wrong inputs" JOB_UUID
+  --reason "wrong inputs" JOB_UUID
 ```
 
 The manager first renames the marker `running` → `cancelling`, which fences the
@@ -570,8 +570,8 @@ httk workflow job why --workspace WORKSPACE JOB
 
 `JOB` is a job UUID, a complete `tag--uuid` job key, or any unique prefix of
 either; an ambiguous prefix is refused with the jobs it matched. Every command
-also accepts `--json`; selector commands print an array with one report, frame
-array, or diagnosis per selected job, while `job list` prints its job array.
+also accepts `--json` and prints one object: a report, a frame array, a
+diagnosis, or a job array.
 
 `job show` reports the state kind, placement, priority, generation, job digest,
 runner identity, the budgets of the retry policy against what has been consumed,

@@ -153,8 +153,8 @@ once per task, or accepts an `extract=` callback instead; exactly one of
 the sweep continues.
 
 ```console
-httk workflow v1 collect --workflow-dir PKG ROOT...
-httk workflow v1 collect --workflow-dir PKG --into results.sqlite ROOT...
+httk workflow v1 collect --workflow-dir PKG ROOT
+httk workflow v1 collect --workflow-dir PKG --into results.sqlite ROOT
 ```
 
 Manifest-backed identity survives moving the tree. Without a manifest, the
