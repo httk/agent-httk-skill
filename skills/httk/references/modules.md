@@ -94,6 +94,8 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
 
 - **Project** (`httk project init`) anchors everything; **workspaces** hold
   jobs and state (machine-owned names; `NAME` local, `REMOTE:NAME` remote).
+- Per-job and per-step resource requirements are enforced by resource-aware
+  managers configured with `--worker-resource`.
 - **Workflows**: packaged providers (`vasp-relax`, `httk.vasp.static`,
   `httk.vasp.relax-static`), a single runner file
   (`--workflow ./my_runner.py`), or a **workflow package directory** with

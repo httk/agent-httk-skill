@@ -97,6 +97,8 @@ before a provider is returned.
 | `description` | no | Human-readable summary and generated declaration description. |
 | `declaration_uri` | no | String `$id` for the generated or external workflow declaration. |
 | `declaration_file` | no | Relative regular-file member containing an externally authored OPTIMADE-format workflow declaration JSON. |
+| `resources` | no | Default resource requirements, a table mapping resource labels to non-negative integer values. |
+| `steps` | no | Per-step resource overrides; only valid with an executable runner and only for names in its declared `steps` list. |
 
 ```toml
 [workflow]
@@ -105,6 +107,13 @@ alias = "relax"
 description = "Relax one structure."
 declaration_uri = "https://example.org/workflows/relax"
 # declaration_file = "declaration.json"
+
+[workflow.resources]
+procs = 4
+mem = 4096
+
+[workflow.steps.relax.resources]
+procs = 8
 ```
 
 ### `[workflow.runner]`: executable form
@@ -120,6 +129,33 @@ or the sole step is selected. Otherwise `initial_step` is required.
 | `steps` | required | Nonempty runner step list. |
 | `data_mode` | `"none"` | `"none"` or `"transactional"`. |
 | `workdir_mode` | `"persistent"` | `"persistent"` or `"isolated"`. |
+
+### `[workflow.resources]` and `[workflow.steps.NAME]`
+
+`[workflow.resources]` maps resource labels to non-negative integers. Resource
+names are validated labels, values are not booleans, and units are opaque. An
+executable runner may add `[workflow.steps.NAME]` tables, each allowing only a
+`resources` table. `NAME` must occur in `[workflow.runner].steps`; an unknown
+name is an error. `[workflow.steps]` is rejected for language runners because
+their step set is supplied by the language.
+
+For example, a manifest can set workflow defaults and denser per-step
+requirements together:
+
+```toml
+[workflow.resources]
+procs = 4
+mem = 16000            # MB
+
+[workflow.steps.relax]
+resources = { procs = 32, mem = 120000 }
+
+[workflow.steps.analyse]
+resources = { procs = 1, mem = 2000, matlab_license_slots = 1 }
+```
+
+The `relax` and `analyse` declarations override the defaults for those steps;
+the manager's advertised capacities determine whether each activation fits.
 
 ### `[workflow.runner]`: language vocabulary
 
@@ -654,7 +690,7 @@ httk workflow job new --workspace WS --workflow-dir ./my-workflow \\
     --placement project/screening
 httk workflow run --workspace WS
 httk workflow collect --workspace WS
-httk workflow collect --workspace WS --into results.sqlite
+httk workflow collect --workspace WS --into results.sqlite --id-base httk.workflow
 ```
 
 `httk workflow describe TARGET [--json]` reports a registered id or alias,
@@ -667,6 +703,10 @@ is the CLI shortcut: it opens a file-backed SQLite `SqlStore`, saves output
 entries, runs, and products, and reports stored ids. Entry families and record
 classes are resolved lazily from the core registry; output types may require
 `httk-store` and `httk-atomistic` to be installed.
+
+`--id-base BASE` is required with `--into`; `--id-series SERIES` defaults to
+`1`. Collected edges to outputs without store ids use content ids until the
+outputs are saved, after which `--into` rewrites those edges to the minted ids.
 
 With `--into`, each job's entries, run, and products are stored as one job-level
 operation. A storage failure is reported on that job's summary as

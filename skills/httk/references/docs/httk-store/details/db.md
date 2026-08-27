@@ -231,6 +231,8 @@ verifies a per-table *schema fingerprint*: the resolved on-disk layout and
 content identity of every declared class and its referenced classes — the
 logical `identity_name`, dedup, indexes, links, and each field's role, codec,
 columns, child tables, identity participation, and list-vs-tuple container. A
+fingerprint JSON document has a `tables` mapping plus `entry_id_tables`, the
+physical backing-table names of families with an entry definition id. A
 record class whose stored shape or identity changed since creation — a gained or
 retyped field, a new codec, a changed index, a `list`↔`tuple` swap, an added
 `IdentitySkip`, a changed `identity_name` — is rejected up front with
@@ -244,6 +246,13 @@ open. Tables are still created lazily on the first write; reads never issue DDL.
 Old, unversioned, or incompatible layouts raise
 `StorageLayoutUpgradeRequiredError`; this redesign does not migrate old stores,
 so rebuild them explicitly — with one exception below.
+
+`Run.source_id` is served as `_httk_source_id` on `_httk_runs`. It is a nullable,
+queryable, sortable string containing the identifier assigned by the system that
+executed the run (for example, an httk-workflow `<workspace_id>:<job_id>`), and
+it participates in the run's content identity. Adding it therefore changes the
+`core_run` schema fingerprint and requires rebuilding existing stores; it is not
+an additive `upgrade=True` change.
 
 #### Applying a purely additive change with `upgrade=True`
 
@@ -324,7 +333,7 @@ store = SqlStore(Backend.sqlite(), entry_records={})
 with store.transaction():
     first = Note("n", "first")
     store.save(first)
-    second = store.replace(first, Note("n", "second"))            # replace the stored instance
+    second = store.replace(first, Note("n", "second"))  # replace the stored instance
     latest = store.replace(store.fetch(Note, second), Note("n", "third"))  # a lazy proxy works too
 ```
 
@@ -344,6 +353,33 @@ idempotent no-op returning that sid, while a different lineage raises
 [record.text for record in store.history(store.fetch(Note, latest))]
 # ['first', 'second', 'third']
 ```
+
+### Entry ids
+
+Defined entry families also carry two human-readable identifiers. `id` is
+one-to-one with a `logical_id` lineage and is consequently shared by every
+replacement; `immutable_id` is one-to-one with a stored row. Configure minting
+with `SqlStore(..., entry_ids=EntryIdScheme("httk.mydb", "1"))`, or pass
+`id_series=` to `save`, `replace`, or `bulk_ingest` to select a campaign
+series for that call. `MongoStore` has the same `EntryIdScheme` and per-call
+kwargs (it has no bulk ingest); it indexes `f.id` and creates a unique partial
+index for nullable `f.immutable_id`. The recommended form is
+`httk.mydb-1-42` for an entry id and `httk.mydb-1-42~3` for its third revision.
+Mongo stored-property serving uses these same human ids as SQL: ordinary pages
+serve the latest row of each lineage, while revisions pages serve immutable ids
+and expose the lineage id as `_httk_id`.
+`EntryIdScheme(type_in_base=True)` appends the served entry type to the base.
+For multi-backing families, the number is `logical_id * backing_count + backing_index`, which keeps ids unique across
+the family's backing tables.
+Cross-transaction id races are detected by each backing table's unique immutable-id index; use a family-owned id-ownership
+table if family-wide ownership must be serialized.
+
+An explicit URL-safe id which does not match that recommended form is accepted
+with a warning; unsafe ids are rejected. Backing records of every family with
+a definition id must declare nullable, identity-skipped `id` (indexed) and
+`immutable_id` (unique) fields. Because this adds physical columns and a
+unique index, stores created before this change must be rebuilt rather than
+reopened with the old schema. `immutable_id` uniqueness is per backing table.
 
 Plain `fetch()` and `searcher()` queries keep returning **all** rows of a
 lineage. Pass `only_latest=True` to `store.searcher()` to restrict *root*
@@ -391,7 +427,9 @@ The equivalent OPTIMADE filter is:
 from httk.store.backend.sql import optimade_filter_searcher
 
 rows = optimade_filter_searcher(
-    store, StructureRecord, "_httk_store_timestamp <= 1767225600000000000"  # ns for 2026-01-01T00:00:00Z
+    store,
+    StructureRecord,
+    "_httk_store_timestamp <= 1767225600000000000",  # ns for 2026-01-01T00:00:00Z
 )
 ```
 

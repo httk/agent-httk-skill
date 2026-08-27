@@ -68,6 +68,16 @@ $ httk workflow collect
 its digest (upgrading httk cannot change queued jobs); `run` drives every job
 until idle; `collect` prints one JSON `CollectedJob` summary per finished job
 (`--raw` emits mechanical `JobRecord` summaries).
+Workers can enforce per-job and per-step resource requirements; start them with
+capacities such as:
+
+```console
+httk workflow run --workers 4 \
+  --worker-resource procs 32 --worker-resource mem 128000 \
+  --worker-resource matlab_license_slots 2
+```
+
+See `references/campaign.md` for manifest and dynamic-resource declarations.
 Monitor with `job list`, `job show JOB`, `job why JOB` (explains a stuck job),
 `job debug --workspace WS JOB` (foreground single-job loop). Registered VASP workflows:
 `vasp-relax`, `httk.vasp.static`, `httk.vasp.relax-static`, `vasp-relax-bash`.

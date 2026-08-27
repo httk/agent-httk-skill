@@ -109,6 +109,51 @@ $ httk workflow run --workspace kappa:runs --workers 8
 $ httk workflow workspace status kappa:runs
 ```
 
+### Task sizing and worker resources
+
+Declare requirements in a workflow package manifest, or dynamically for the
+next activation:
+
+```toml
+[workflow.resources]
+procs = 4
+mem = 16000            # MB
+
+[workflow.steps.relax]
+resources = { procs = 32, mem = 120000 }
+
+[workflow.steps.analyse]
+resources = { procs = 1, mem = 2000, matlab_license_slots = 1 }
+```
+
+Start managers with capacities:
+
+```console
+httk workflow run --workers 4 \
+  --worker-resource procs 32 --worker-resource mem 128000 \
+  --worker-resource matlab_license_slots 2
+```
+
+Requirements are `NAME =` a non-negative integer, and may be per job
+(`[workflow.resources]`), per step (`[workflow.steps.NAME] resources = {...}`,
+where `NAME` is in `runner.steps`), or dynamic for the next activation via
+`advance`/`gather`:
+
+```python
+a.advance("analyse", resources={"procs": 1, "mem": 2000, "matlab_license_slots": 1})
+```
+
+The Bash bridge accepts repeatable `--resource NAME=INT` on `advance`/`gather`.
+`procs`/`mem` are special: when omitted, they receive fair share
+`capacity // --workers`, so only jobs declaring both pack denser than
+one-per-worker. A job needing a resource the manager lacks or has at 0 is never
+claimed there; the idle summary reports it under resources. With the example
+manager, `relax` runs alone and up to two `analyse` jobs run concurrently.
+Inside SLURM, the manager derives `procs` (= `SLURM_NTASKS`), `gpus`, `nodes`,
+and `mem` unless given; the local adapter injects host `procs`/`mem`.
+`--count N` starts N managers (auto-detected capacities split, explicit pairs
+per manager); each manager owns its allotment.
+
 - `transfer SRC DST` is the one verb for moving jobs either direction. Local →
   remote detaches each named job, pushes its sealed bundle, imports it there.
   Transfers are idempotent and resumable: rerunning the same command resumes.
