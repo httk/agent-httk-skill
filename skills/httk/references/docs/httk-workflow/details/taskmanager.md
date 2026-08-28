@@ -285,11 +285,14 @@ The command prints the reference to embed in every `job.json` that uses it:
 Publication is content addressed. Publishing identical bytes again changes
 nothing, and replacing a stored name whose content differs requires `--replace`,
 because live jobs already reference the stored digest. Before each attempt the
-manager copies the runner below the attempt control directory, verifies the
-pinned digest against that copy, and executes only the copy; a mismatch fails
-the job with `runner_mismatch` and an unresolvable runner with
-`runner_unavailable`. A detached transfer carries the runners its job
-references, and importing installs the missing ones at the destination.
+manager verifies the runner in place and executes it with the job workdir as
+cwd; a mismatch fails the job with `runner_mismatch` and an unresolvable or
+non-executable runner with `runner_unavailable`. A detached transfer carries
+the runners its job references, and importing installs the missing ones at the
+destination. Compiled package runners locate their registered binaries under
+`HTTK_WORKFLOW_RUNNER_ARTIFACTS`. A file runner is invoked through its verified
+`/dev/fd/<N>` descriptor, so code that needs sibling files uses
+`HTTK_WORKFLOW_RUNNER_ROOT`.
 
 Runners deployed outside any workspace use `"source": "installed"` and resolve
 against the ordered `--runner-search-path` roots of the manager.
@@ -737,7 +740,7 @@ httk workflow job debug --workspace WORKSPACE --follow-children JOB
 ```
 
 `job debug` drives exactly one job to a terminal state in the foreground and
-streams the attempt's `stdout.log` and `stderr.log` to the console as they grow.
+streams the job's `logs/stdio.out` chronicle to the console as it grows.
 Every transition is performed by a private task manager whose scans are
 restricted to that one job, so the debugged job runs through exactly the code
 paths a production manager uses and no unrelated work is claimed. Lines are
@@ -769,9 +772,9 @@ the context named by `HTTK_WORKFLOW_CONTEXT` and publishes
 for the two authoring SDKs that implement it.
 
 The local executor starts runners behind a one-byte launch gate. It records
-the process identity and commits the `running` marker before releasing that
-gate. If the manager disappears during this narrow launch interval, the gated
-process observes end-of-file and exits without executing the runner.
+the process identity in the `running` frame before releasing that gate. If the
+manager disappears during this narrow launch interval, the gated process
+observes end-of-file and exits without executing the runner.
 
 `httk workflow manager run` executes the normal `path` runner executor. Converted
 `httk-v1` packages use that same path through their packaged v1 runner; select

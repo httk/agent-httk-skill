@@ -74,7 +74,10 @@ The core representation is deliberately small:
 4. Transition details and history are packed into shared append-only journal
    segments. There is no state-record file, event directory, failure file, or
    revision directory per job.
-5. An active attempt temporarily adds one small control directory. Application
+5. An active attempt temporarily adds one small control directory below the
+   reserved `attempts/` payload directory. The manager and collector refuse a
+   symlinked `attempts/` or control entry; a concurrent replacement by the
+   payload's own owner after that check is outside the threat model. Application
    execution may use either one persistent `run/` workdir or an isolated
    `run.<attempt-id>/`.
 6. `data/` and replayable transactions are optional. Jobs that opt in receive
@@ -92,7 +95,9 @@ data is:
 | Shared journal records | 0 files | Packed into writer segments |
 | Runner | 0 files | Shared and referenced by digest, unless it lives in the payload |
 | `.httk-job/` runner job state | 0 or 1 directory | Job lifetime, when a runner keeps state across attempts |
-| Attempt control directory | 0 or 1 directory | Attempt/retention lifetime |
+| `attempts/` reserved container | 0 or 1 directory | Created with the first attempt and retained for the job lifetime |
+| `attempts/<attempt-id>/` control directories | 0 or more directories | Attempt/retention lifetime |
+| `logs/` | 0 or 1 directory | Reserved for a future run-log layout; unused in core-v2 |
 | Persistent/isolated workdir | 0 or 1 directory | Application policy |
 | Per-state/per-event/per-failure files | 0 | Not used |
 
@@ -253,7 +258,8 @@ WORKSPACE/
                 ├── data/
                 ├── files/
                 ├── run/
-                └── .httk-attempt.<attempt-id>/
+                ├── attempts/<attempt-id>/
+                └── logs/                   # reserved for a future run-log layout; unused in core-v2
 ```
 
 Here the job placement is `project-17/0/03a`. Its authoritative marker has a
@@ -720,22 +726,25 @@ that name it — before the rename that makes it authoritative:
 
 | Artifact | Synchronized before |
 | --- | --- |
-| Journal frame | the state-marker rename that references it |
+| Journal frame, including the `process` identity in a `running` frame | the state-marker rename that references it |
 | State marker / request / submitted payload | it becomes visible in `state/` (its parent directory is flushed) |
-| Attempt `context.json`, `process.json` | the runner is launched against it |
+| Running marker directories (source and destination) | the launch gate byte is written, after the verified `running` marker rename and both marker-directory entries are flushed |
+| Attempt `context.json` | the runner is launched against it |
 | Outcome bundle (`outcome.json`, `runner_steps`, failure detail, its sealed transaction manifest and staged payload, its child `job.json` bundles) | the `outcome.tmp.<nonce>` → `outcome.ready` rename; the whole draft tree is flushed in one batch, then the attempt-control directory after the rename |
 | Committed transaction data (`data/`) | the manager appends the destination state frame and renames the marker out of `committing`; every replayed destination and each parent directory it touched, including the trash a removal moved into, is flushed first |
 | Registered child payloads and their submitted markers | the parent's marker leaves `committing` |
-| Job state (`.httk-job/state.json`), observed declarations, `runner-steps.json` | each atomic replace returns |
+| Job state (`.httk-job/state.json`), observed declarations | each atomic replace returns |
 | Sealed replayable workdir batch (`.httk-runner/workdir-ready/`) and its replay into the workdir | the batch is published, then retired as applied |
 
 Two runner-side artifacts keep only process-interruption safety even in the
 durable profile, because per-line synchronization would dominate their cost and
 neither is authoritative workflow state: the append-only run log
-(`.httk-runner/runlog.jsonl`) and the runner's captured `stdout.log` and
-`stderr.log`. They are evidence for an operator, not markers or committed data;
+(`logs/runlog.jsonl`) and the runner's captured `logs/stdio.out`. They are
+evidence for an operator, not markers or committed data;
 losing their tail to a power cut costs a diagnostic line, never a lost outcome
 or a half-applied transaction.
+A late fenced process may append to `logs/stdio.out` after a later attempt's
+start marker; the chronicle is evidence, not an ordering authority.
 
 In the non-durable profile every one of these keeps process-interruption safety
 only: a torn write or an interrupted rename is still never observed, but a node
@@ -786,6 +795,20 @@ State frames have the following shape; the `resources` member is optional and is
 
 `data_generation` is omitted or `null` when `job.json` declares
 `data.mode: "none"`.
+
+A `running` frame also carries the launched process identity in its `process`
+object. The object contains exactly the following protocol members:
+
+| Member | Type | Meaning |
+| --- | --- | --- |
+| `pid` | integer | Process ID of the gated launcher. |
+| `process_group` | integer | Process-group ID used for signalling. |
+| `hostname` | string | Host on which the launcher runs. |
+| `launched_at` | string | UTC timestamp at which the launcher was created. |
+
+The `process` object is retained through `cancelling` and may remain on the
+terminal `cancelled` frame. It is deliberately not carried into a recovered
+or relaunched attempt.
 
 An in-flight operator pause adds the optional `pause_requested` member to the
 state frame; it is carried to the next attempt boundary, then consumed when the
@@ -936,13 +959,18 @@ the digest of a file is over its bytes, and the digest of a tree is the
 canonical tree digest. Sharing one runner file across a large partitioned
 campaign is the purpose of the non-payload sources.
 
-A manager MUST NOT execute a shared runner in place. It resolves the runner,
-copies it below the attempt control directory as `runner`, verifies
-`runner.sha256` against that staged copy, and executes only the copy. A digest
-disagreement fails the job with `runner_mismatch`; a runner that cannot be
-resolved fails it with `runner_unavailable`. Both are ordinary continuable
-failures, never silent substitutions. A staged tree is entered at its top-level
-`run` file.
+A manager MUST verify a shared runner's digest against the bytes it will
+execute — a file through the open descriptor it keeps until launch, a tree in
+place — and executes it in place with the job workdir as cwd; it MUST NOT
+modify the runner or its tree. A digest disagreement fails the job with
+`runner_mismatch`; a runner that cannot be resolved or entered fails it with
+`runner_unavailable`. Both are ordinary continuable failures, never silent
+substitutions. A tree is entered at its top-level `run` file. File verification
+pins the inode through launch; tree verification accepts the TOCTOU window
+between its digest check and execution because the store owner is trusted not
+to overwrite a runner concurrently. For a file runner, `argv[0]` and Python's
+`__file__` identify its `/dev/fd/<N>` descriptor path; siblings are located via
+`HTTK_WORKFLOW_RUNNER_ROOT`.
 
 An `installed` path may also use the reserved form `pkg:<module>/<resource>`,
 which resolves inside an installed Python package. A manager MUST restrict that
@@ -1062,7 +1090,7 @@ The state kinds are:
 | `ready` | Eligible to be claimed when resources permit. |
 | `claimed` | A manager won the claim but has not launched the attempt. |
 | `running` | The current attempt may have a live process. |
-| `committing` | The attempt is fenced; its outcome is being replayed. |
+| `committing` | The attempt is fenced; its outcome is being replayed, and the frame may still name the fenced live process. |
 | `cancelling` | The attempt is fenced by a cancellation; its process is being stopped and its exit verified. |
 | `relocating` | No attempt may run; the placement is changing. |
 | `transferring` | A quiescent payload is moving or detaching. |
@@ -1143,7 +1171,8 @@ Every transition of the core profile, exhaustively:
 | `waiting` | `failed` | `dependency_failure`: the join became impossible with no `on_impossible`, or a named child stayed unresolvable past the join grace. |
 | `waiting` | `failed` | `protocol_error`: the recorded join itself cannot be read. |
 | `failed`, `paused` | `ready` | Operator `continue` (retry the activation) or `override_step` (new activation). |
-| `cancelling` | `cancelled` | The exit of the fenced attempt was verified. |
+| `cancelling` | `cancelled` | For a running attempt with a valid same-host identity, the exit was verified. |
+| `committing` | `cancelled` | A valid same-host identity was signalled best-effort when available; exit was not verified, and the terminal frame records `no_live_attempt`. |
 | any nonterminal | `cancelled` | Operator `cancel` where no live attempt has to be stopped first. |
 | `submitted`, `ready`, `waiting` | `paused` | Operator `pause`. |
 | `claimed`, `running`, `committing` | the same kind | Operator `pause`, recorded as a sticky deferred request until the next attempt boundary. |
@@ -1181,27 +1210,38 @@ order is the guarantee:
    group, and `SIGKILL` after a configured grace period. The `cancelling` frame
    names the attempt, its attempt-control directory, and its previous owner, so
    a recovering manager has everything it needs.
-3. **Only then finish, against evidence.** The marker moves to `cancelled` only
-   once the exit has actually been verified, and the verification is recorded
-   in the `cancellation` member of the terminal frame.
+3. **Only then finish, against evidence.** For a `running` or `cancelling`
+   attempt with a valid same-host identity, the marker moves to `cancelled`
+   only once the exit has actually been verified, and the verification is
+   recorded in the `cancellation` member of the terminal frame.
 
-A manager MUST NOT publish `cancelled` for an attempt it has merely signalled.
+Cancelling a `committing` job keeps the historical best-effort behavior: the
+manager signals the recorded process group when a valid same-host identity is
+available, then moves directly to `cancelled` with `no_live_attempt`. It does
+not verify process exit, because the outcome is already published and replay
+may be partially applied.
+Known limitation: the recorded process may still be running after this
+terminal transition.
+
+A manager MUST NOT publish `cancelled` for a `running` attempt it has merely
+signalled. The committing behavior above is the documented exception.
 Acceptable evidence is:
 
 | `cancellation.verified` | Meaning |
 | --- | --- |
 | `process_exited` | The manager launched the process and reaped it; the exit status is recorded. |
 | `process_group_absent` | The process was recorded on this host and its process group no longer exists. |
-| `no_launched_process` | No process identity was ever durably recorded, so the launch gate guarantees the runner never executed. |
-| `no_live_attempt` | The job was cancelled from a state that has no live attempt at all. |
+| `no_live_attempt` | The job was cancelled from a state where no exit verification is performed, including `committing` after outcome publication. |
 
 A cancellation whose process cannot be proven stopped — typically one recorded
 on a different host — MUST leave the marker in `cancelling`, journal why, and
-retry. Staying in `cancelling` is the safe outcome: the attempt remains fenced,
-so it can produce no state, and an operator sees a stalled cancellation rather
-than a terminal state that falsely asserts that nothing is still writing the
-workdir. A site whose batch system can confirm that an allocation has ended MAY
-treat that confirmation as evidence and record it in the same member.
+retry. A missing or malformed `process` member is damage, not evidence that the
+launch gate was never released, and MUST follow the same unverifiable path.
+Staying in `cancelling` is the safe outcome: the attempt remains fenced, so it
+can produce no state, and an operator sees a stalled cancellation rather than a
+terminal state that falsely asserts that nothing is still writing the workdir.
+A site whose batch system can confirm that an allocation has ended MAY treat
+that confirmation as evidence and record it in the same member.
 
 Because the fence is a marker rename, cancellation composes with everything
 else by construction: an attempt that publishes an outcome after being fenced
@@ -1236,15 +1276,16 @@ The claimed frame names:
 - resource allocation;
 - preceding record reference.
 
-The manager creates `.httk-attempt.<attempt-id>/`, prepares the selected
+The manager creates `attempts/<attempt-id>/`, prepares the selected
 persistent or isolated workdir, appends a running frame, and renames the
 claimed marker to running immediately before launching the application. A
 local executor MAY first create a process blocked on a launch gate, durably
-record that process identity, commit the running marker, and only then release
-the gate to execute the application. If its manager disappears before release,
-the gate MUST cause that process to exit without executing the application.
-This closes the otherwise ambiguous crash window between a running transition
-and recording the new process identity.
+record that process identity in the running frame, and only then release the
+gate to execute the application. If its manager disappears before release, the
+gate MUST cause that process to exit without executing the application. The
+identity is part of the durable running frame, so a missing or malformed
+identity after repair is damage and cannot be used as `no_live_attempt` or as
+proof that the application never ran.
 
 Managers update `managers/<manager-id>/heartbeat.json` by atomic replacement.
 A recoverer uses the state frame, heartbeat, batch scheduler when available,
@@ -1304,18 +1345,41 @@ unsafe policy MUST be recorded there too.
 
 Attempt control is separate from application workdir:
 
+The version-2 `context.json` includes `payload`, an absolute path to the job
+payload, so SDKs can locate the job-level logs independently of the selected
+workdir.
+
 ```text
 <workspace>/<placement>/<job-key>/
-├── .httk-attempt.<attempt-id>/
+├── attempts/<attempt-id>/
 │   ├── context.json
-│   ├── runner                   # the verified staged copy of a shared runner
 │   ├── outcome.tmp.<nonce>/
 │   └── outcome.ready/
+├── logs/
+│   ├── stdio.out               # append-only stdout/stderr chronicle
+│   └── runlog.jsonl             # append-only structured run log
 ├── .httk-job/                   # optional runner-private job state
 │   └── declarations/            # optional observed workflow declarations
 │       └── <declaration-name>.json
 └── run/                         # persistent mode
 ```
+
+`logs/stdio.out` is one append-only chronicle for all attempts. The manager's
+marker lines have these formats, verbatim:
+
+```text
+=== httk attempt <attempt-id> step <step> ordinal <attempt_ordinal> started <utc-iso>
+=== httk attempt <attempt-id> ended <utc-iso> exit <returncode> outcome <action|none>
+=== httk attempt <attempt-id> ended <utc-iso> launch-failed <reason>
+```
+
+Each marker is written as one `os.write` whose bytes begin with `\n` and end
+with `\n`; a preceding empty line is normal. When cutting an attempt's block,
+recognize a marker as a line that starts with `=== httk attempt`. A late fenced
+process may append output after a newer attempt's start marker, so this file is
+evidence rather than an ordering authority. If a manager is lost mid-attempt,
+that attempt may have a start marker without an end marker; a takeover writes
+its own start/end pair.
 
 In isolated mode the application directory is
 `run.<attempt-id>/` instead of `run/`. The runner's current working directory is
@@ -1324,7 +1388,7 @@ the selected application workdir, not the attempt control directory.
 `.httk-job/` is runner-private state that belongs to the job rather than to one
 attempt: it survives retries, step advances, and isolated workdirs, and it travels
 with the payload when the job is transferred. A runner MAY store what it needs
-there, atomically. Both `.httk-job/` and every `.httk-attempt.<attempt-id>/` are
+there, atomically. `.httk-job/`, every `attempts/<attempt-id>/`, and `logs/` are
 excluded from every payload digest — submission, child registration, and detached
 transfer alike — so publishing an outcome and writing job state can never disturb
 an immutability check of the payload.
@@ -1401,9 +1465,11 @@ HTTK_WORKFLOW_ATTEMPT_REASON=<reason>
 HTTK_WORKFLOW_STEP=<current step>
 HTTK_WORKFLOW_PYTHON=<manager Python interpreter>
 HTTK_WORKFLOW_BASH_API=<absolute native workflow Bash library>
+HTTK_WORKFLOW_RUNNER_ROOT=<absolute shared runner file or tree root>
 ```
 
 `HTTK_WORKFLOW_DATA_DIR` is additionally set only for transactional-data jobs.
+For a shared runner, `HTTK_WORKFLOW_RUNNER_ROOT` names its file or tree root.
 The JSON file is the source of truth; scalar environment variables are
 language-neutral conveniences.
 
@@ -1423,7 +1489,11 @@ rather than as a protocol violation. The ones this implementation exports are:
 
 ```text
 HTTK_WORKFLOW_VASP_BASH_API=<absolute native VASP Bash library>
+HTTK_WORKFLOW_RUNNER_ARTIFACTS=<absolute registered build-artifacts directory>
 ```
+
+`HTTK_WORKFLOW_RUNNER_ARTIFACTS` is set only when a workspace package has a
+registered build; a compiled package's `run` entry must find its binaries there.
 
 ### Executable workflow-hook wire formats
 
@@ -1491,6 +1561,7 @@ An unclean persistent retry context is:
   "workspace_id": "b588833b-87ea-4da2-b860-1c9e768cfbc1",
   "job_id": "01234567-89ab-cdef-0123-456789abcdef",
   "placement": "project-17/0/03a",
+  "payload": "/srv/httk/project-17/0/03a/job-1",
   "step": "relax",
   "activation_id": "e7f86a0e-34d6-45a7-b92d-3f4b2dc98c54",
   "attempt_id": "a6c2c973-29e1-44e2-9649-ae419e340ac4",
@@ -1650,7 +1721,7 @@ mandatory per-step revision directory.
 ### Transaction bundle
 
 ```text
-.httk-attempt.<attempt-id>/outcome.tmp.<nonce>/
+attempts/<attempt-id>/outcome.tmp.<nonce>/
 ├── outcome.json
 └── transaction/
     ├── manifest.json
@@ -1871,7 +1942,7 @@ together.
 A step places complete child bundles in its outcome:
 
 ```text
-.httk-attempt.<attempt-id>/outcome.tmp.<nonce>/
+attempts/<attempt-id>/outcome.tmp.<nonce>/
 ├── outcome.json
 └── children/
     ├── spawn.json
@@ -2141,8 +2212,8 @@ Codes emitted by this manager itself are reserved. Those currently in use are:
   midway; a transaction manifest or outcome the manager cannot parse is a
   `protocol_error`, not this;
 - `runner_unavailable` — a runner outside the payload could not be resolved,
-  staged, or entered at all;
-- `runner_mismatch` — the staged copy of such a runner did not match the
+  opened, or entered at all;
+- `runner_mismatch` — the bytes of such a runner did not match the
   `runner.sha256` the job pinned.
 
 A runner library that dispatches steps on a runner's behalf publishes ordinary
@@ -2165,6 +2236,8 @@ The failure frame contains job, step, activation, and attempt IDs; the failure
 object with its code, message, and details such as exit status or signal; retry
 history; manager ID; relevant retained log paths; and data generation. For a job
 with `data.mode` equal to `none`, data generation is `null`.
+Manager-generated failure details retain the payload-relative path
+`log_paths: ["logs/stdio.out"]`; `job why` uses that frame member when present.
 
 Current broken jobs are exactly the markers below `state/failed/`. This
 directory tree is authoritative and requires no reconciliation.
@@ -2518,8 +2591,8 @@ The remaining categories are gated as follows.
 | Manager directory | `journal_days` | The manager's heartbeat is expired and none of its writer's segments were retained. |
 
 The newest attempt-control directory of a terminal job is retained regardless
-of age: it holds the outcome, the failure breadcrumb, and the runner logs of
-the attempt that decided the job.
+of age: it holds the outcome and failure breadcrumb of the attempt that
+decided the job, plus the metadata needed to identify it.
 
 A collector MUST NOT prune the runner store. A runner is referenced by digest
 from `job.json` and from transfer manifests, an attached workspace can gain a

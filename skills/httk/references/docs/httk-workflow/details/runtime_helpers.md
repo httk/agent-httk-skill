@@ -183,7 +183,7 @@ envelope and serialization rules are normative in {doc}`workflow_packages`.
 | `a.payload`, `a.workdir`, `a.workspace`, `a.data` | absolute paths; `a.data` is set only for a transactional job |
 | `a.job`, `a.parameters`, `a.parameter(name[, default])` | the job definition and its opaque implementation `parameters` object |
 | `a.state` | dict-like JSON state that belongs to the **job** |
-| `a.log` | the append-only structured run log of the workdir |
+| `a.log` | the append-only structured run log of the job payload (`logs/runlog.jsonl`) |
 | `a.children` | the typed children of the join that started this activation |
 | `a.declaration(name)` | one workflow declaration: the observed document, else the declared one, else `None` |
 
@@ -273,6 +273,10 @@ sha256)` name another shared runner. A payload runner cannot be inherited,
 because a synthesized child has no payload to copy it into: publish it with
 `Workspace.publish_runner`, or spawn a prepared payload directory
 instead:
+
+Shared runners execute from their published file or tree. Compiled package
+runners use the manager-provided `HTTK_WORKFLOW_RUNNER_ARTIFACTS` directory for
+registered build outputs.
 
 ```python
 prepare_job_payload(
