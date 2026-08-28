@@ -7,11 +7,12 @@ Every command below is under `httk workflow …`; see
 
 ## Initialize a workspace
 
-`WORKSPACE` is optional inside a project: omitting it uses the project's
-recorded default, or the per-user default workspace when none is recorded. A
-project does not contain workspaces; record its routing explicitly with
-`workspace default NAME`. Explicit local names are created with
-`workspace init PATH`; an existing path is adopted and registered. `REMOTE:PATH`
+`WORKSPACE` is optional: omitting it uses the closest enclosing workspace,
+then the project's recorded default, the registry default, or the per-user
+default workspace when none is found. A project does not contain workspaces;
+record its routing explicitly with `workspace default NAME`. Explicit local
+names are created with `workspace init PATH`; an existing path is adopted and
+registered. `REMOTE:PATH`
 initializes and names a workspace on that remote.
 
 ```console
@@ -65,7 +66,7 @@ remote job stops, then `httk workflow collect` locally.
 
 Four tunables belong to the workspace rather than to any one process, so that
 every manager, CLI, and independent implementation attaching it agrees on them.
-They live in `.httk-workflow/format.json` and are read and written with:
+They live in `.httk-workspace/format.json` and are read and written with:
 
 ```console
 httk workflow workspace policy show WORKSPACE
@@ -177,10 +178,11 @@ httk workflow workspace gc WORKSPACE
 
 It is safe to run against a live workspace: a manager that is still
 heartbeating keeps its own directory and every journal segment it wrote, no
-marker or payload is touched beyond the aged attempt-control directories of
-terminal jobs, and pruning an empty placement mirror that a transition is
-recreating underneath is an ordinary outcome rather than an error. A limit left
-unset means keep. See
+non-terminal marker or payload is touched beyond the aged attempt-control
+directories of terminal jobs; GC may remove a terminal marker whose payload
+the operator removed. Pruning an empty placement mirror that a transition is
+recreating underneath is an ordinary outcome rather than an error. A limit
+left unset means keep. See
 [the command guide](workflow_cli.md#freeing-disk) for the full category table
 and for what collecting journal history costs.
 
@@ -197,6 +199,15 @@ never between observing a marker and acting on it, obeying exactly the same
 logged rather than allowed to disturb scheduling. Keep the interval long: a
 collection walks the state tree and the journal directory, which is work the
 scheduling passes do not need done often.
+
+To remove a finished (`succeeded`, `failed`, or `cancelled`) job, remove the
+payload directory named by `job show` with `rm -r`, then run
+`httk workflow workspace gc WORKSPACE`, or let a manager started with
+`--gc-interval` perform it. Cancel a non-terminal job first with `job request
+cancel`, and remove children only when their parent is terminal: GC's join
+guard is best-effort, not a lock, and a parent that publishes a join during the
+unbounded TOCTOU window before unlinking may observe a missing child and fail
+or stall. This is a scheduling-correctness consequence, not payload data loss.
 
 ## Filesystem visibility
 
@@ -457,7 +468,7 @@ lease is logged as a warning, and nine tenths of it as an error: raise
 
 Every claim, launch, transition, recovery decision, and refused request is
 logged. The console reports warnings and errors, while the complete info-level
-record is rotated into `.httk-workflow/managers/MANAGER_ID/log`. `--log-level`
+record is rotated into `.httk-workspace/managers/MANAGER_ID/log`. `--log-level`
 raises or lowers both, `--log-file` moves the file, and `--json-logs` emits one
 JSON object per line for ingestion.
 
@@ -567,7 +578,7 @@ shape-checks the request).
 Requests capture the exact current marker generation and record reference.
 A delayed request therefore cannot mutate a newer job state. One that can never
 apply again — because the job has moved on — is moved to
-`.httk-workflow/requests/retired/` with the reason recorded beside it instead
+`.httk-workspace/requests/retired/` with the reason recorded beside it instead
 of being reread on every pass; a request for a runner executor this manager does
 not serve is left alone for a manager that does.
 
@@ -617,7 +628,9 @@ filesystem is never mistaken for damage — to a readable frame whose checksum
 verifies and whose job, kind, and generation agree with the marker name. Each
 problem is reported with a stable code: `missing_segment`, `short_read`,
 `checksum_mismatch`, `reference_mismatch`, `identity_mismatch`,
-`unparseable_name`, and their siblings. Without `--repair` nothing is written.
+`unparseable_name`, `payload_missing`, and their siblings. `payload_missing`
+means a non-terminal marker has no payload; it is always reported and is never
+repaired or quarantined. Without `--repair` nothing is written.
 The command exits `0` when the workspace is clean or everything found was
 repaired, and `1` when something is left for an operator.
 
@@ -639,7 +652,7 @@ Two things are deliberately never repaired:
   for its lease to expire, and run the repair again;
 - a marker with no readable older frame — typically a job damaged before its
   second transition — cannot be restored at all. It is reported, and moved into
-  `.httk-workflow/quarantine/` with an audit record only if
+  `.httk-workspace/quarantine/` with an audit record only if
   `--quarantine-unrepairable` is also given.
 
 Run it when a node crashed while writing, when a filesystem was restored from a
