@@ -24,6 +24,12 @@ scale. It is distributed as a family of packages sharing the `httk` namespace:
 `pip install httk2` installs the standard set; `httk2[serve]` adds serving.
 Metapackage name is ASCII `httk2`; the project is written *httk₂* in prose.
 
+`workspace` and `job` are top-level CLI groups. Except for `workspace forget`
+and `workspace delete`, workspace commands resolve the enclosing
+`.httk-workspace/` found by walking up from the current directory, then the
+project default and registry default; pass an explicit workspace when operating
+elsewhere.
+
 ## How to help — task routing
 
 - **"Run calculations / a campaign / on a cluster"** → read
@@ -82,9 +88,11 @@ Monitor with `job list`, `job show JOB`, `job why JOB` (explains a stuck job),
 `job debug --workspace WS JOB` (foreground single-job loop). Registered VASP workflows:
 `vasp-relax`, `httk.vasp.static`, `httk.vasp.relax-static`, `vasp-relax-bash`.
 
-For a remote/HPC campaign (remotes, `kappa:runs` colon workspaces, `transfer`,
-`campaign` partitioning, Python `new_jobs` streaming, `collect --into` a store)
-follow `references/campaign.md`.
+For a cluster campaign, configure the workspace's manager launcher first; use
+a remote only when transport to another machine is needed. For the full
+remote/HPC path (`kappa:runs` colon workspaces, `transfer`, `campaign`
+partitioning, Python `new_jobs` streaming, `collect --into` a store), follow
+`references/campaign.md`.
 
 ## Core ideas to keep in mind (details: references/architecture.md)
 

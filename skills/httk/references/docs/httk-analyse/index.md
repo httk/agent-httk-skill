@@ -13,6 +13,7 @@ compositions, energies, and structures into phase diagrams.
 - **API reference**: {doc}`reference/index`
 - **Generic lower hulls**: {doc}`generic-hulls`
 - **Materials phase diagrams**: {doc}`phase-diagrams`
+- **CrysViz structure viewer**: {doc}`crysviz`
 - **Examples notebook**: {doc}`notebooks/examples`
 ````
 
@@ -40,6 +41,7 @@ assert tuple(hull.hull_indices) == (0, 1, 2)
 
 generic-hulls
 phase-diagrams
+crysviz
 reference/index
 notebooks/examples
 ```

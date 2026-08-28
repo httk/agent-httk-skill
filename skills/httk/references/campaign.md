@@ -2,8 +2,9 @@
 
 The complete path: create a project, set up workspaces (local and remote),
 instantiate a workflow over inputs and parameters, send jobs to an HPC system,
-monitor, fetch results home, collect, and analyse. Everything below is
-`httk workflow …` unless noted. The full command tree is in the docs snapshot
+monitor, fetch results home, collect, and analyse. `httk workspace …` and
+`httk job …` are top-level command groups; workflow execution and transfers
+remain under `httk workflow …`. The full command tree is in the docs snapshot
 (`docs/httk-workflow/workflow_cli.md`); managers in `taskmanager.md`.
 
 ## 1. Project and local workspace
@@ -70,7 +71,29 @@ settings they consume (`[workflow.environment.*]` — typed, with defaults);
 declared entries are resolution-gated at attempt start and overridable per job
 with `job new --environment NAME=VALUE`.
 
+Except for `workspace forget` and `workspace delete`, workspace arguments are
+optional: the CLI walks up from the current directory to find
+`.httk-workspace/`, then uses the project default and registry default. The workspace anchor is
+`.httk-workspace/`; a job payload contains `job.json`, `files/`, `data/`,
+`run/`, `logs/stdio.out`, `logs/runlog.jsonl`, and `.httk-job/state.json`.
+`attempts/<id>/` exists only for a live attempt or failed/cancelled evidence;
+successful jobs retain no attempt directory. Runners execute in the payload's
+`run/` directory in place, and `logs/stdio.out` records attempt start/end
+markers. The manager provides the attempt context as the JSON-valued
+`HTTK_WORKFLOW_CONTEXT` environment variable.
+
 ## 4. A remote (HPC) workspace
+
+When the target machine is a cluster, configure its workspace launcher before
+running jobs. The remote is only needed to reach that machine; it does not
+select or submit a scheduler job:
+
+```console
+$ httk workflow launcher add --template slurm --global cluster
+$ httk workspace init --name runs /scratch/rar/httk/runs
+$ httk workspace settings set --key manager.launch --value cluster runs
+$ httk workspace settings set --key slurm.partition --value batch runs
+```
 
 ```console
 $ httk workflow remote add --template ssh kappa
@@ -78,14 +101,16 @@ $ httk workflow remote configure \
       --set host=kappa.example.org --set username=rar --set check_connectivity=yes kappa
 $ httk workflow remote check kappa                    # verifies httk answers there
 $ httk workspace init kappa:/scratch/rar/httk/runs
+$ httk workspace settings set --key manager.launch --value cluster kappa:runs
 $ httk workspace settings set --key slurm.partition --value batch kappa:runs
 $ httk workspace settings set --key vasp.command --value "srun -n 32 vasp_std" kappa:runs
 ```
 
 A *remote* is one reachable machine (named like `git remote`). The owning
 machine chooses the workspace path; it registers under its basename, so it is
-addressed as `kappa:runs` from then on. Templates cover ssh + scheduler
-combinations; `remote show` never prints credential values.
+addressed as `kappa:runs` from then on. Remote templates are `ssh` or `local`
+transport; scheduler selection belongs to the workspace launcher. `remote show`
+never prints credential values.
 
 httk₂ is never installed on the remote for you — set up *httk-workflow* there
 yourself (a venv, `pipx install httk-workflow`, a module) so it answers from a
@@ -159,9 +184,11 @@ per manager); each manager owns its allotment.
   Transfers are idempotent and resumable: rerunning the same command resumes.
   The sealed digest pins every path, content, executable bit and symlink
   target — corruption is detected, never silent.
-- `run --workspace kappa:runs` submits a manager through the remote's scheduler
+- `run --workspace kappa:runs` invokes a detached manager on the owning machine;
+  that manager uses the target workspace's `manager.launch` setting
   (`manager run` is the advanced spelling; `run` locally serves until idle,
-  `--idle` keeps serving). Managers drive jobs through their steps
+  `--idle` keeps serving). Use `httk workflow run [--count N] [--launcher NAME]
+  [--inline] [--detach]` as appropriate. Managers drive jobs through their steps
   (`prepare` → `run` → `publish` for the VASP runners) with the reviewed
   remedy ladder retrying known VASP failure modes.
 - Before submitting a manager, `httk workflow precheck --workspace WS` reports readiness
@@ -205,6 +232,16 @@ for cj in collect(Workspace.default()):
     print(cj.workflow_id, cj.outputs.get("relaxed_structure"), cj.unfulfilled)
 ```
 
+## Removing and cleaning jobs
+
+To remove a finished job, get its payload path from `job show` and run
+`rm -r PAYLOAD`; a manager run or `httk workspace gc WORKSPACE` clears the
+orphaned marker. Cancel a non-terminal job first. Managers perform always-safe
+collection at startup and exit, and the full retention policy at clean exit;
+`workspace gc` is the explicit maintenance path, while `workspace fsck`
+reports always-safe leftovers. The default retention is one day for journal
+history and transaction trash. Each workspace has one `managers.log`.
+
 ## 7. Scale out: campaigns (many workspaces)
 
 When one workspace should not hold the whole run, define a partition map over
@@ -215,9 +252,11 @@ $ httk workflow campaign init --partition north=screening-a \
       --partition south=screening-b --assignment hash
 $ httk workflow campaign submit --workflow vasp-relax --key silicon \
       --input structure=structures/Si.vasp --tag silicon
-$ httk workflow campaign start-managers            # one manager per partition
 $ httk workflow campaign collect --state succeeded
 ```
+
+Start one manager for each selected partition with the campaign command in the
+workflow CLI reference; each partition uses its workspace's launcher.
 
 Roots are assigned to partitions by policy (`hash` — deterministic by key,
 `round-robin`, `explicit`); spawned children always inherit their parent's
