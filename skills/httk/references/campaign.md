@@ -73,7 +73,7 @@ with `job new --environment NAME=VALUE`.
 ## 4. A remote (HPC) workspace
 
 ```console
-$ httk workflow remote add --template ssh-slurm kappa
+$ httk workflow remote add --template ssh kappa
 $ httk workflow remote configure \
       --set host=kappa.example.org --set username=rar --set check_connectivity=yes kappa
 $ httk workflow remote check kappa                    # verifies httk answers there
