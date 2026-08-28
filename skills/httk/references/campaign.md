@@ -10,7 +10,7 @@ monitor, fetch results home, collect, and analyse. Everything below is
 
 ```console
 $ httk project init --name screening .        # creates the httk_project/ anchor
-$ httk workflow workspace init --name default .
+$ httk workspace init --name default .
 ```
 
 A *project* is the directory a campaign lives in (identity, settings, the
@@ -23,7 +23,7 @@ here, `kappa:runs` on the remote below.
 One job from one structure:
 
 ```console
-$ httk workflow job new --workflow vasp-relax --input structure=POSCAR \
+$ httk job new --workflow vasp-relax --input structure=POSCAR \
       --parameter kpoint_density=30.0 --tag silicon
 silicon--0c4f…	/…/jobs/silicon--0c4f…
 ```
@@ -59,7 +59,7 @@ for job in new_jobs(ws, "vasp-relax", items, parameters={"kpoint_density": 30.0}
 ## 3. Workspace settings (travel with the jobs)
 
 ```console
-$ httk workflow workspace settings set --key vasp.command --value "srun -n 32 vasp_std" default
+$ httk workspace settings set --key vasp.command --value "srun -n 32 vasp_std" default
 ```
 
 Scalar settings are exported into each attempt's environment
@@ -77,9 +77,9 @@ $ httk workflow remote add --template ssh-slurm kappa
 $ httk workflow remote configure \
       --set host=kappa.example.org --set username=rar --set check_connectivity=yes kappa
 $ httk workflow remote check kappa                    # verifies httk answers there
-$ httk workflow workspace init kappa:/scratch/rar/httk/runs
-$ httk workflow workspace settings set --key slurm.partition --value batch kappa:runs
-$ httk workflow workspace settings set --key vasp.command --value "srun -n 32 vasp_std" kappa:runs
+$ httk workspace init kappa:/scratch/rar/httk/runs
+$ httk workspace settings set --key slurm.partition --value batch kappa:runs
+$ httk workspace settings set --key vasp.command --value "srun -n 32 vasp_std" kappa:runs
 ```
 
 A *remote* is one reachable machine (named like `git remote`). The owning
@@ -106,7 +106,7 @@ a non-interactive-shell test.
 ```console
 $ httk workflow transfer --job silicon--0c4f default kappa:runs
 $ httk workflow run --workspace kappa:runs --workers 8
-$ httk workflow workspace status kappa:runs
+$ httk workspace status kappa:runs
 ```
 
 ### Task sizing and worker resources

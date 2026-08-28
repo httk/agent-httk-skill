@@ -57,9 +57,9 @@ From an empty directory containing a VASP-5 `POSCAR`:
 
 ```console
 $ httk project init --name myproject .
-$ httk workflow workspace init --name default .
-$ httk workflow job new --workflow vasp-relax --input structure=POSCAR --tag silicon
-$ httk workflow workspace settings set --key vasp.command --value "srun -n 32 vasp_std" default
+$ httk workspace init --name default .
+$ httk job new --workflow vasp-relax --input structure=POSCAR --tag silicon
+$ httk workspace settings set --key vasp.command --value "srun -n 32 vasp_std" default
 $ httk workflow run
 $ httk workflow collect
 ```
