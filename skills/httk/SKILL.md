@@ -91,7 +91,12 @@ httk workflow run --workers 4 \
 
 See `references/campaign.md` for manifest and dynamic-resource declarations.
 Monitor with `job list`, `job show JOB`, `job why JOB` (explains a stuck job),
-`job debug --workspace WS JOB` (foreground single-job loop). Registered VASP workflows:
+`job debug --workspace WS JOB` (foreground single-job loop), or interactively with
+`httk workflow monitor` (a paged terminal UI over local and remote workspaces —
+counts per state, job pages, details, cancel/pause/continue, transfer, removal;
+scales to 100k-job workspaces; `job list --json --limit N --after CURSOR` is the
+same paged data path for scripts). `JOB` may also be an in-workspace path or glob
+(`jobs/silicon*`). Registered VASP workflows:
 `vasp-relax`, `httk.vasp.static`, `httk.vasp.relax-static`, `vasp-relax-bash`.
 
 For a cluster campaign, configure the workspace's manager launcher first; use
