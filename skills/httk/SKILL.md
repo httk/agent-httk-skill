@@ -74,6 +74,12 @@ $ httk workflow collect
 its digest (upgrading httk cannot change queued jobs); `run` drives every job
 until idle; `collect` prints one JSON `CollectedJob` summary per finished job
 (`--raw` emits mechanical `JobRecord` summaries).
+`job new` takes exactly one of `--workflow NAME` (a registered or packaged
+workflow), `--workflow-dir DIR`, `--from-runner FILE` (a single-file Python or
+Bash runner), or `--from-command 'srun my_executable {n}'` (wrap one command
+line as a one-step workflow; `{n}` is filled from `--parameter n=…`). For a
+plain "run this program N times through SLURM" task, `--from-command` plus a
+`slurm` launcher is the whole recipe — see the vendored `launchers.md`.
 Workers can enforce per-job and per-step resource requirements; start them with
 capacities such as:
 
