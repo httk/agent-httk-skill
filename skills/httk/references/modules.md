@@ -34,9 +34,10 @@ Public root surface (~76 names). The ones users touch most:
   (OPTIMADE documents + filter parser), `httk.core.storage`,
   `httk.core.crypto`, `httk.core.report`, `httk.core.docs` (the versioned-docs
   tooling and `httk docs` CLI).
-- Project anchor: `httk project init|show|import-v1|seal|verify-seal`
-  (`seal` packs a signed redistribution ZIP, `verify-seal` checks the signer);
-  `httk_project/` directory marks a project root (Ed25519 identity/trust).
+- Project anchor: `httk project init|show|import-v1|export|verify-export`
+  (`export` packs a signed redistribution ZIP, `verify-export` checks the
+  signer); `httk_project/` directory marks a project root (Ed25519
+  identity/trust).
 
 ## httk-atomistic (`httk.atomistic`) — crystal structures
 
@@ -121,6 +122,10 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   with `httk workflow v1 collect` (the only supported v1 surface).
 - Provenance: `run_record(job_record)` → `httk.core.Run`; collect assembles
   provenance in the framework.
+- Sealing (`docs/httk-workflow/sealing.md`): signed manifests over a job's,
+  workspace's, or project's contents, detecting later tampering —
+  `httk job seal|unseal`, `httk workspace seal|unseal`, `httk workflow
+  project seal|unseal`, `httk workflow seal verify`.
 
 ## httk-analyse (`httk.analyse`) — analysis
 

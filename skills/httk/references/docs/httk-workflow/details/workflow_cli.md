@@ -20,11 +20,13 @@ in.
 ## The complete tree
 
 ```text
-httk workspace          init | list | default | move | forget | delete | status | managers | settings show | settings set | settings unset | workflow-prelude show | workflow-prelude set | workflow-prelude unset | policy show | policy set | fsck | gc | unlock
+httk workspace          init | list | default | move | forget | delete | status | managers | workflows | settings show | settings set | settings unset | workflow-prelude show | workflow-prelude set | workflow-prelude unset | policy show | policy set | fsck | gc | unlock | seal | unseal
 httk workflow runner     publish | describe
 httk workflow build      [--workspace WORKSPACE] TARGET...
-httk job                 new | submit | request | delete | list | show | log | why | debug
+httk job                 new | submit | request | delete | seal | unseal | list | show | log | why | debug
+httk workflow list       [--json]
 httk workflow describe   TARGET [--json]
+httk workflow seal       verify [PATH] [--json] [--trusted-key KEY] [--shallow]
 httk workflow precheck   [--workspace WORKSPACE] [--placement P] [--json]
 httk workflow collect
 httk workflow postprocess
@@ -33,7 +35,7 @@ httk workflow manager    run
 httk workflow campaign   init | show | submit | collect | start-"managers"
 httk workflow v1         collect
 httk workflow config     init | show | set | unset | import-v1
-httk workflow project    init | import-v1 | show | doctor | manifest create | manifest verify
+httk workflow project    init | import-v1 | show | doctor | manifest create | manifest verify | seal | unseal
 httk workflow remote     list | add | configure | check | import-v1 | show | remove
 httk workflow transfer   [OPTIONS] SRC DST      (plus the protocol spellings: receive | offer | retire)
 ```
@@ -87,6 +89,7 @@ job UUIDs when precise attribution matters.
 | `workspace delete --force NAME...` | destroy workspaces and deregister them | |
 | `workspace status [--json] [NAME...]` | summarize authoritative markers (remote: over the adapter) | |
 | `workspace managers [--json] [NAME...]` | list managers serving workspaces, live or stale | |
+| `workspace workflows [--json] [NAME...]` | list the runners a workspace publishes, with each directory package's workflow identity | |
 | `workspace settings show [--key KEY] [--json] [NAME...]` | print application settings, or one selected key | |
 | `workspace settings set --key KEY --value VALUE [NAME...]` | store one application setting in each workspace | |
 | `workspace settings unset --key KEY [NAME...]` | remove one application setting from each workspace | |
@@ -98,6 +101,13 @@ job UUIDs when precise attribution matters.
 | `workspace fsck [OPTIONS] [NAME...]` | check markers against journal frames; repair modes require names | `--repair`, `--quarantine-unrepairable`, `--json` |
 | `workspace gc [--dry-run] [--json] [NAME...]` | collect what retention policies allow (remote: over the adapter) | |
 | `workspace unlock [--force] [NAME...]` | release maintenance locks | |
+| `workspace seal [--force] [--keys REFS] [NAME...]` | record every job's seal digest under one signed workspace seal | `--force` seals still-unsealed jobs first; `--keys` overrides the `seal.keys` setting |
+| `workspace unseal [--force] [NAME...]` | remove a workspace's seal, refused while its project is sealed | `--force` skips the confirmation |
+
+Sealing is described in full in {doc}`../sealing`. `workspace status` gains a
+`sealed` line (and JSON field). `workspace seal` runs inside the maintenance
+guard, so it requires a quiescent workspace; without `--force` it lists the
+still-unsealed jobs and refuses rather than sealing a partial set.
 
 `workspace init` creates and registers an explicit workspace. A canonical path may
 have only one registered name:
@@ -167,6 +177,8 @@ its job or store runner target.
 | `job submit [OPTIONS] SOURCE...` | submit prepared payload directories | `--workspace`, `--placement` (required), `--move` |
 | `job request ACTION [OPTIONS] JOB_ID...` | publish one request per job selector (remote: over the adapter) | `--workspace`, optional `--operator` (configured short name or literal `Name <email>`; default identity when omitted), required `--reason`, `--priority`, `--step`, `--force`, `--wait`, `--timeout`, `--adapter-timeout` |
 | `job delete [--force] JOB...` | remove selected job payloads and state markers (remote: over the adapter) | `--workspace`, `--force`, `--adapter-timeout` |
+| `job seal [--keys REFS] JOB...` | seal the payloads of selected quiescent jobs | `--workspace`, `--keys` overrides the `seal.keys` setting |
+| `job unseal [--force] JOB...` | remove the seals of selected jobs, refused while the workspace is sealed | `--workspace`, `--force` skips the confirmation |
 | `job list [OPTIONS]` | list jobs as a cheap table (remote: over the adapter) | `--workspace`, `--kind`, `--placement` (prefix), `--limit`, `--after`, `--tag-contains`, `--counts`, `--json`, `--adapter-timeout` |
 | `job show [OPTIONS] JOB...` | describe jobs from their state (remote: over the adapter) | `--workspace`, `--no-children`, `--json`, `--adapter-timeout` |
 | `job log [OPTIONS] JOB...` | print transition histories (remote: over the adapter) | `--workspace`, `--limit`, `--json`, `--adapter-timeout` |
@@ -174,6 +186,10 @@ its job or store runner target.
 | `job debug [OPTIONS] JOB` | drive one job to a terminal state in front of you | `--workspace`, `--step`, `--placement`, `--follow-children`, `--timeout`, `--log-level` |
 
 When giving more than one `JOB_ID`, name the workspace explicitly.
+
+`job show` gains a `sealed` line — `yes` with the signer roles, or `no` — and,
+in `--json`, a `sealed` boolean plus `seal_roles`. `job seal` and `job unseal`
+are the per-job half of {doc}`../sealing`; a job must be quiescent to be sealed.
 
 An operator `pause` request against `claimed`, `running`, or `committing` is
 deferred: the manager records it and pauses the job at the next attempt
@@ -229,12 +245,19 @@ unreadable `job.json`; unfulfilled roles alone keep the exit at `0`. See
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| postprocess [OPTIONS] | run one declared script for each selected collected job | --workspace WS, --script NAME (required), --workflow-dir PKG, --state, --placement, --timeout, --json |
+| postprocess [OPTIONS] | run one declared script for each selected collected job | --workspace WS, --script NAME (required), --workflow-dir PKG, --state, --placement, --output-dir DIR, --timeout, --json |
 
 ~~~console
 httk workflow postprocess --workspace WS --script relaxation-report
 httk workflow postprocess --workspace WS --script report --workflow-dir ./my-workflow --json
 ~~~
+
+Output is written outside the job payload, under an output root that is
+<workspace>/postprocess by default, the postprocess.directory workspace
+setting when set, or --output-dir DIR for one invocation (a relative value
+resolves against the workspace root); the per-job directory below it is
+<root>/<placement>/<job_key>/<NAME>/. A sealed job can be postprocessed
+because its seal covers only the payload.
 
 With --json, each result is one JSON object in the
 httk-workflow-postprocess wire format, version 2, with workspace_id, job_id,
@@ -243,6 +266,20 @@ job_key, script, and either returncode plus output_dir, or an error. Without
 job_key<TAB>script<TAB>returncode<TAB>output_dir; errors use ERROR in the
 return-code field. The command exits 0 only when every selected script ran
 and returned 0; any resolution error or nonzero script return exits 1.
+
+### `list` — the workflows a name can select
+
+| Command | What it does | Notable options |
+| --- | --- | --- |
+| `list` | list the workflows `job new --workflow NAME` can resolve: those registered in this process, then those installed plugins bundle | `--json` |
+
+Each text line is `WORKFLOW_ID`, alias (or `-`), source (`registered` or `plugin
+OWNER`), and summary (or `-`); `--json` reports the same as an array of objects.
+A workflow reached only by explicit path — `--workflow-dir DIR` or `--from-runner
+FILE` — is not registered, so it is not listed here; use `describe PATH` to
+report one such workflow directly. To list the runners one workspace has
+*published*, rather than the workflows a name resolves to, use `workspace
+workflows`.
 
 ### `describe` — inspect a workflow without publishing it
 
@@ -262,9 +299,9 @@ Directory package authoring, manifest validation, publication, and hook trust
 tiers are documented in {doc}`workflow_packages`.
 
 Installed-plugin workflow names are included in the registered-workflow
-listings. Listing and unknown-workflow hint entries carry `[plugin PLUGIN_NAME]`
-for their owner; `describe` resolves a plugin name and reports its source as
-`installed-package`.
+listings — `httk workflow list`, and the `--workflow` help and unknown-workflow
+hint entries, which carry `[plugin PLUGIN_NAME]` for their owner; `describe`
+resolves a plugin name and reports its source as `installed-package`.
 
 ### `precheck` — readiness before an attempt
 
@@ -422,6 +459,26 @@ separately with `workspace init PATH`:
 | `project doctor [OPTIONS] [PATH...]` | check projects; `--repair` requires explicit paths | `--repair`, `--json` |
 | `project manifest create [--manifest PATH] PROJECT...` | write signed manifests | |
 | `project manifest verify [OPTIONS] [PROJECT...]` | verify manifests against their trees | `--manifest` (one project only), `--trusted-key` |
+| `project seal [--keys REFS] [PROJECT...]` | seal a project's loose files and every nested workspace's seal digest | `--keys` overrides the project's `seal_keys` member |
+| `project unseal [--force] [PROJECT...]` | remove the project's seal, freeing its workspaces to be unsealed | `--force` skips the confirmation |
+
+### `seal` — verify a sealed tree
+
+Writing seals lives beside each level (`job seal`, `workspace seal`, `project
+seal`); the top-level `seal` group carries the one verb that belongs to no
+single level: verifying a whole sealed tree. {doc}`../sealing` is the full guide.
+
+| Command | What it does | Notable options |
+| --- | --- | --- |
+| `seal verify [PATH]` | verify the seal at `PATH` (a project, workspace, or job payload; default `.`) and, unless `--shallow`, every seal it references | `--json`, `--trusted-key KEY_OR_FINGERPRINT` (repeatable), `--shallow` |
+
+Each line is `<level> <subject> <verdict> <reason>`, with indented `<kind>
+<path>` discrepancy lines beneath a failing entry, then a final status line whose
+word and exit code mirror `manifest verify`: `ok` / exit 0 when every entry is
+`valid_trusted`, `UNTRUSTED` / exit 3 when none is invalid but a signer is
+untrusted, and `FAILED` / exit 1 on any invalid entry. By default the project's
+pinned keys and the local identity's public key are trusted, so a tree sealed by
+its own project or identity verifies as `valid_trusted` without naming a key.
 
 ### `launcher` — the bundles that start managers
 

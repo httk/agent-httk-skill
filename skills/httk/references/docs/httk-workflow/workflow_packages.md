@@ -39,7 +39,9 @@ default = 520
 job from it. Declared inputs are staged objects; parameters are knobs;
 `[workflow.environment.*]` consumes typed workspace settings;
 `[workflow.instantiate]`/`[workflow.collect]` hooks and
-`[workflow.postprocess.NAME]` scripts run in any language; and compiled
+`[workflow.postprocess.NAME]` scripts run in any language and write outside the
+payload (under `<workspace>/postprocess/`, so a sealed job can still be
+postprocessed); and compiled
 workflows declare `[workflow.build]` (sources-only digests, binaries built and
 registered per machine with `httk workflow build`).
 
@@ -50,9 +52,9 @@ registrations; the manager passes registered build artifacts through
 The build semantics are unchanged.
 
 An installed *httk₂* plugin may bundle workflow packages. Resolution checks
-in-process registrations first, then installed plugins; workflow listings label
-plugin entries with their owning plugin, while `workflow describe` reports a
-plugin entry as `source: installed-package`.
+in-process registrations first, then installed plugins; `httk workflow list`
+labels plugin entries with their owning plugin, while `workflow describe`
+reports a plugin entry as `source: installed-package`.
 
 The full guide, {doc}`details/workflow_packages`, is the manifest reference:
 every table and key, hook envelopes, output declarations and provenance,
