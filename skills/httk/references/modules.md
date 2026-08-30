@@ -110,8 +110,9 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
 - SDK: `Runner`/`Attempt` for authoring runners (`docs snapshot:
   runtime_helpers.md`; Bash, C, Fortran, Rust, Perl, Ada, C++, and Java in
   `docs/httk-workflow/sdks/native_*_api.md` — bridge
-  clients with identical semantics); `Workspace`, `new_jobs()` streaming job
-  creation; `collect()` yields `CollectedJob` (outputs, provenance `Run`,
+  clients with identical semantics); `Attempt.call()` runs another workflow
+  as a child job (`composing_workflows.md`); `Workspace`, `new_jobs()` streaming job
+  creation; `scaffold_job()` builds a payload without submitting; `collect()` yields `CollectedJob` (outputs, provenance `Run`,
   products); `job_records()` the mechanical readout.
 - **Workflow languages** (`workflow_languages.md`): CWL, Python Workflow
   Definition, jobflow/atomate2 Makers (DAG-parallel as child jobs), and

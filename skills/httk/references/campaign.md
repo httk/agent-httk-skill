@@ -300,6 +300,15 @@ serve them over OPTIMADE with httk-serve.
   actionable `runner_not_built` message and `precheck` warns first. After
   transferring such a workflow to a remote, run `httk workflow build` there
   before `run`.
+- **Composing workflows**: a runner calls another workflow as a child job —
+  `a.call("vasp-relax", label="relax", files={"POSCAR": path})` then
+  `a.gather("after_relax")`, reading the child's `a.children["relax"].data` /
+  `.workdir` in the gathered step (Bash: `httk_workflow_call LABEL WORKFLOW
+  --file NAME=PATH`). Callable: packaged ids/aliases, your own runner file,
+  a package directory, or a bare language document — resolved like `job new`.
+  File plumbing between calls is explicit; declarations are provenance, not
+  wiring (`docs/httk-workflow/composing_workflows.md`). `scaffold_job()` is
+  `new_job()` stopped short of submission (a payload directory for `spawn`).
 - **Runners in other languages**: the SDK exists in Python, Bash, C, Fortran,
   Perl, Ada, C++, Java, and Rust (`docs/httk-workflow/sdks/`) — the native
   SDKs are bridge clients with identical semantics. Interpreted runners
