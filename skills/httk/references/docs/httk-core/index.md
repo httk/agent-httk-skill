@@ -20,6 +20,7 @@ on the other.
 - **Extensible CLI**: {doc}`cli`
 - **Plugins**: {doc}`plugins`
 - **Cryptography**: {doc}`crypto`
+- **Operator identity**: {doc}`identity`
 - **Projects and templates**: {doc}`projects`
 - **Property definitions & entry providers**: {doc}`property_definitions`
 - **Vectors**: {doc}`vectors`
@@ -66,7 +67,9 @@ datastreams
 cli
 plugins
 crypto
+identity
 projects
+sealing
 property_definitions
 vectors
 exactmath

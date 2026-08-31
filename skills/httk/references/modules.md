@@ -124,8 +124,8 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   provenance in the framework.
 - Sealing (`docs/httk-workflow/sealing.md`): signed manifests over a job's,
   workspace's, or project's contents, detecting later tampering —
-  `httk job seal|unseal`, `httk workspace seal|unseal`, `httk workflow
-  project seal|unseal`, `httk workflow seal verify`.
+  `httk job seal|unseal`, `httk workspace seal|unseal`, `httk project
+  seal|unseal` (core-owned), `httk workflow seal verify`.
 
 ## httk-analyse (`httk.analyse`) — analysis
 
