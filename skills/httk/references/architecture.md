@@ -98,14 +98,17 @@ begins with `Mutable`.
   via record dataclasses; `content_id` gives versioned, layout-independent
   content addressing; field markers (`Indexed`, `Unique`, `IdentitySkip`, …)
   and `stored_property` declare per-property storage/query behavior neutrally
-  — no SQL leaks into domain modules.
+  — no SQL leaks into domain modules. Stores layer a separate public-identity
+  axis on top (a store-minted `id`, per-revision `immutable_id`, and
+  alternative ids), distinct from content addressing.
 - **Provenance** (`httk.core`): `Run` (one workflow execution with
   input/artifact/output edges as loose string triples), `ProductLink`
   (data→data curation edge), `DataRecord` (one declared-property value).
   Served as `_httk_runs`/`_httk_records` entry types.
 - **`EntryProvider`** is the neutral contract by which any module supplies
   described, queryable entries to consumers (the OPTIMADE server, stores)
-  without depending on them.
+  without depending on them. Store-backed providers serve mains only and, by
+  default, the latest revision of each lineage.
 
 ## The reporting channel
 

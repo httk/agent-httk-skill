@@ -31,6 +31,19 @@ back = store.fetch_by_content_id(UnitcellStructure, cid)
   oldest-first, and `searcher(only_latest=True)` restricts roots to the latest
   row of each. Store-managed timestamps + `searcher(as_of=T)` historic search
   are on by default.
+- Public identity (opt in with `SqlStore(entry_ids=EntryIdScheme(...))`): the
+  store mints an `id` shared across a lineage plus a per-row `immutable_id`
+  `<id>~<n>`. Content ids are storage identity only — this is a separate axis
+  (the old "id property returns content_id" behaviour is gone).
+- Alternatives: `store.save(obj, alternative_of=<main id>, alternative_kind=…)`
+  saves a named sibling representation (a `conventional`/`primitive` cell beside
+  the main) sharing the main's `id`, with its own lineage and composite ids
+  `<id>~<kind>[~<n>]`; both args are required together, one kind per group, and
+  bulk ingest saves mains only.
+- **Mains-only is the silent default:** `searcher()` sets `only_main_alt=True`,
+  so ordinary *and* revision queries never surface saved alternatives (nor do
+  their revisions enter a revision stream) — pass `only_main_alt=False` to
+  include them.
 - Queries: the neutral query layer (`httk.store.query`) — expressions,
   portable queries, OPTIMADE filter *translation*
   (`httk.store.query.optimade_filters`) — plus `Searcher`/`Store` protocols
@@ -38,8 +51,10 @@ back = store.fetch_by_content_id(UnitcellStructure, cid)
 - Federation: `FederatedStore` (live fan-out over already-open stores,
   read-only union) vs `httk.store.backend.sql.stored_federation` (a persisted registry of
   (store, family, prefix) sources with audits). `searcher(as_of=, only_latest=)`
-  are forwarded to every child; a child without store timestamps raises
-  `FederatedSourceError` on `as_of` rather than silently serving current state.
+  are forwarded to every child; `only_main_alt` is *not* a `FederatedStore`
+  searcher parameter, so each child applies its own mains-only default. A child
+  without store timestamps raises `FederatedSourceError` on `as_of` rather than
+  silently serving current state.
 
 ### Validation and provenance serving
 
@@ -80,8 +95,17 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   served entries with custom properties and linked references).
 - Serve a store directly with `StoreEntryProvider` (registered as
   `store-db-store`): each record also exposes its lineage as the integer
-  property `_httk_logical_id`, filterable like any field; pass
-  `only_latest=True` to serve only the latest row of each lineage.
+  property `_httk_logical_id`, filterable like any field. It serves mains only
+  (alternatives never appear) and, by default, the latest row of each lineage
+  (`only_latest=True`); `only_latest=False` requires an `id_of` override to keep
+  served ids unique across revisions.
+- Store-backed adapters also expose revision and alternative sub-endpoints:
+  `/<entry>/<id>/_httk_revs[/<n>]` and `/_httk_<entry>~revs[/<immutable_id>]`
+  list revisions (resource `id` is the immutable id `<id>~<n>`, `_httk_id` the
+  shared lineage id); `/<entry>/<id>/_httk_alts[/<kind>]` and
+  `/_httk_<entry>~alts[/<id>~<kind>]` list named alternatives at their latest
+  revision per kind (composite `id` `<id>~<kind>`, plus filterable/sortable
+  `_httk_id` and `_httk_kind`). Both families are store-backed only.
 - `OptimadeStore` is the read-only *client*: point it at any OPTIMADE API and
   query it through the same neutral Store/Searcher protocols; combine remote
   and local stores with `FederatedStore`.

@@ -44,7 +44,9 @@ Public root surface (~76 names). The ones users touch most:
 - Root exports (~68 names): `UnitcellStructure`, `UnitcellStructureView`,
   `ASUStructure`, `ASUStructureView`, `Cell`, `CellView`, `CellParams`,
   `Sites`, `Species`, `Spacegroup`, `SettingTransform`, `recognize_asu`,
-  `same_crystal`, `build_supercell`, `conventional_cell`, composition tools,
+  `same_crystal`, `build_supercell`, `conventional_cell`, `primitive_cell`
+  (both carry Cartesian/collinear site moments through; magnetic supercells and
+  crystal-axis moments are refused), composition tools,
   `structure_tolerance`, trajectory family (`Trajectory`, `JsonlTrajectory`,
   …), `PlaneWaveFunctions` (WAVECAR wavefunctions, numpy), and conditionally
   `ASEAtomsView` / `PymatgenStructureView`.
