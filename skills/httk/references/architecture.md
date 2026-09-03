@@ -96,15 +96,18 @@ begins with `Mutable`.
   own with `register_definition_prefix`).
 - **Storage contracts** (`httk.core.storage`): domain classes opt into storage
   via record dataclasses; `content_id` gives versioned, layout-independent
-  content addressing; field markers (`Indexed`, `Unique`, `IdentitySkip`, …)
+  content addressing; field markers (`Indexed`, `Unique`, `IdentitySkip`, `WeakLink`, `StrongLink`, …)
   and `stored_property` declare per-property storage/query behavior neutrally
   — no SQL leaks into domain modules. Stores layer a separate public-identity
   axis on top (a store-minted `id`, per-revision `immutable_id`, and
   alternative ids), distinct from content addressing.
-- **Provenance** (`httk.core`): `Run` (one workflow execution with
-  input/artifact/output edges as loose string triples), `ProductLink`
+- **Provenance** (`httk.core`): `Run` (one workflow execution whose
+  input/artifact/output edges are `StrongLink`-marked fields — each carrying a
+  target entry_type plus a raw same-database entry_id, so an edge links only
+  within one provider/store, never across providers), `ProductLink`
   (data→data curation edge), `DataRecord` (one declared-property value).
-  Served as `_httk_runs`/`_httk_records` entry types.
+  Served as `_httk_runs`/`_httk_records` entry types, with the run edges exposed
+  as semantic OPTIMADE relationships in both directions.
 - **`EntryProvider`** is the neutral contract by which any module supplies
   described, queryable entries to consumers (the OPTIMADE server, stores)
   without depending on them. Store-backed providers serve mains only and, by

@@ -50,7 +50,10 @@ back = store.fetch_by_content_id(UnitcellStructure, cid)
   every backend implements.
 - Federation: `FederatedStore` (live fan-out over already-open stores,
   read-only union) vs `httk.store.backend.sql.stored_federation` (a persisted registry of
-  (store, family, prefix) sources with audits). `searcher(as_of=, only_latest=)`
+  (store, family, prefix) sources with audits). The stored federation serves and
+  filters relationships (exposed weak links + `StrongLink` run edges both
+  directions); Mongo-backed federation sources serve none (empty per-row
+  relationships channel). `searcher(as_of=, only_latest=)`
   are forwarded to every child; `only_main_alt` is *not* a `FederatedStore`
   searcher parameter, so each child applies its own mains-only default. A child
   without store timestamps raises `FederatedSourceError` on `as_of` rather than
@@ -64,8 +67,11 @@ back = store.fetch_by_content_id(UnitcellStructure, cid)
   `PropertyValidationError`.
 - In-memory `EntryProvider`s for the standard `references`/`files`/
   `calculations` entry types, plus `RunEntryProvider`/`DataRecordEntryProvider`
-  serving provenance (`_httk_runs`/`_httk_records`) with relationships derived
-  from run edges, and `product_relationships()` for data→data product links.
+  serving provenance (`_httk_runs`/`_httk_records`). Run edges serve as semantic
+  relationships in **both** directions — forward `_httk_has_*` on runs, derived
+  reverse `_httk_is_*` on targets — from the SQL and Mongo `StoreEntryProvider`
+  and the stored federation alike. `product_relationships()` emits a
+  forward-only `_httk_has_product` (provider path only, no reverse).
 
 ## httk-serve: the OPTIMADE server
 
@@ -89,6 +95,10 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   base URLs, and `meta.warnings` (from the httk report channel) are handled by
   the engine. Mount-aware links; CORS strictly opt-in via
   `OptimadeConfig(cors_origins=(...))`.
+- `_httk_relationships.<key>.id` is a filter-grammar extension (not a property —
+  no `/info` entry, not sortable) for filtering by any served relationship key,
+  the semantic provenance keys included. `HAS` family only (`HAS`/`HAS ALL`/
+  `HAS ANY`/`HAS ONLY`); an unknown own-prefix key is a `400`.
 - `--validate`-style checking: run `httk.store.validate_record` over records
   before serving (see the `example_website_httk` repo's `serve_optimade.py`
   for a complete worked service: CSVs + CONTCAR.bz2 → exact structures → 180
@@ -98,7 +108,8 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   property `_httk_logical_id`, filterable like any field. It serves mains only
   (alternatives never appear) and, by default, the latest row of each lineage
   (`only_latest=True`); `only_latest=False` requires an `id_of` override to keep
-  served ids unique across revisions.
+  served ids unique across revisions. `StrongLink` reverse edges are matched by
+  raw id, so a provider with a custom `id_of` mapping gets empty reverse blocks.
 - Store-backed adapters also expose revision and alternative sub-endpoints:
   `/<entry>/<id>/_httk_revs[/<n>]` and `/_httk_<entry>~revs[/<immutable_id>]`
   list revisions (resource `id` is the immutable id `<id>~<n>`, `_httk_id` the

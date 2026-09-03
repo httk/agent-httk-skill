@@ -123,7 +123,9 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   `job new --format LANG` on a bare document. Finished v1 trees are harvested
   with `httk workflow v1 collect` (the only supported v1 surface).
 - Provenance: `run_record(job_record)` → `httk.core.Run`; collect assembles
-  provenance in the framework.
+  provenance in the framework. A `Run`'s input/artifact/output edges are
+  servable as semantic OPTIMADE relationships in both directions (see
+  `data-serving.md`).
 - Sealing (`docs/httk-workflow/sealing.md`): signed manifests over a job's,
   workspace's, or project's contents, detecting later tampering —
   `httk job seal|unseal`, `httk workspace seal|unseal`, `httk project
