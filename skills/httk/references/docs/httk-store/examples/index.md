@@ -9,5 +9,6 @@ example
 optimade_filters
 searching
 serve_as_optimade
+slicing
 storable_records
 ```
