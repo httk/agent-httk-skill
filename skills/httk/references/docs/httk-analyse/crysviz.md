@@ -23,3 +23,6 @@ payload = to_payload(structure)  # pass it to crysviz.Viewer for advanced contro
 afterwards. The returned viewer can also be used as a context manager. Use
 `to_payload()` when constructing `crysviz.Viewer` yourself or when a serialized
 payload needs to be inspected before launching.
+
+Pass `name=` to choose the payload filename. It must be a plain filename, not
+a path; otherwise the structure formula is used when it is a safe filename.

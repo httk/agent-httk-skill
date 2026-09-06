@@ -33,7 +33,11 @@ Public root surface (~76 names). The ones users touch most:
 - Subpackages (import directly, not re-exported): `httk.core.optimade`
   (OPTIMADE documents + filter parser), `httk.core.storage`,
   `httk.core.crypto`, `httk.core.report`, `httk.core.docs` (the versioned-docs
-  tooling and `httk docs` CLI).
+  tooling and `httk docs` CLI), `httk.core.memguard` (Linux process-group
+  memory guard: `python -m httk.core.memguard --max-rss-gb N -- command...`
+  SIGKILLs the whole group over budget — sacrificing the run, never the
+  machine; the standard wrapper for test/CI/build targets in the module
+  Makefiles, `HTTK_TEST_MAX_RSS_GB` override).
 - Project anchor: `httk project init|show|import-v1|export|verify-export`
   (`export` packs a signed redistribution ZIP, `verify-export` checks the
   signer); `httk_project/` directory marks a project root (Ed25519

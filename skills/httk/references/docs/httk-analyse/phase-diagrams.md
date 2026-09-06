@@ -6,6 +6,13 @@ with differently sized formula units can be compared directly. Inputs may be
 composition mappings or compatible `StructureLike` objects from
 *httk-atomistic*.
 
+The default `solver="auto"` selects HiGHS when installed and the built-in
+solver otherwise. Installing `httk-analyse[default]` includes HiGHS. Both
+factories and `PhaseDiagramBuilder` also accept explicit `solver="simplex"`
+or `solver="highs"`. HiGHS reuses models while retaining
+the built-in numerical checks and fallback; see {doc}`generic-hulls` for the
+solver contract. `diagram.solver` reports the selected route.
+
 ## Build a binary diagram
 
 Use `from_compositions` when the compositions are already known. The optional

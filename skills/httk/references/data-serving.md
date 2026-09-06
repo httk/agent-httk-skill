@@ -35,6 +35,13 @@ back = store.fetch_by_content_id(UnitcellStructure, cid)
   store mints an `id` shared across a lineage plus a per-row `immutable_id`
   `<id>~<n>`. Content ids are storage identity only — this is a separate axis
   (the old "id property returns content_id" behaviour is gone).
+- `IdLedger` (`httk.store.id_ledger`): the signed, append-only id ledger that
+  maps a stable opaque source key to a public id forever — `assign`/`alias`/
+  `lookup`, plus `bindings()` (a full snapshot enumeration, key → id/family/
+  is_alias) and `IdLedger.open(..., read_only=True)` (lock-free, verification
+  intact, mutators refuse) for reporting alongside a live writer. Key
+  convention: an intrinsic identity key (e.g. `run:<source_id>`) plus binding
+  keys aliased onto the same id when other sources dedup onto that row.
 - Alternatives: `store.save(obj, alternative_of=<main id>, alternative_kind=…)`
   saves a named sibling representation (a `conventional`/`primitive` cell beside
   the main) sharing the main's `id`, with its own lineage and composite ids
@@ -95,6 +102,14 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   base URLs, and `meta.warnings` (from the httk report channel) are handled by
   the engine. Mount-aware links; CORS strictly opt-in via
   `OptimadeConfig(cors_origins=(...))`.
+- Default responses (no `response_fields`) omit unknown-valued (null)
+  properties unless the definition marks them response-level `must`/`always`
+  — spec-conformant; an explicit `response_fields` always serves the requested
+  set with nulls kept.
+- `adapter_from_stores(..., default_includes={served_type: (entry types...)})`
+  sets each served type's default `include` for single-entry responses
+  (`references` is always unioned in); an explicit `include=` (even empty)
+  overrides it, and a list response is unaffected.
 - `_httk_relationships.<key>.id` is a filter-grammar extension (not a property —
   no `/info` entry, not sortable) for filtering by any served relationship key,
   the semantic provenance keys included. `HAS` family only (`HAS`/`HAS ALL`/
@@ -119,7 +134,10 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   `_httk_id` and `_httk_kind`). Both families are store-backed only.
 - `OptimadeStore` is the read-only *client*: point it at any OPTIMADE API and
   query it through the same neutral Store/Searcher protocols; combine remote
-  and local stores with `FederatedStore`.
+  and local stores with `FederatedStore`. Provider-prefixed properties
+  (`_prefix_name`) resolve in filter/sort expressions and as scalar output
+  projections, including on a generic (unregistered) entry type; an absent
+  attribute projects as `None`.
 
 ## httk-serve: websites
 
@@ -133,7 +151,11 @@ create_asgi_app`) is the site engine behind httk.org:
   table widget pages through a site-provided backend (opaque cursors, signed
   expiring state tokens; set `HTTK_SERVE_WEB_TABLE_TOKEN_SECRET` in
   multi-worker deployments). `httk.serve.optimade_table` is a browser-side
-  widget that queries any OPTIMADE API directly.
+  widget that queries any OPTIMADE API directly: its filter/sort pills are
+  individually removable (×); a `summary` field's `clears: [url params]` makes
+  removing its pill also clear those host-form params; sort is tri-state —
+  absent means the authored default, an explicit empty `sort=` means store
+  order, and the authored default itself renders as a removable pill.
 - **To start a new site**: copy the `example_website_httk` repository — it
   contains a working site + data model (httk-store `SqlStore`-backed with
   in-memory fallback), the search table wired to the widget, per-material

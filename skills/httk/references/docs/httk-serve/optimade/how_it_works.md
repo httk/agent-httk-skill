@@ -196,6 +196,24 @@ data simply filters to an empty result), and from the observed relationship data
 on the in-memory provider route (only keys present in the served data are
 filterable, so an empty in-memory dataset `400`s on any key).
 
+For `adapter_from_stores`, relationship identifiers and filters use the mounted
+target family's public id prefix in the same store. This also makes `include`
+resolve prefixed targets. If a family has several possible target mounts,
+`StoredEntrySource.relationship_sources={TargetFamily: "target-source-name"}`
+selects one explicitly; otherwise self-family, unique-target, then unique
+same-prefix selection applies. Invalid overrides and ambiguous target selections
+fail when the adapter is constructed. Reverse provenance identifiers appear only
+on target mounts selected by the corresponding run mount. Reverse prefixes follow
+the actual declaring run family and backing; unmounted run families retain raw
+ids even when a mounted sibling shares their type name. Loose forward edges
+declare only a type name: mounted families sharing that name must resolve to the
+same public id prefix, or construction fails. Unmounted siblings do not overwrite
+a mounted target's prefix. A loose id receives the selected prefix only when it
+resolves to a main lineage in a mounted target table in the same store. Unresolved
+ids, including remote ids naming a mounted type, remain unchanged in both
+responses and filters. Reverse discovery
+remains within one store.
+
 A few boundaries apply. Non-`HAS` operators against the extension are a
 `400 Bad Request` naming only the `_httk_relationships` root (cosmetic). The
 semantic provenance relationships are served by any provider that declares them

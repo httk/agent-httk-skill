@@ -189,7 +189,7 @@ stored keeps a `"storage_error"` and fails the exit code.
 for minted entry ids; `--id-series` selects the campaign series and defaults to
 `1`. By default a sealed **id ledger** allocates those ids so they stay stable
 across rebuilds — see {doc}`stable_ids`. It lives beside the store at
-`<into>.ids.json` (relocate with `--id-ledger PATH`), is created and signed on
+`<into>.ids.sqlite` (relocate with `--id-ledger PATH`), is created and signed on
 first use, and is announced loudly because it is a keep-worthy file to commit
 alongside the store. `--no-id-ledger` opts out, and a sweep with no resolvable
 workspace signing key falls back to no ledger; both mean store-minted ids that
@@ -264,8 +264,8 @@ can inspect the job-pinned package tree, validate its own manifest and digest,
 and load that tree's collect hook; refusals degrade only that job. See
 {doc}`workflow_packages` for the trust tiers and package hook contract.
 
-An executable `[workflow.collect]` member is run once for the matching sweep
-from its package tree. For direct package paths and the opt-in job-pinned
+An executable `[workflow.collect]` member is run once per matching collection
+window from its package tree. For direct package paths and the opt-in job-pinned
 fallback, that tree is published and digest-checked; a registered-directory
 provider is the explicit-consent current-source exception. The first stdin line is
 `{"format":"httk-workflow-collect-stream","format_version":2}`; each
@@ -285,8 +285,7 @@ malformed or non-UTF-8 responses degrade only their individual job. A declared o
 `ref` makes `httk-store` validation hard-required at collect time; without a
 `ref`, the framework creates a `_httk_custom_*` property definition. Python
 `.py` hooks keep the in-process path and the same successful assembled-output
-semantics, but a registered Python collector exception aborts iteration rather
-than degrading the job.
+semantics; their ordinary per-job exceptions degrade that job as well.
 
 ### Language fallback and degradation
 
@@ -306,7 +305,24 @@ manifest package. A bare v1 directory is not submitted by the `job new` CLI;
 use `--workflow-dir` with a manifest or `remote import-v1`. The
 `allow_job_collector` pinned-tree fallback is attempted only after this
 language fallback, and only with a matching digest and manifest. Any
-collector failure degrades that job and does not stop the sweep.
+per-job collector, load, or assembly failure degrades that job and does not
+stop the sweep; `fail_fast=True` (or `--fail-fast`) stops at the first such
+job. Interrupts, missing Python dependencies, and unavailable definition
+validation dependencies still propagate. An executable hook that cannot be
+launched (for example, a damaged pinned job tree) degrades its batch; an
+unreadable output file degrades only its job. Neither prevents other hooks
+from running.
+
+`collect(..., batch_size=64)` consumes records in bounded windows. A matching
+executable hook runs once per window, and results remain in workspace scan
+order. With `fail_fast=True` (`--fail-fast`), the window size is forced to one,
+so executable batching is disabled and each job starts its own collector
+process. `batch_size` (`--batch-size`) must still be positive but is otherwise
+ignored in this mode. Normal CLI output is JSONL streamed as each window completes;
+`--degraded` filters only those output lines while retaining whole-sweep
+summary counts. `--into` intentionally retains the complete sweep so its
+second storage pass can resolve cross-job provenance; use ordinary streaming
+collection when that memory cost is not acceptable.
 
 For the distinction between declared entry-typed inputs and opaque implementation
 parameters, see {doc}`workflow_packages` and {doc}`declarations`.

@@ -42,6 +42,20 @@ silicon--0c4f…	/…/jobs/silicon--0c4f…
   job per readable structure file, tagged after the file. `--placement
   project/<batch>` organizes the state tree (bounded fan-out; a manager or
   collect can target one subtree).
+- `new_job`/`new_jobs`/`scaffold_job` (and `JobItem` per-item overrides in a
+  `new_jobs` campaign) accept `provenance=`: one declared-side `provenance`
+  document (`httk.workflow.provenance`), sections `inputs`/`artifacts`/`outputs`
+  each mapping an edge label to a `{"type": ..., "id": ...}` target. It is
+  merged into `declarations["provenance"]` at scaffold time — section-wise
+  with any workflow-declared provenance (a label declared by both raises
+  `ValueError`; if the workflow declares none, the caller's document is used
+  outright) — is digest-covered like the rest of `job.json`, and flows
+  untouched into the collected `Run`'s edges. Primary use: the entity claim,
+  an `inputs` edge labelled `entity` naming the entity by its stable ledger
+  key, so a run is born claimed:
+  `provenance={"inputs": {"entity": {"type": "amdb_material", "id": "magndata:1.108"}}}`.
+  In `new_jobs`, a per-item `provenance` in `JobItem` replaces the shared
+  default entirely rather than merging with it.
 
 At real scale, stream from Python — nothing is materialized:
 
