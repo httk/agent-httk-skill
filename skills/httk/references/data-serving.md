@@ -137,7 +137,11 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   and local stores with `FederatedStore`. Provider-prefixed properties
   (`_prefix_name`) resolve in filter/sort expressions and as scalar output
   projections, including on a generic (unregistered) entry type; an absent
-  attribute projects as `None`.
+  attribute projects as `None`. A pandas-style bracket layer rides on top:
+  `store.slicer("<entry type>")` gives masks (`mats[mats["_x"] > 0.5]`),
+  `len()` counts server-side, and selections project columns
+  (`hits[["id", "_x"]]` yields named rows); it deliberately offers no
+  sorting -- use the searcher for that.
 
 ## httk-serve: websites
 
