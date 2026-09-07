@@ -101,7 +101,8 @@ query-supported scalar and flat-list properties; the exact available fields
 come from the discovered definition rather than from their remote spelling.
 List fields support singular `has(value)`, `has_any(...)`, and
 `has_only(...)`. Use `add()`, `add_sort()`, `set_limit()`, and `add_offset()`
-to finish the single-root plan. Relationship traversal, joins, writes, and
+to finish the single-root plan. Depth-1 relationship traversal is available
+through `variable.links`, described below; deeper joins, writes, and
 asynchronous queries are outside this client.
 
 `results()` produces a lazy, reusable `RemoteResultSet`. It supports iteration,
@@ -114,6 +115,81 @@ or invalid. `results[start:stop]` makes a derived lazy plan when
 both bounds are nonnegative integers and the step is omitted or `1`; integer
 indexing, negative bounds, and non-unit steps are unsupported. Cursor rows are
 not implemented.
+
+## The `links` relationship namespace
+
+`variable.links` is a reserved relationship namespace, checked before the
+endpoint's own field map, so a served property literally named `links`
+(unusual, but a generic endpoint could advertise one) never shadows it.
+Attribute access on it names one relationship of the queried resource --
+either a served entry type (`material.links.structures`) or a wire-only
+relationship key that is not itself an entry type, such as a StrongLink
+provenance edge (`run.links._httk_has_input`). Unlike the field map, an
+unknown name is never rejected up front: a resource's actual relationship set
+is only known from a response, so it surfaces as `OptimadeClientError` at
+resolution time (a predicate, an output, or `.links.<name>` on a returned
+record), listing the resource's real relationships.
+
+`variable.links.<name>` serves two roles:
+
+- **A depth-1, filter-only predicate root.** `variable.links.<related>.<field>`
+  renders as `<related>.<field>` in filter text, exactly as the server
+  expects. This is exactly one level deep: the resulting field cannot be
+  chained further, and cannot be used as an output or a sort key. Field
+  chaining is only available when `<related>` is itself a served entry type;
+  chaining on a wire-only relationship key raises `UnsupportedQueryError`. A
+  dotted filter whose first segment is a served type but *not* a relationship
+  of the queried endpoint is accepted by the server but returns zero rows,
+  with an explanatory `meta.warnings` entry -- the client logs every
+  `meta.warnings` entry (via `logging.getLogger(__name__).warning`) rather
+  than silently dropping it.
+- **A set-valued output**, in `output()` or `results(name=...)`. It yields a
+  tuple of bound related records per row, in relationship order. Every
+  served-entry-type relationship named this way is added to the request's
+  `include=` parameter automatically, ordered and de-duplicated (a wire-only
+  key is never a served entry type and always resolves by lazy fetch
+  instead); `count()`'s own probe request never sends `include=`.
+
+Every whole-record result -- an output, or a record reached through
+`.links.<name>` -- is a *bound* object: alongside its own fields, it carries
+a `.links` accessor with exactly this resolution behavior, so relationships
+can be walked one hop at a time from any returned record, whether or not that
+record was itself declared as an output. Resolution matches identifiers
+against the response's `included` array by their own `(type, id)`, never by
+the relationship block key: some relationships (StrongLink provenance edges)
+use wire keys that differ from the identifier's own `type`. A related
+resource already present in `included` -- because an output requested it, or
+the service includes it by default -- is wrapped in place at no extra cost;
+one absent from `included` costs one HTTP request per missing identifier.
+Each named relationship resolves once per record and is memoized.
+
+```python
+from httk.serve.optimade import OptimadeStore
+
+with OptimadeStore("https://example.org/optimade") as store:
+    materials = store.entry_type("materials")
+    search = store.searcher()
+    material = search.variable(materials)
+    search.add(material.links.structures.nelements > 2)
+    row = search.results(item=material, structures=material.links.structures).one()
+
+    (structure,) = row.structures
+    print(structure.id, structure.chemical_formula_reduced)
+    assert row.item.links.structures == row.structures
+
+    # Further hops walk .links on any returned record, output or not.
+    for run in row.item.links._httk_runs:
+        print(run.links._httk_has_input)
+```
+
+Bound objects are a thin per-backend subclass added purely for the `.links`
+accessor: equality, hashing, and `isinstance` against the plain backend class
+all behave as if it were the plain object. `pickle`, `copy.copy`, and
+`copy.deepcopy` produce the plain class; `dataclasses.replace` produces an
+unbound instance of the same thin subclass whose `.links` is unavailable --
+so a bound object is safe to store, cache, or serialize with ordinary tools,
+but only a fresh result (an output, or one reached through `.links`) exposes
+`.links` itself.
 
 ## Federating endpoints
 
@@ -219,6 +295,13 @@ sid = cache.save(backend)
 offline = cache.fetch(type(backend), sid)
 raw_resource = offline.unwrap()
 ```
+
+`OptimadeResource` carries a `member` field (`"data"` for a primary resource,
+`"included"` for one resolved through `.links.<name>`) that participates in
+its identity, so an offline cache created before that field existed uses an
+incompatible storage layout and must be recreated; the store rejects the
+old layout explicitly rather than silently reinterpreting it. Save the
+resource directly -- a bound object saves and reads back as its plain class.
 
 This reconstructs the same typed backend class and its exact raw resource.
 `SqlStore.save()` deduplicates shared whole-page documents and schema snapshots

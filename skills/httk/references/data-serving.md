@@ -142,6 +142,17 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   `len()` counts server-side, and selections project columns
   (`hits[["id", "_x"]]` yields named rows); it deliberately offers no
   sorting -- use the searcher for that.
+- Relationships use one `links` namespace, shared by the local stores and the
+  remote client. `v.links.<name>.<field> ...` is a depth-1 relationship filter
+  predicate; `v.links.<name>` is a set-valued `results()` output (each matched
+  row yields a tuple of related records); and every returned record exposes
+  `record.links.<name>` to walk one hop further. The remote client auto-adds the
+  `include=` its link outputs need, resolves them from the response, and fetches
+  by id only when a provider did not include them — there is no separate
+  `include()`/`related()` call. Store-side link outputs cover weak links; the
+  remote client's `links` also spans reference-field and `StrongLink`
+  relationships (`StrongLink` wire keys resolve as outputs but are not
+  field-chainable in filters).
 
 ## httk-serve: websites
 
