@@ -5,16 +5,23 @@
 ### SqlStore — the backend-agnostic SQL store
 
 ```python
-from httk.store import Backend, SqlStore
-from httk.atomistic import UnitcellStructure  # families register their records
+from httk.store import Backend, EntryIdScheme, SqlStore
+from httk.atomistic import StructureEntry, UnitcellStructure, UnitcellStructureRecord
 
-store = SqlStore(Backend.sqlite("results.sqlite"),   # or Backend.duckdb(...)
-                 entry_records={...})                  # family → record classes
+structure = UnitcellStructure(
+    cell=[[5, 0, 0], [0, 5, 0], [0, 0, 5]],
+    sites=[[0, 0, 0]], species_at_sites=["Si"],
+)
+backend = Backend.sqlite("results.sqlite")  # or Backend.duckdb(...)
+store = SqlStore(backend, entry_records={StructureEntry: UnitcellStructureRecord},
+                 entry_ids=EntryIdScheme("example", "structures"))
 sid = store.save(structure)
-back = store.fetch_by_content_id(UnitcellStructure, cid)
+back = store.fetch(UnitcellStructureRecord, sid)
+assert back.id == "example-structures-1"
+backend.dispose()
 ```
 
-- Built on SQLAlchemy Core; SQLite, DuckDB, and PostgreSQL supported (plus a
+- Built on SQLAlchemy Core; SQLite, DuckDB, PostgreSQL, and ClickHouse supported (plus a
   MongoDB backend — see `docs/httk-store/mongo.md`); bulk loads via
   `store.bulk_ingest()` (optionally `workers=N` for parallel encoding)
   (`httk-store[duckdb]` / `httk-store[postgresql]`). Domain objects stay
@@ -31,7 +38,8 @@ back = store.fetch_by_content_id(UnitcellStructure, cid)
   oldest-first, and `searcher(only_latest=True)` restricts roots to the latest
   row of each. Store-managed timestamps + `searcher(as_of=T)` historic search
   are on by default.
-- Public identity (opt in with `SqlStore(entry_ids=EntryIdScheme(...))`): the
+- Public identity (supply explicit IDs or declare `entry_ids=EntryIdScheme(...)`
+  when writing entry records): the
   store mints an `id` shared across a lineage plus a per-row `immutable_id`
   `<id>~<n>`. Content ids are storage identity only — this is a separate axis
   (the old "id property returns content_id" behaviour is gone).

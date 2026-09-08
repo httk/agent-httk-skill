@@ -137,9 +137,11 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
 
 ## httk-analyse (`httk.analyse`) — analysis
 
-- `from httk.analyse.generic import LowerConvexHull` — immutable, exact-input
-  tolerant generic lower convex hull: `hull_indices`, `value_above_hull`,
-  supported segments, convex decompositions (deterministic simplex).
+- `from httk.analyse.generic import LowerConvexHull` — immutable float64
+  lower convex hull: `hull_indices`, `value_above_hull`, supported segments,
+  and convex decompositions. The default `solver="auto"` uses HiGHS when
+  installed and otherwise the built-in simplex solver; `[default]` installs
+  HiGHS. Choose `solver="simplex"` to request the built-in solver explicitly.
 - `from httk.analyse.matsci import PhaseDiagram` — normalizes formulas or
   `StructureLike`s + total energies to atomic fractions and per-atom
   energies, delegates to `LowerConvexHull`, owns Matplotlib plotting (binary

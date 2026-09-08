@@ -21,7 +21,7 @@ scale. It is distributed as a family of packages sharing the `httk` namespace:
 | httk-analyse | `httk.analyse` | analysis: convex hulls (`generic`), phase diagrams + plotting (`matsci`) |
 | httk-serve | `httk.serve` | dissemination: websites (`httk.serve.web`) and a generic OPTIMADE server (`httk.serve.optimade`) |
 
-`pip install httk2` installs the standard set; `httk2[serve]` adds serving.
+`pip install httk2` installs the standard set, including serving.
 Metapackage name is ASCII `httk2`; the project is written *httk₂* in prose.
 
 `workspace` and `job` are top-level CLI groups. Except for `workspace forget`
