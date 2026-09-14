@@ -154,8 +154,8 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
 See `data-serving.md`. In one line each: `httk.serve.web` (Jinja2 sites,
 widgets, static publishing, Starlette ASGI runtime — used by httk.org);
 `httk.serve.optimade` (a generic OPTIMADE v1.3 protocol server fed by
-`EntryProvider`s, plus `OptimadeStore`, a read-only client of remote OPTIMADE
-APIs).
+`EntryProvider`s). The read-only *client* of remote OPTIMADE APIs,
+`OptimadeStore`, lives in `httk.store.optimade` (see `data-serving.md`).
 
 ## Starting new things
 

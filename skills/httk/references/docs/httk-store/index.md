@@ -23,6 +23,9 @@ contracts. ClickHouse supports bulk ingestion and read serving via
 - **Backend storage guide**: {doc}`db`
 - **MongoDB storage guide**: {doc}`mongo`
 - **Federated stores guide**: {doc}`federation`
+- **Query remote OPTIMADE databases**: {doc}`optimade-client` —
+  point `OptimadeStore` at any OPTIMADE API and query it through the same
+  neutral Store/Searcher protocols
 - **Migrating from httk v1**: {doc}`migrating_from_v1`
 - **API reference**: {doc}`reference/index`
 - **Runnable examples**: {doc}`examples/index`
@@ -71,6 +74,7 @@ data
 db
 mongo
 federation
+optimade-client
 migrating_from_v1
 testing
 clickhouse-testing

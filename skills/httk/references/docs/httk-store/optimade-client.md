@@ -6,7 +6,7 @@ that describe every result, and exposes the neutral `Store`/`Searcher` query
 profile from *httk-store*.
 
 ```python
-from httk.serve.optimade import OptimadeStore
+from httk.store.optimade import OptimadeStore
 
 with OptimadeStore("https://example.org/optimade") as store:
     for entry_type in store.entry_types:
@@ -81,7 +81,7 @@ query. Start from either a unique typed backend class or, where there may be
 more than one endpoint of a type, the exact `RemoteEntryType` descriptor.
 
 ```python
-from httk.serve.optimade import OptimadeStore
+from httk.store.optimade import OptimadeStore
 
 store = OptimadeStore("https://example.org/optimade")
 references = store.entry_type("references")
@@ -164,7 +164,7 @@ one absent from `included` costs one HTTP request per missing identifier.
 Each named relationship resolves once per record and is memoized.
 
 ```python
-from httk.serve.optimade import OptimadeStore
+from httk.store.optimade import OptimadeStore
 
 with OptimadeStore("https://example.org/optimade") as store:
     materials = store.entry_type("materials")
@@ -202,7 +202,7 @@ from contextlib import ExitStack
 
 from httk.atomistic import OptimadeStructure
 from httk.store import FederatedStore
-from httk.serve.optimade import OptimadeStore
+from httk.store.optimade import OptimadeStore
 
 with ExitStack() as stack:
     first = stack.enter_context(OptimadeStore("https://first.example/optimade"))

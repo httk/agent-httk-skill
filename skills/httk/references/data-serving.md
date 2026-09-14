@@ -140,9 +140,10 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   `/_httk_<entry>~alts[/<id>~<kind>]` list named alternatives at their latest
   revision per kind (composite `id` `<id>~<kind>`, plus filterable/sortable
   `_httk_id` and `_httk_kind`). Both families are store-backed only.
-- `OptimadeStore` is the read-only *client*: point it at any OPTIMADE API and
-  query it through the same neutral Store/Searcher protocols; combine remote
-  and local stores with `FederatedStore`. Provider-prefixed properties
+- `OptimadeStore` (imported from `httk.store.optimade` — it is a *httk-store*
+  capability, not a serving one) is the read-only *client*: point it at any
+  OPTIMADE API and query it through the same neutral Store/Searcher protocols;
+  combine remote and local stores with `FederatedStore`. Provider-prefixed properties
   (`_prefix_name`) resolve in filter/sort expressions and as scalar output
   projections, including on a generic (unregistered) entry type; an absent
   attribute projects as `None`. A pandas-style bracket layer rides on top:
