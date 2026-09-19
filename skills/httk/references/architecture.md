@@ -105,6 +105,15 @@ begins with `Mutable`.
   — no SQL leaks into domain modules. Stores layer a separate public-identity
   axis on top (a store-minted `id`, per-revision `immutable_id`, and
   alternative ids), distinct from content addressing.
+- **Declarative served records** (`httk.core`): `EntryRecord` supplies common
+  entry identity metadata and `DataEntryRecord` selects the records family;
+  `@entry_record("example.result")` turns a subclass into a frozen record and
+  maps `Annotated[T, Property(...)]` fields to scalar OPTIMADE definitions.
+  SQL stores accept these application records with `records=[Record]`,
+  recursively discovering registered or decorated referenced records. This is
+  a convenience for small served datasets; existing plain frozen dataclasses,
+  `DataRecord`, and explicit `entry_records=`/`entry_families=` declarations
+  retain their separate roles.
 - **Provenance** (`httk.core`): `Run` (one workflow execution whose
   input/artifact/output edges are `StrongLink`-marked fields — each carrying a
   target entry_type plus a raw same-database entry_id, so an edge links only

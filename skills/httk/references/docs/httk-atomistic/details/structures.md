@@ -172,12 +172,12 @@ where radicals such as the hexagonal $\sqrt3$ appear — is exact in the squaref
 import fractions
 
 from httk.core import FracVector, SurdVector
-from httk.atomistic import Cell, CellParams, UnitcellStructure
+from httk.atomistic import Cell, UnitcellStructure
 
 F = fractions.Fraction
 
 # Cell parameters -> an EXACT basis: hexagonal a=b=3, c=5, gamma=120 carries a real sqrt(3).
-cell = Cell(CellParams((3, 3, 5, 90, 90, 120)).basis)
+cell = Cell([3, 3, 5, 90, 90, 120])
 assert 3 in cell.basis.radicands                       # the sqrt(3) is exact, not a float
 
 # Angles come back exactly through the reverse-Niven table; volume is (45/2)*sqrt(3):
@@ -238,11 +238,11 @@ except this numpy presentation.)
 import numpy
 import fractions
 
-from httk.atomistic import Cell, CellParams, UnitcellStructure
+from httk.atomistic import Cell, UnitcellStructure
 
 F = fractions.Fraction
 
-cell = Cell(CellParams((3, 3, 5, 90, 90, 120)).basis)   # hexagonal: a real sqrt(3)
+cell = Cell([3, 3, 5, 90, 90, 120])   # hexagonal: a real sqrt(3)
 structure = UnitcellStructure(
     cell=cell,
     sites=[[F(0), F(0), F(0)], [F(1, 3), F(1, 3), F(0)]],
@@ -324,6 +324,30 @@ value, or `None`, deliberately when constructing a larger result. See the
 complete {doc}`/examples/build_a_supercell` example for the skewed cell from the
 httk v1 Step 2 tutorial and the reason its old `tolerance` search knob became
 an exact multiplier in v2.
+
+## Reading remote OPTIMADE structures
+
+`OptimadeStructure` wraps an `OptimadeResource` (typically from
+`httk.core.optimade.optimade_resource_from_url`) and `UnitcellStructureView`
+presents it as an ordinary structure. A property is recognized by its
+definition IRI, never by its transport spelling, so a service must map each
+name to a definition. Almost no large real provider publishes a
+property-definition `$id` in `/info/structures`, so httk applies the OPTIMADE
+standard-name rule: on a standard endpoint an unprefixed property name is the
+standard property of that name as of the specification version the service
+declares in the info document's `meta.api_version`. A declared `$id` always wins
+over the inferred identity; provider-prefixed names (`_exmpl_…`) stay unknown; a
+name introduced only in a later specification version than the one declared also
+stays unknown; and a service that declares no usable major-1 version gets no
+inference. See the *httk-core*
+[property definitions guide](https://docs.httk.org/httk-core/dev/main/details/property_definitions.html)
+for the mechanism.
+
+A backend built directly over an `OptimadeResource` always applies this rule.
+Restricting recognition to declared `$id` definitions (strict auditing) is a
+client-discovery concern, governed by *httk-store*'s
+`OptimadeStore(infer_standard_definitions=False)`, not a property of the schema
+snapshot.
 
 ## Serving structures as OPTIMADE
 

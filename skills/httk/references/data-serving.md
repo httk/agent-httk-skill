@@ -2,33 +2,41 @@
 
 ## httk-store: stores and validation
 
-### SqlStore — the backend-agnostic SQL store
+### SQL stores
 
 ```python
-from httk.store import Backend, EntryIdScheme, SqlStore
+from httk.store import EntryIdScheme, SqliteStore
 from httk.atomistic import StructureEntry, UnitcellStructure, UnitcellStructureRecord
 
 structure = UnitcellStructure(
     cell=[[5, 0, 0], [0, 5, 0], [0, 0, 5]],
     sites=[[0, 0, 0]], species_at_sites=["Si"],
 )
-backend = Backend.sqlite("results.sqlite")  # or Backend.duckdb(...)
-store = SqlStore(backend, entry_records={StructureEntry: UnitcellStructureRecord},
-                 entry_ids=EntryIdScheme("example", "structures"))
+store = SqliteStore(
+    "results.sqlite",
+    entry_records={StructureEntry: UnitcellStructureRecord},
+    entry_ids=EntryIdScheme("example", "structures"),
+)
 sid = store.save(structure)
 back = store.fetch(UnitcellStructureRecord, sid)
 assert back.id == "example-structures-1"
-backend.dispose()
+store.close()
 ```
 
-- Built on SQLAlchemy Core; SQLite, DuckDB, PostgreSQL, and ClickHouse supported (plus a
+- `SqliteStore`, `DuckdbStore`, `PostgresqlStore`, and `ClickhouseStore` are the
+  beginner-facing stores; each owns its connection and accepts the same store
+  keywords. `SqlStore(Backend.sqlite(...))` remains the advanced two-object
+  form when sharing or customizing a SQLAlchemy engine. SQLite, DuckDB,
+  PostgreSQL, and ClickHouse are supported (plus a
   MongoDB backend — see `docs/httk-store/mongo.md`); bulk loads via
   `store.bulk_ingest()` (optionally `workers=N` for parallel encoding)
   (`httk-store[duckdb]` / `httk-store[postgresql]`). Domain objects stay
   ordinary frozen dataclasses; the store consumes their declared record classes.
-- The `entry_records` declaration is **required on first open**, stamped into
-  the store, and **trusted on reopen** (byte-identical check; a mismatch
-  raises `StorageLayoutUpgradeRequiredError` — rebuild, no migration).
+- A first open declares its layout with `entry_records=`, `entry_families=`, or
+  the SQL-only `records=` convenience. The declaration is stamped into the
+  store and must be supplied consistently when reopening application-owned
+  layouts; a mismatch raises `StorageLayoutUpgradeRequiredError`. Registry-backed
+  declarations can be resolved automatically on reopen.
 - DDL happens only on write; read paths treat missing tables as empty.
 - Identity: `content_id` (content addressing) + local integer `sid`;
   duplicate saves dedup exactly, with metadata-conflict detection.
@@ -62,7 +70,9 @@ backend.dispose()
 - Queries: the neutral query layer (`httk.store.query`) — expressions,
   portable queries, OPTIMADE filter *translation*
   (`httk.store.query.optimade_filters`) — plus `Searcher`/`Store` protocols
-  every backend implements.
+  every backend implements. Bind variables, add conditions and sorting, then
+  consume the public `searcher.results(...)` result set; the old raw search
+  iteration/output path is internal.
 - Federation: `FederatedStore` (live fan-out over already-open stores,
   read-only union) vs `httk.store.backend.sql.stored_federation` (a persisted registry of
   (store, family, prefix) sources with audits). The stored federation serves and
@@ -73,6 +83,41 @@ backend.dispose()
   searcher parameter, so each child applies its own mains-only default. A child
   without store timestamps raises `FederatedSourceError` on `as_of` rather than
   silently serving current state.
+
+For a small application-defined dataset, use the declarative record helper from
+*httk-core* and let the SQL store discover its records:
+
+```python
+from typing import Annotated
+
+from httk.core import DataEntryRecord, Property, entry_record
+from httk.store import EntryIdScheme, SqliteStore
+
+
+@entry_record("example.result")
+class Result(DataEntryRecord):
+    formation_energy: Annotated[
+        float,
+        Property(description="Formation energy per atom.", unit="eV"),
+    ]
+
+
+store = SqliteStore(
+    "results.sqlite", records=[Result], entry_ids=EntryIdScheme("example", "1")
+)
+store.save(Result(formation_energy=-1.25))
+store.close()
+```
+
+Supply the same `records=[Result]` when reopening. A field such as
+`structure: UnitcellStructureRecord` causes registered or decorated referenced
+records to be discovered recursively. Multiple decorated records in one family
+are served together; overlapping property definitions must agree. Use the
+explicit declaration APIs for existing plain frozen dataclasses or for store
+local families, and use `DataRecord` when serving the established
+`_httk_records` property-value model. These helpers are currently unreleased;
+the example needs development checkouts of the matching *httk-core* and
+*httk-store* changes until those releases are published.
 
 ### Validation and provenance serving
 
@@ -126,8 +171,12 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   before serving (see the `example_website_httk` repo's `serve_optimade.py`
   for a complete worked service: CSVs + CONTCAR.bz2 → exact structures → 180
   served entries with custom properties and linked references).
-- Serve a store directly with `StoreEntryProvider` (registered as
-  `store-db-store`): each record also exposes its lineage as the integer
+- Store-backed applications can pass a store directly to
+  `adapter_from_store(store)`/`create_asgi_app(store)`, which discovers its
+  declared OPTIMADE families when the adapter is built and queries the live
+  store for each request. The lower-level `StoreEntryProvider` path (registered
+  as `store-db-store`) remains useful when composing providers explicitly. Each
+  record also exposes its lineage as the integer
   property `_httk_logical_id`, filterable like any field. It serves mains only
   (alternatives never appear) and, by default, the latest row of each lineage
   (`only_latest=True`); `only_latest=False` requires an `id_of` override to keep
@@ -143,7 +192,10 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
 - `OptimadeStore` (imported from `httk.store.optimade` — it is a *httk-store*
   capability, not a serving one) is the read-only *client*: point it at any
   OPTIMADE API and query it through the same neutral Store/Searcher protocols;
-  combine remote and local stores with `FederatedStore`. Provider-prefixed properties
+  it negotiates unversioned `/versions` URLs, uses a 120-second request timeout
+  by default (`timeout=None` disables it), and records tolerated service
+  deviations in `store.deviations`; combine remote and local stores with
+  `FederatedStore`. Provider-prefixed properties
   (`_prefix_name`) resolve in filter/sort expressions and as scalar output
   projections, including on a generic (unregistered) entry type; an absent
   attribute projects as `None`. A pandas-style bracket layer rides on top:
@@ -151,6 +203,10 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   `len()` counts server-side, and selections project columns
   (`hits[["id", "_x"]]` yields named rows); it deliberately offers no
   sorting -- use the searcher for that.
+- If several remote endpoints bind to the same backend class, bind a query to
+  the exact descriptor returned by `store.entry_type("structures")` (or the
+  relevant endpoint name) instead of relying on backend-class lookup; this
+  keeps the query attached to the intended endpoint.
 - Relationships use one `links` namespace, shared by the local stores and the
   remote client. `v.links.<name>.<field> ...` is a depth-1 relationship filter
   predicate; `v.links.<name>` is a set-valued `results()` output (each matched
@@ -158,8 +214,8 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
   `record.links.<name>` to walk one hop further. The remote client auto-adds the
   `include=` its link outputs need, resolves them from the response, and fetches
   by id only when a provider did not include them — there is no separate
-  `include()`/`related()` call. Store-side link outputs cover weak links; the
-  remote client's `links` also spans reference-field and `StrongLink`
+  `include()`/`related()` call. Store-side link outputs cover weak links and
+  `StrongLink` provenance; the remote client's `links` also spans reference-field and `StrongLink`
   relationships (`StrongLink` wire keys resolve as outputs but are not
   field-chainable in filters).
 

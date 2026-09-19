@@ -42,7 +42,10 @@ elsewhere.
   Details: `references/modules.md` (httk-atomistic section).
 - **"Store results / build a database / validate / provenance / multiple
   representations of one entry (conventional vs primitive cells)"** →
-  `references/data-serving.md` (httk-store).
+  `references/data-serving.md` (httk-store). Start with `SqliteStore` or the
+  appropriate concrete store; query through `search.results(...)`. For a small
+  served dataset, see its `DataEntryRecord` / `@entry_record` example and the
+  note about matching development versions.
 - **"Phase diagram / convex hull / stability"** → `references/modules.md`
   (httk-analyse section).
 - **"Serve an OPTIMADE API / build a website"** → `references/data-serving.md`
@@ -143,9 +146,12 @@ partitioning, Python `new_jobs` streaming, `collect --into` a store), follow
   module's narrative documentation (Markdown). Grep it freely — e.g. the
   complete CLI tree is `references/docs/httk-workflow/workflow_cli.md`, runner
   authoring is `runtime_helpers.md`, storage is
-  `references/docs/httk-store/db.md`. The snapshot is refreshed with
-  `make docs-snapshot` from a workspace checkout and may trail the online docs;
-  when the two disagree, the online docs win.
+  `references/docs/httk-store/db.md`. The remote OPTIMADE client is documented
+  under `references/docs/httk-store/details/db-optimade-client.md`; the
+  `httk-serve` client page is only a relocation note because the client belongs
+  to *httk-store*. The snapshot is refreshed with `make docs-snapshot` from a
+  workspace checkout and may trail the online docs; when the two disagree, the
+  online docs win.
 - The curated files under `references/` (architecture, modules, campaign,
   data-serving) are the distilled, stable layer — start there, drop into the
   snapshot or online docs for exhaustive detail.

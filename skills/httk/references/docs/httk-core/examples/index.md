@@ -13,4 +13,5 @@ property_definitions
 entry_provider
 optimade_filter
 coerce_quickstart
+entry_records
 ```

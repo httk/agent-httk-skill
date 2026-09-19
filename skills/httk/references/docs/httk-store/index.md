@@ -14,7 +14,7 @@ dataclasses over SQLite, DuckDB, or PostgreSQL (via the `httk-store[db]` /
 The `httk-store[mongodb]` extra provides MongoDB storage through the same neutral
 contracts. ClickHouse supports bulk ingestion and read serving via
 `httk-store[clickhouse,parallel]`, subject to the
-[documented write restrictions](details/db.md#clickhouse-bulk-fenced-writes).
+[documented write restrictions](details/db-recovery.md#clickhouse-bulk-fenced-writes).
 
 ```{admonition} Quick links
 :class: tip
@@ -23,9 +23,6 @@ contracts. ClickHouse supports bulk ingestion and read serving via
 - **Backend storage guide**: {doc}`db`
 - **MongoDB storage guide**: {doc}`mongo`
 - **Federated stores guide**: {doc}`federation`
-- **Query remote OPTIMADE databases**: {doc}`optimade-client` —
-  point `OptimadeStore` at any OPTIMADE API and query it through the same
-  neutral Store/Searcher protocols
 - **Migrating from httk v1**: {doc}`migrating_from_v1`
 - **API reference**: {doc}`reference/index`
 - **Runnable examples**: {doc}`examples/index`
@@ -74,7 +71,6 @@ data
 db
 mongo
 federation
-optimade-client
 migrating_from_v1
 testing
 clickhouse-testing

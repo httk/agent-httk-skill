@@ -23,6 +23,11 @@ docs-snapshot:
 		done; \
 		echo "$(SKILL_DIR)/references/docs/$$r: $$(find $(SKILL_DIR)/references/docs/$$r -name '*.md' | wc -l) files"; \
 	done
+	# Replace the retired serve-side guide with a pointer to the current owner.
+	@printf '%s\n' '# Remote OPTIMADE client' '' \
+		'The remote OPTIMADE client moved to *httk-store*.' \
+		'See [Reading a remote OPTIMADE service](../../httk-store/details/db-optimade-client.md).' \
+		> $(SKILL_DIR)/references/docs/httk-serve/optimade/client.md
 	@date -u +"snapshot: %Y-%m-%dT%H:%M:%SZ" > $(SKILL_DIR)/references/docs/SNAPSHOT
 	@echo "Snapshot refreshed; review and commit."
 

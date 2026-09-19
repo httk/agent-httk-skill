@@ -7,7 +7,7 @@ layer implements and that other stores — including *httk-serve*'s in-memory
 reference store — implement identically, so the same query program runs
 unchanged against either.
 
-A search is built, not written. Four calls do everything:
+A search is built, not written. Three calls do everything:
 
 `variable(cls)`
 : Bind a class to a query variable. Two variables of the same class self-join,
@@ -17,13 +17,11 @@ A search is built, not written. Four calls do everything:
 : Add a condition. Expressions come from comparing a variable's fields;
   `&`, `|` and `~` combine them. Several `add()` calls are ANDed.
 
-`output(variable_or_field, name)`
-: Declare what a match yields — the whole reconstructed object, one field, or a
-  weak-link set (see below). Declaration order is result order.
-
-iteration / `count()`
-: Run it. Iterating yields one `SearchResult` per match; `count()` returns how
-  many there are, ignoring `set_limit`/`add_offset`.
+`results(name=variable_or_field, ...)` / `count()`
+: Run it. `results()` declares what each match yields — the whole
+  reconstructed object, one field, or a weak-link set (see below), keyword
+  order is result order — and returns named rows; `count()` returns how many
+  matches there are, ignoring `set_limit`/`add_offset`.
 
 ## What the fields give you
 
@@ -71,17 +69,16 @@ The full weak-link contract is in the versioned database guide.
 
 ## Results
 
-The low-level protocol yields `SearchResult`, a named 2-tuple of `values` (one
-per `output()`, in declaration order) and `names`. The canonical `results()`
-API yields named lazy rows; use the portable protocol form
-`for (structure,), _names in search:` when needed. Result rows bypass the
-identity cache; `fetch()` returns lazy rows too (`eager=True` materializes),
-and repeated default fetches of one live sid return the same object.
+`results()` yields named lazy rows: `row.name`, `row["name"]` or `row[0]`
+address a declared output, and `row.names`/`row.values` give the full tuple.
+Result rows bypass the identity cache; `fetch()` returns lazy rows too
+(`eager=True` materializes), and repeated default fetches of one live sid
+return the same object.
 
 Sorting on a rational field runs on its float companion column, so it is
 documented-approximate; the values themselves are still exact.
 
 ```{literalinclude} ../../examples/searching.py
 :language: python
-:lines: 84-
+:lines: 81-
 ```

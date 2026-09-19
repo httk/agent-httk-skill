@@ -2,7 +2,7 @@
 
 ## httk-core (`httk.core`) — stdlib-only foundation
 
-Public root surface (~76 names). The ones users touch most:
+Public root names users touch most:
 
 - `load(path, **kw)` / `save(obj, dest)` / `fetch(url)` — universal file I/O
   with transparent `.gz`/`.bz2`/`.xz` handling; dispatch by extension or exact
@@ -17,7 +17,8 @@ Public root surface (~76 names). The ones users touch most:
   helpers (`decimal_precision`, `combined_precision`).
 - View grammar: `unwrap`, `unview`, `coerce_view`, `coerce`.
 - Records/definitions: `Reference`, `File`, `Calculation`, `Run`,
-  `ProductLink`, `DataRecord`, `PropertyDefinition`, `EntryTypeDefinition`,
+  `ProductLink`, `DataRecord`, `EntryRecord`, `DataEntryRecord`, `Property`,
+  `entry_record`, `PropertyDefinition`, `EntryTypeDefinition`,
   `load_entry_type_definition`, `register_definition_prefix`; DCAT-shaped
   dataset/service metadata `Dataset`, `DatasetDistribution`, `Service` (+ the
   storable `DatasetRecord`/`ServiceRecord`); URL/IRI predicates in
@@ -26,6 +27,11 @@ Public root surface (~76 names). The ones users touch most:
   `register_entry_family`, `register_entry_record`, `register_citation`.
 - Datastreams: `TextstreamFileView`/`BytestreamFileView` etc. (open anything,
   decompress transparently), `DatastreamURL`.
+- Declarative application records: subclass `DataEntryRecord`, annotate served
+  scalar fields with `Property`, and apply `@entry_record("example.result")`.
+  The decorator creates a frozen record with stable identity and direct
+  OPTIMADE property projections; SQL stores accept these classes through
+  `records=[...]` (and discover registered or decorated referenced records).
 - Storage author vocabulary: `StorageInfo`, `Indexed`/`Unique`/`Skip`/
   `IdentitySkip`/`Shape`/`Related`, `stored_property`, `content_id`.
 - `DatasetLoader` — lazy packaged datasets for module authors (JSON, or the

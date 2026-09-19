@@ -11,9 +11,9 @@ object and are inspected with exactly the same code:
    $\mathbf{b}$, $\mathbf{c}$. This is the direct route, and the only one that
    pins down the cell's orientation in space.
 2. **Cell parameters** — the flat 6-tuple
-   $(a, b, c, \alpha, \beta, \gamma)$, angles in degrees, wrapped by
-   `CellParams`. A basis is built for you using the standard orientation
-   convention: $\mathbf{a}$ along $x$, $\mathbf{b}$ in the $xy$-plane.
+   $(a, b, c, \alpha, \beta, \gamma)$, angles in degrees, accepted directly by
+   `Cell` and `UnitcellStructure`. A basis is built for you using the standard
+   orientation convention: $\mathbf{a}$ along $x$, $\mathbf{b}$ in the $xy$-plane.
 3. **An spglib-style triple** — `(lattice, positions, numbers)`, the shape
    symmetry libraries speak. `UnitcellStructureView` presents it as a `UnitcellStructure`,
    inventing one species per distinct atomic number.

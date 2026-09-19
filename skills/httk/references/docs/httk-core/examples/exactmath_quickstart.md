@@ -1,9 +1,10 @@
 # Exact math quickstart
 
-Exact mode keeps square roots and supported degree trigonometry symbolic instead of approximating.
-The ordinary Fraction mode and the Decimal mode selected by ``digits=`` remain available beside it.
+By default exactmath returns a symbolically exact value where one exists (square roots and the
+supported degree angles), a rational where the answer is rational, and otherwise a deterministic
+Fraction approximation. Decimal inputs or ``digits=`` select correctly-rounded Decimals instead.
 
 ```{literalinclude} ../../examples/exactmath_quickstart.py
 :language: python
-:lines: 6-
+:lines: 7-
 ```
