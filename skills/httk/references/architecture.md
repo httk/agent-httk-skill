@@ -48,9 +48,13 @@ stack, all in `httk.core`:
 - **`SurdVector`/`SurdScalar`** — the squarefree-radical field
   ℚ[√n]: exact hexagonal bases, exact `det`/`inv`/lengths; `sqrt` closed over
   positive rationals; exact degree-mode trig for the 15°/36° angle families.
-- **`exactmath`** (`httk.core.exactmath`) — type-preserving exact
-  transcendentals: results are `Decimal` iff any input is `Decimal` or
-  `digits=` is passed, else exact `Fraction`; `exact=True` returns surds.
+- **`exactmath`** (`httk.core.exactmath`) — best-effort symbolic
+  transcendentals: for `int`/`Fraction`/`str`/`FracVector` input, `sqrt` and
+  degree-mode trig return exact surds (`sqrt(3)` is a `SurdScalar`) or exact
+  rationals when they exist (`exact=None` default); otherwise a deterministic
+  approximation that is `Decimal` iff any input is `Decimal` or `digits=` is
+  passed, else `Fraction`. `exact=True` demands the surd or raises;
+  `exact=False` always approximates.
 - **The vector family** — kinds `"frac"`/`"surd"`/`"native"`/`"numpy"` with a
   `Fraction`-based exact interchange hub; `VectorNumpyView(ndarray)` is
   zero-copy adoption; numpy ops shed the view. `to_numeric(x)` is the
