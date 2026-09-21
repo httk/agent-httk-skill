@@ -77,7 +77,11 @@ $ httk workflow collect
 `job new` publishes the packaged relaxation runner into the workspace and pins
 its digest (upgrading httk cannot change queued jobs); `run` drives every job
 until idle; `collect` prints one JSON `CollectedJob` summary per finished job
-(`--raw` emits mechanical `JobRecord` summaries).
+(`--raw` emits mechanical `JobRecord` summaries). Packaged VASP workflows keep
+results in the persistent `run/` workdir by default; add
+`--data-mode transactional` to `job new` when a curated `data/` copy is also
+required.
+
 `job new` takes exactly one of `--workflow NAME` (a registered or packaged
 workflow), `--workflow-dir DIR`, `--from-runner FILE` (a single-file Python or
 Bash runner), or `--from-command 'srun my_executable {n}'` (wrap one command

@@ -88,8 +88,9 @@ with `job new --environment NAME=VALUE`.
 Except for `workspace forget` and `workspace delete`, workspace arguments are
 optional: the CLI walks up from the current directory to find
 `.httk-workspace/`, then uses the project default and registry default. The workspace anchor is
-`.httk-workspace/`; a job payload contains `job.json`, `files/`, `data/`,
-`run/`, `logs/stdio.out`, `logs/runlog.jsonl`, and `.httk-job/state.json`.
+`.httk-workspace/`; a job payload contains `job.json`, `files/`, `run/`,
+`logs/stdio.out`, `logs/runlog.jsonl`, and `.httk-job/state.json`; `data/`
+exists when transactional data is enabled.
 `attempts/<id>/` exists only for a live attempt or failed/cancelled evidence;
 successful jobs retain no attempt directory. Runners execute in the payload's
 `run/` directory in place, and `logs/stdio.out` records attempt start/end
@@ -204,7 +205,9 @@ per manager); each manager owns its allotment.
   `--idle` keeps serving). Use `httk workflow run [--count N] [--launcher NAME]
   [--inline] [--detach]` as appropriate. Managers drive jobs through their steps
   (`prepare` → `run` → `publish` for the VASP runners) with the reviewed
-  remedy ladder retrying known VASP failure modes.
+  remedy ladder retrying known VASP failure modes. For `EDDAV`/`EDDDAV` ZHEGV
+  failures on CPU MPI, the bounded ladder sets `NPAR=1`, then adds two bands
+  when `NBANDS` is explicit, then gives up; it does not reduce the allocation.
 - Before submitting a manager, `httk workflow precheck --workspace WS` reports readiness
   read-only: declared-environment resolution, runner reachability, per-job
   claimability against live managers, missing required inputs.
@@ -224,9 +227,13 @@ $ httk workflow collect
 ```
 
 The reverse transfer offers finished jobs on the remote, pulls, imports, and
-retires the sources (rename, never delete; recovery bundles retained). Fetched
-jobs are then ordinary local jobs. `collect` prints one summary per finished
-job; options: `--raw` (mechanical `JobRecord`s),
+retires the sources only after acknowledgement. Retirement is crash-safe and
+idempotent, then reclaims the acknowledged payload and unprotected source
+journal history by default; compact epoch-scoped sequence receipts retain replay
+protection. Set both `retention.trash_days` and `retention.journal_days` to
+`keep` before retirement when recovery copies and journal history must remain.
+Fetched jobs are then ordinary local jobs. `collect` prints one summary per
+finished job; options: `--raw` (mechanical `JobRecord`s),
 `--degraded` (show only jobs that degraded), `--allow-job-collector` (trust
 job-pinned collect hooks), `--into STORE` (store collected entries straight
 into an httk-store store — degraded jobs are skipped and the exit code says so).
@@ -289,7 +296,8 @@ pd.plot()
 ```
 
 Persist collected entries with `collect --into mystore.sqlite` (or DuckDB), or
-programmatically via httk-store (`SqlStore`) — see `data-serving.md` — and
+programmatically via httk-store (`SqliteStore` or another concrete store) — see
+`data-serving.md` — and
 serve them over OPTIMADE with httk-serve.
 
 ## Custom workflows

@@ -115,9 +115,7 @@ records to be discovered recursively. Multiple decorated records in one family
 are served together; overlapping property definitions must agree. Use the
 explicit declaration APIs for existing plain frozen dataclasses or for store
 local families, and use `DataRecord` when serving the established
-`_httk_records` property-value model. These helpers are currently unreleased;
-the example needs development checkouts of the matching *httk-core* and
-*httk-store* changes until those releases are published.
+`_httk_records` property-value model.
 
 ### Validation and provenance serving
 
@@ -137,6 +135,9 @@ the example needs development checkouts of the matching *httk-core* and
 
 `httk.serve.optimade` is a **generic OPTIMADE v1.3 implementation** with no
 materials knowledge: everything served comes from `EntryProvider`s.
+The runnable store-serving example and cross-backend serving integration tests
+live in *httk-serve*; *httk-store* owns the providers and remote client and does
+not depend on its downstream server.
 
 ```python
 from httk.serve.optimade import adapter_from_providers, create_asgi_app, serve
