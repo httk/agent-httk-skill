@@ -8,7 +8,6 @@ Runnable scripts from the repository's `examples/` directory.
 example
 optimade_filters
 searching
-serve_as_optimade
 slicing
 storable_records
 ```
