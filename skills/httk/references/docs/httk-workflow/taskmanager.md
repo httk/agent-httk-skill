@@ -5,7 +5,7 @@ leave behind.* The everyday cycle is four commands:
 
 ```console
 $ httk workspace init --name default .
-$ httk job new --workflow vasp-relax --input structure=POSCAR --tag silicon
+$ httk job new --workflow vasp.relax --input structure=POSCAR --tag silicon
 $ httk workflow run                 # serve jobs until idle (--idle keeps serving)
 $ httk workspace status
 ```
@@ -59,6 +59,15 @@ Enabling either layer runs the manager and runners under a **login shell**,
 which re-sources login profiles (`/etc/profile`, `~/.bash_profile`, …); that can
 reset generic variables such as `PATH` and `LD_LIBRARY_PATH`, but the prelude
 runs last and is therefore the intended override point.
+
+Without a prelude a runner starts with the manager's interpreter directory first
+on `PATH`, so `#!/usr/bin/env python3` is the interpreter the manager checked the
+job's `[workflow] requires` in when it claimed it; a manager whose environment
+does not meet them leaves the job for another manager and names the unmet
+requirement in its idle summary; install the required distribution versions in
+that manager's environment and restart the manager. With a prelude, the directory
+is put first again after the login profiles, and the prelude may still change
+`PATH`.
 
 Preludes are workspace-local state: they do **not** travel with `transfer`. A job
 moved to another workspace runs under that workspace's own preludes, so set the

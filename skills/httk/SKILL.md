@@ -36,6 +36,10 @@ elsewhere.
   `references/campaign.md`. This is the toolkit's center of gravity: project →
   workspace → jobs → (remote) → run → monitor → transfer back → collect →
   analyse. A short version is below.
+- **"Find/install a workflow (VASP or otherwise) / write a workflow
+  package / what does `requires`/`command` do"** → `references/workflows.md`:
+  the three workflow repositories, referencing by git URI, install/uninstall,
+  and the manifest essentials.
 - **"Load/convert/write a structure file"** → `httk.core.load(path)` returns the
   file's native representation; expand with view constructors
   (`UnitcellStructureView(load("x.cif"))`); `httk.core.save(obj, path)` writes.
@@ -68,7 +72,7 @@ From an empty directory containing a VASP-5 `POSCAR`:
 ```console
 $ httk project init --name myproject .
 $ httk workspace init --name default .
-$ httk job new --workflow vasp-relax --input structure=POSCAR --tag silicon
+$ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --input structure=POSCAR --tag silicon
 $ httk workspace settings set --key vasp.command --value "srun -n 32 vasp_std" default
 $ httk workflow run
 $ httk workflow collect
@@ -110,8 +114,10 @@ same paged data path for scripts). `JOB` may also be an in-workspace path or glo
 (`jobs/silicon*`). Remove finished or queued jobs cleanly with `httk job delete JOB…`
 (`--force` skips the confirmation and the join-parent guard); `rm -r` of a finished
 job's directory is also fine — the next manager run or `workspace gc` clears its
-marker. Registered VASP workflows:
-`vasp-relax`, `httk.vasp.static`, `httk.vasp.relax-static`, `vasp-relax-bash`.
+marker. VASP workflow packages (`vasp.relax`, `vasp.relax-bash`, `vasp.static`,
+`vasp.relax-static`) are not built in — they live in the `workflows-vasp`
+repository, referenced by git URI (as above) or `httk workflow install`ed once;
+after that the short name resolves. See `references/workflows.md`.
 
 For a cluster campaign, configure the workspace's manager launcher first; use
 a remote only when transport to another machine is needed. For the full

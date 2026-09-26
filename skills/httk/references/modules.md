@@ -109,8 +109,12 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   jobs and state (machine-owned names; `NAME` local, `REMOTE:NAME` remote).
 - Per-job and per-step resource requirements are enforced by resource-aware
   managers configured with `--worker-resource`.
-- **Workflows**: packaged providers (`vasp-relax`, `httk.vasp.static`,
-  `httk.vasp.relax-static`), a single runner file
+- **Workflows**: no VASP workflows are packaged in this module — the
+  `vasp.relax`/`vasp.static`/`vasp.relax-static` packages live in the
+  `workflows-vasp` repository (referenced by git URI or installed; see
+  `references/workflows.md`); `httk.workflow.vasp` still ships the Python
+  primitives (inputs, remedies, collection) and Bash VASP API those runners
+  build on, for authoring your own. A single runner file
   (`--workflow ./my_runner.py`), or a **workflow package directory** with
   `httk_workflow.toml` (declared inputs/outputs/parameters/environment,
   instantiate/collect hooks as Python or any executable, any-language

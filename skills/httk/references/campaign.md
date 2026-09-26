@@ -24,13 +24,16 @@ here, `kappa:runs` on the remote below.
 One job from one structure:
 
 ```console
-$ httk job new --workflow vasp-relax --input structure=POSCAR \
-      --parameter kpoint_density=30.0 --tag silicon
+$ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' \
+      --input structure=POSCAR --parameter kpoint_density=30.0 --tag silicon
 silicon--0c4f…	/…/jobs/silicon--0c4f…
 ```
 
-- `--workflow` takes a registered id/alias (`vasp-relax`,
-  `httk.vasp.static`, `httk.vasp.relax-static`), a runner file path
+- `--workflow` takes a workflow name, alias, or git URI — a git URI (e.g. the
+  `vasp.relax`/`vasp.static`/`vasp.relax-static` packages of
+  `workflows-vasp`, or `vasp.relax-<lang>` of `workflows-vasp-other-languages`)
+  fetches and installs on first reference, after which its short name also
+  resolves; see `references/workflows.md` — a runner file path
   (`./my_runner.py`), or a workflow package directory (`--workflow-dir DIR`).
   The runner is published into the workspace content-addressed and the job
   **pins its digest** — upgrading httk under a queued campaign cannot change
@@ -67,7 +70,8 @@ from httk.workflow.scaffold import new_jobs, structure_tag
 ws = Workspace.default()
 items = ({"inputs": {"structure": p}, "tag": structure_tag(p)}
          for p in Path("structures").glob("POSCAR.*"))
-for job in new_jobs(ws, "vasp-relax", items, parameters={"kpoint_density": 30.0}):
+for job in new_jobs(ws, "git+https://github.com/httk/workflows-vasp#vasp-relax",
+                     items, parameters={"kpoint_density": 30.0}):
     print(job.job_key)
 ```
 
@@ -271,7 +275,7 @@ registered workspaces (stored in the project):
 ```console
 $ httk workflow campaign init --partition north=screening-a \
       --partition south=screening-b --assignment hash
-$ httk workflow campaign submit --workflow vasp-relax --key silicon \
+$ httk workflow campaign submit --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --key silicon \
       --input structure=structures/Si.vasp --tag silicon
 $ httk workflow campaign collect --state succeeded
 ```
@@ -307,7 +311,9 @@ serve them over OPTIMADE with httk-serve.
   (`sdks/native_bash_api.md`); `job new --workflow ./my_runner.py` publishes and
   pins it like a packaged one.
 - **Workflow package directory**: a directory with `httk_workflow.toml`
-  declaring id, runner entry/steps, inputs (staged; `required` by default when
+  declaring `[workflow] name` (plus optional `requires`, minimum distribution
+  versions checked at submission and again at claim time by the claiming
+  manager), runner entry/steps, inputs (staged; `required` by default when
   typed), parameters (knobs), `[workflow.environment.*]` (typed
   workspace-setting consumption), outputs (with `product_of` provenance),
   optional `[workflow.instantiate]`/`[workflow.collect]` hooks (Python or any
@@ -323,7 +329,8 @@ serve them over OPTIMADE with httk-serve.
   transferring such a workflow to a remote, run `httk workflow build` there
   before `run`.
 - **Composing workflows**: a runner calls another workflow as a child job —
-  `a.call("vasp-relax", label="relax", files={"POSCAR": path})` then
+  `a.call("git+https://github.com/httk/workflows-vasp#vasp-relax", label="relax",
+  files={"POSCAR": path})` then
   `a.gather("after_relax")`, reading the child's `a.children["relax"].data` /
   `.workdir` in the gathered step (Bash: `httk_workflow_call LABEL WORKFLOW
   --file NAME=PATH`). Callable: packaged ids/aliases, your own runner file,

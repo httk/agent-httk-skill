@@ -11,9 +11,13 @@ my-workflow/
 └── run                    # the executable entry (any language)
 ```
 
+A package may instead declare `[workflow.runner] command`, an argument vector
+such as `["{artifacts}/relax"]` or `["perl", "{package}/relax.pl"]`, and carry
+no `run` script.
+
 ```toml
 [workflow]
-id = "example.relax"
+name = "example.relax"
 
 [workflow.runner]
 entry = "run"
@@ -51,10 +55,18 @@ registrations; the manager passes registered build artifacts through
 `HTTK_WORKFLOW_RUNNER_ARTIFACTS` without modifying the published source tree.
 The build semantics are unchanged.
 
+`[workflow] requires = ["httk-workflow>=2.2.0", ...]` declares minimum
+distribution versions; they are checked when a job is created and again by the
+claiming manager in its own environment, so a runner needs no import guard.
+
 An installed *httk₂* plugin may bundle workflow packages. Resolution checks
 in-process registrations first, then installed plugins; `httk workflow list`
 labels plugin entries with their owning plugin, while `workflow describe`
 reports a plugin entry as `source: installed-package`.
+
+A package committed to a Git repository can be referenced from anywhere by a
+git URI such as `git+https://github.com/httk/workflows-vasp#vasp-relax`,
+which fetches and installs it; see {doc}`workflow_uris`.
 
 The full guide, {doc}`details/workflow_packages`, is the manifest reference:
 every table and key, hook envelopes, output declarations and provenance,

@@ -20,22 +20,27 @@ group never generates the cell.
 ## Canonicalization
 
 Two crystals that are the same up to origin, cell-basis choice, site order, or
-setting have many `ASUStructure` descriptions. `canonicalize` collapses that
-freedom exactly: given an `ASUStructure` it returns the single deterministic,
-highest-symmetry representative, using only exact rational arithmetic.
+setting have many `ASUStructure` descriptions. Use `canonicalize` to recognize a
+symmetry model and choose its anonymous protostructure canonical representative:
 
 ```python
-from httk.atomistic import canonicalize
+from httk.atomistic import canonicalize, search_supergroups
 
-result = canonicalize(asu)          # exact input, exact answer
-canonical = result.asu
+canonical = canonicalize(asu)  # recognize from geometry; returns ASUStructure
+exact = canonicalize(asu, symmetry="declared")  # retain the supplied model
+search = search_supergroups(asu, timeout=30)  # optional, potentially expensive
+if search.complete and search.candidates:
+    candidate = search.candidates[0]  # LiftResult with route and residual
 ```
 
-An exact P1 supercell — any multiplicity, diagonal or sheared — is collapsed to
-its unique primitive description before the search, so `canonicalize` returns the
-same answer whichever cell you hand it. That collapse fires only on exact
-rational invariance; a *noisy* supercell whose copies merely nearly coincide is
-snapped instead by `canonical_asu` below, within its tolerance.
+`canonical_asu` is an alias for `canonicalize`, with identical behavior and
+options. Neither canonicalization mode runs the general upward search. The
+explicit search returns a `SupergroupSearchResult`; incomplete candidates are
+exploratory, not canonical identities. The default cooperative deadline is 120
+seconds (`timeout=None` disables it). It cannot preempt a native call or individual
+arithmetic step. Canonicalization raises `CanonicalizationLimitError` rather than
+returning a partially selected minimum. Use `canonicalize_legacy` or
+`canonical_asu_legacy` for workflows pinned to their historical conventions.
 
 The 11 enantiomorphic space-group pairs (76/78, 91/95, 92/96, 144/145, 151/153,
 152/154, 169/170, 171/172, 178/179, 180/181, 212/213) describe the same crystal
@@ -52,17 +57,17 @@ group hits the pre-existing chirality-preserving orientation ceiling — its
 left-handed cell is kept — so it still yields a distinct mirror representative;
 recognition-path inputs, whose spglib cells are right-handed, are unaffected.) The
 standalone `normalize_chirality` applies that same exact map to an already-preserved
-result, so a caller need not re-canonicalize to get both forms — and this is exactly
-how canonical prototypes and protostructures, which deliberately ignore chirality,
-are derived from `canonical_asu(preserve_chirality=False)`. Magnetic structures (any
-site carrying a moment) are never flipped — an axial moment does not transform
-trivially under an improper map — and are left in their own group regardless. The
-explicit-target functions `canonicalize_full`, `list_representations`, and
-`rerepresent` honor their target group exactly and are unaffected.
+result, so a caller need not re-canonicalize to get both forms. The four
+classification-family canonicalizers expose the same policy directly. The
+`canonicalize` and `canonical_asu` entry points reject site moments;
+`normalize_chirality` returns a moment-bearing input unchanged because an axial
+moment does not transform trivially under an improper map. The explicit-target
+functions `canonicalize_full`, `list_representations`, and `rerepresent` honor
+their target group exactly and are unaffected.
 
-For *measured* input — coordinates carrying noise — use `canonical_asu`, the
-one-liner that recognizes the symmetry within a tolerance (with spglib) and then
-canonicalizes the result exactly:
+For *measured* input, use `canonicalize` (or its alias `canonical_asu`). It first puts the unit cell in a
+deterministic anonymous P1 frame, recognizes symmetry within a Cartesian
+tolerance with spglib, and canonicalizes the accepted model exactly:
 
 ```python
 from httk.atomistic import canonical_asu
@@ -71,27 +76,31 @@ from httk.core import load
 asu = canonical_asu(load("measured.cif"))   # noisy input, canonical answer
 ```
 
-It sweeps recognition over a few tolerance multiples and keeps the
-highest-symmetry model whose atoms still sit within the base tolerance of the
-input, so a boundary flip can be rescued without accepting extra noise. It always
-works from the coordinates, so it can raise a declared symmetry the geometry
-supports — or lower one it does not, at the derived tolerance.
+It sweeps tolerance multiples from loosest to tightest and accepts the first
+recognized model whose expanded atoms admit a bijective same-species fit within
+the base tolerance. It always works from coordinates, so it can raise a declared
+symmetry the geometry supports or lower one it does not support at that
+tolerance.
 
-By default (`lift=False`) it returns the canonical representative of the
-*recognized* symmetry: fully deterministic, all representational freedom removed,
-and cheap — the cost is essentially recognition. It does **not** hunt for
-pseudosymmetry above what recognition found. Pass `lift=True` to additionally run
-the exact upward search for higher symmetry the recognition missed; that is exact
-too but can be slow — minutes and beyond for low-symmetry, many-atom cells. Use
-the default for bulk sweeps over many structures; use `lift=True` when you are
-specifically hunting the maximal (pseudo)symmetry of one crystal.
+The default returns the canonical representative of the *recognized* symmetry.
+Its exact terminal removes the tabulated representational freedom. A non-rational
+metric whose Cartesian factor needs unsupported nested radicals can retain its
+input global rotation, as detailed in {doc}`canonicalization`. Use
+`search_supergroups` explicitly for higher symmetry that recognition might have missed;
+that exploration can take minutes or longer on low-symmetry, many-atom cells.
 
-Only the recognition step is floating-point: which symmetry is *accepted* near a
-tolerance boundary can vary across platforms or spglib builds, but the exact
-canonicalization erases spglib's representational freedom, so *how* an accepted
-symmetry is represented never does. Free-parameter values are least-squares fits
-of the measured coordinates: two noisy measurements of the same crystal reach the
-same Wyckoff choices but slightly different rational parameter values.
+The anonymous geometry is fixed before a final chemical tie is resolved. Use
+`canonical_asu_protostructure_assignments` to retain every tied assignment of the
+original species to that geometry. The explicit
+`canonical_asu_protostructure` name retains its experimental call contract and the same scalar convention.
+`canonical_asu_legacy` selects the earlier metric-first convention.
+
+Only recognition and its fit test use floating point. Free Wyckoff parameters
+come from exact row-Hermite chart projection of the recognized coordinates, not
+from a metric least-squares fit. Boundary decisions can still vary with the
+floating-point platform or spglib build. See {doc}`canonicalization` for the
+numbered wrapper and terminal algorithms, exact ordering keys, finite bounds,
+table hashes, and tested spglib version.
 
 ## From the command line
 
@@ -106,14 +115,12 @@ $ httk symmetry canonicalize --exact --out-dir canonical/ *.cif  # save a batch 
 $ httk symmetry representations --target 166 nacl.cif      # list distinct forms in a related group
 ```
 
-`canonicalize` defaults to the tolerant `canonical_asu` path (`--lift` searches
-upward for higher pseudosymmetry); `--exact` runs the exact `canonicalize` on
-input that already carries declared symmetry. Both keep the recognized group by
-default (preserving chirality); `--normalize-chirality` maps an enantiomorphic pair
-to its lower-numbered member. `rerepresent --target N` re-expresses
-one crystal in a reachable group. Every subcommand accepts `--tolerance X` (a
-Cartesian distance) and reports operator errors — a missing spglib, an unrelated
-target — to stderr with a nonzero exit.
+`canonicalize` defaults to recognition from geometry. `--symmetry declared`
+(or `--exact`) uses the declared ASU without recognition or upward search.
+`--timeout SECONDS` sets a cooperative limit; `--timeout none` disables it.
+Use `httk symmetry search-supergroups FILE --timeout 30 --max-states 1000` for
+explicit exploration. An incomplete search reports its reasons, exits nonzero,
+and cannot be saved as a canonical result.
 
 The full guide, {doc}`details/asu`, covers what an asymmetric unit holds,
 arbitrary and untabulated settings, the exactness contract of expansion,
