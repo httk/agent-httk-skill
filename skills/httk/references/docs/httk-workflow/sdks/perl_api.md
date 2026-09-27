@@ -1,9 +1,9 @@
-# Native Perl runner API
+# Perl runner API
 
 *For authors writing a workflow runner in Perl.* The Perl SDK is the same
 authoring surface as the {doc}`Python <../runtime_helpers>`, {doc}`Bash
-<native_bash_api>`, {doc}`C <native_c_api>`, {doc}`Fortran
-<native_fortran_api>`, and {doc}`Rust <native_rust_api>` ones. It is a pure-core
+<bash_api>`, {doc}`C <c_api>`, {doc}`Fortran
+<fortran_api>`, and {doc}`Rust <rust_api>` ones. It is a pure-core
 Perl **bridge client**: every bridge-backed `Attempt` method invokes
 `$HTTK_WORKFLOW_PYTHON -m httk.workflow._shell_bridge <verb> …` without a
 shell, so a Perl runner publishes the same protocol bytes. Only `--describe` is
@@ -50,9 +50,9 @@ trailing newline:
 ```
 
 `HTTK_WORKFLOW_DESCRIBE=1` has the same effect. Managers and the describe
-helper export `HTTK_WORKFLOW_PERL_API` as the installed `native/perl` directory;
+helper export `HTTK_WORKFLOW_PERL_API` as the installed `languages/perl` directory;
 use that environment variable in `use lib` so published and transferred
-single-file runners find the SDK (it equals `$HTTK_WORKFLOW_NATIVE_API/perl`).
+single-file runners find the SDK (it equals `$HTTK_WORKFLOW_LANGUAGES_DIR/perl`).
 Set it yourself to run a runner by hand. The runner is interpreted; the module is one
 `HttkWorkflow.pm` file and has no CPAN dependencies.
 

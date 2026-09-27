@@ -127,14 +127,14 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   *parameters* are opaque knobs (`--parameter k=v`, `Attempt.parameter()`).
 - SDK: `Runner`/`Attempt` for authoring runners (`docs snapshot:
   runtime_helpers.md`; Bash, C, Fortran, Rust, Perl, Ada, C++, and Java in
-  `docs/httk-workflow/sdks/native_*_api.md` — bridge
+  `docs/httk-workflow/sdks/*_api.md` — bridge
   clients with identical semantics); `Attempt.call()` runs another workflow
   as a child job (`composing_workflows.md`); `Workspace`, `new_jobs()` streaming job
   creation; `scaffold_job()` builds a payload without submitting; `collect()` yields `CollectedJob` (outputs, provenance `Run`,
   products); `job_records()` the mechanical readout.
-- **Workflow languages** (`workflow_languages.md`): CWL, Python Workflow
+- **Workflow compat formats** (`workflow_compat.md`): CWL, Python Workflow
   Definition, jobflow/atomate2 Makers (DAG-parallel as child jobs), and
-  converted httk v1 template packages run via a manifest `language =` key or
+  converted httk v1 template packages run via a manifest `format =` key or
   `job new --format LANG` on a bare document. Finished v1 trees are harvested
   with `httk workflow v1 collect` (the only supported v1 surface).
 - Provenance: `run_record(job_record)` → `httk.core.Run`; collect assembles

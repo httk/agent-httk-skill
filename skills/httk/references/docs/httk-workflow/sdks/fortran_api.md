@@ -1,10 +1,10 @@
-# Native modern-Fortran runner API
+# Modern-Fortran runner API
 
 *For authors writing a workflow runner in Fortran.* The Fortran SDK is the same
 authoring surface as the {doc}`Python <../runtime_helpers>`, {doc}`Bash
-<native_bash_api>`, and {doc}`C <native_c_api>` ones. It adds **no new bridge
-protocol**: it is `iso_c_binding` bindings over the native C library
-(`native/c/httk_workflow.{h,c}`) plus one idiomatic Fortran module, so the C
+<bash_api>`, and {doc}`C <c_api>` ones. It adds **no new bridge
+protocol**: it is `iso_c_binding` bindings over the C library
+(`languages/c/httk_workflow.{h,c}`) plus one idiomatic Fortran module, so the C
 `httk_workflow_main` still owns registration, dispatch, and the process exit
 status, and every verb still execs `$HTTK_WORKFLOW_PYTHON -m
 httk.workflow._shell_bridge <verb> …`. A Fortran runner therefore publishes the
@@ -13,7 +13,7 @@ same bytes as a Python, Bash, or C runner for the same campaign. Only the
 table in {doc}`sdk_parity`; the function-by-function Fortran mapping is the table
 below.
 
-The SDK is one module source, `native/fortran/httk_workflow.f90`, packaged under
+The SDK is one module source, `languages/fortran/httk_workflow.f90`, packaged under
 `httk.workflow`. It is modern Fortran (2008), warning-clean under `gfortran
 -std=f2008 -Wall -Wextra -Werror`, with no dependency beyond `iso_c_binding` and
 the C SDK it wraps. It is designed to be **compiled beside a runner** together
@@ -61,8 +61,8 @@ Fortran standard flag is not valid for C, and the C source is compiled with a C
 compiler, then linked into the Fortran build):
 
 ```console
-cc       -std=c99   -c .../httk/workflow/native/c/httk_workflow.c -o httk_workflow_c.o
-gfortran -std=f2008    .../httk/workflow/native/fortran/httk_workflow.f90 \
+cc       -std=c99   -c .../httk/workflow/languages/c/httk_workflow.c -o httk_workflow_c.o
+gfortran -std=f2008    .../httk/workflow/languages/fortran/httk_workflow.f90 \
          runner.f90 httk_workflow_c.o -o runner
 ```
 
@@ -72,12 +72,12 @@ that starts from a runner file of your own is resolved the same way whatever
 language wrote it.
 
 From a workflow package, build against the installed SDK through
-`HTTK_WORKFLOW_NATIVE_API`, which `[workflow.build]` commands and attempts both
+`HTTK_WORKFLOW_LANGUAGES_DIR`, which `[workflow.build]` commands and attempts both
 see:
 
 ```console
-cc       -std=c99   -c "$HTTK_WORKFLOW_NATIVE_API/c/httk_workflow.c" -o httk_workflow_c.o
-gfortran -std=f2008    "$HTTK_WORKFLOW_NATIVE_API/fortran/httk_workflow.f90" \
+cc       -std=c99   -c "$HTTK_WORKFLOW_LANGUAGES_DIR/c/httk_workflow.c" -o httk_workflow_c.o
+gfortran -std=f2008    "$HTTK_WORKFLOW_LANGUAGES_DIR/fortran/httk_workflow.f90" \
          runner.f90 httk_workflow_c.o -o runner
 ```
 
@@ -153,7 +153,7 @@ frees every C allocation exactly once:
   deferred-length string *can* hold meaningful trailing spaces, and they will not
   round-trip through this SDK. A value whose trailing whitespace is significant
   (a rare case for the bridge's tokens and paths) must be passed through the
-  {doc}`C <native_c_api>` SDK instead, which copies bytes verbatim.
+  {doc}`C <c_api>` SDK instead, which copies bytes verbatim.
 - **Reads out** are **subroutines** with a `character(len=:), allocatable,
   intent(out)` result argument — deliberately not functions. The C side returns a
   freshly `malloc`'d string; the module copies it into the argument and calls the
@@ -182,7 +182,7 @@ body does not inspect, the frequent publish-and-move-on case.
 
 Each Fortran procedure is one C function, which is one bridge subcommand — the
 same subcommand the paired Bash function calls — so this table's C column is the
-{doc}`native_c_api` row this SDK realizes, and through it the {doc}`sdk_parity`
+{doc}`c_api` row this SDK realizes, and through it the {doc}`sdk_parity`
 row. `args`/`files`/`assignments` are optional `character(len=*)` arrays;
 `status` is the optional bridge-status out-argument; `fallback` is an optional
 default. **Reads are subroutines** (marked *`sub`*): the string arrives in the

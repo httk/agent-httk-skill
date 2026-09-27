@@ -1,23 +1,23 @@
-# Native C++ runner API
+# C++ runner API
 
 *For authors writing a workflow runner in C++17.* The C++ SDK is one
-header-only RAII wrapper over the native C SDK in `native/c/`. It does not
+header-only RAII wrapper over the C SDK in `languages/c/`. It does not
 reimplement the bridge protocol: every verb reaches
 `$HTTK_WORKFLOW_PYTHON -m httk.workflow._shell_bridge`, while only
 `--describe` is native. The C library owns registration, dispatch, and process
 exit status, so C++ runners publish the same protocol bytes as C, Bash,
 Fortran, Ada, Rust, Perl, and Python runners.
 
-The header is `native/cpp/httk_workflow.hpp`. Compile the C source separately,
+The header is `languages/cpp/httk_workflow.hpp`. Compile the C source separately,
 then compile and link the C++ runner with C++17:
 
 ```console
-cc -std=c99 -Wall -Wextra -c .../native/c/httk_workflow.c -o httk_workflow_c.o
-c++ -std=c++17 -Wall -Wextra -I.../native/cpp \
+cc -std=c99 -Wall -Wextra -c .../languages/c/httk_workflow.c -o httk_workflow_c.o
+c++ -std=c++17 -Wall -Wextra -I.../languages/cpp \
   -o runner runner.cpp httk_workflow_c.o
 ```
 
-From a workflow package, replace `.../native` with `"$HTTK_WORKFLOW_NATIVE_API"`,
+From a workflow package, replace `.../languages` with `"$HTTK_WORKFLOW_LANGUAGES_DIR"`,
 the installed SDK directory that `[workflow.build]` commands and attempts both
 see.
 

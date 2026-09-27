@@ -1,7 +1,7 @@
-# Native Ada runner API
+# Ada runner API
 
 *For authors writing a workflow runner in Ada 2012.* The Ada SDK is a thin
-`Interfaces.C` binding over the native C SDK in `native/c/`. It does not
+`Interfaces.C` binding over the C SDK in `languages/c/`. It does not
 reimplement the bridge protocol: every verb reaches
 `$HTTK_WORKFLOW_PYTHON -m httk.workflow._shell_bridge`, while only
 `--describe` is native. The C library owns registration, dispatch, and process
@@ -9,17 +9,17 @@ exit status, so Ada runners publish the same protocol bytes as C, Bash,
 Fortran, and Python runners.
 
 The package is `httk_workflow.ads` plus `httk_workflow.adb` under
-`native/ada/`. It uses only Ada 2012 standard packages and GNAT's normal
+`languages/ada/`. It uses only Ada 2012 standard packages and GNAT's normal
 compiler/runtime. Build the C source separately, then link it through
 `gnatmake`:
 
 ```console
-cc -std=c99 -c .../native/c/httk_workflow.c -o httk_workflow_c.o
-gnatmake -gnat2012 -gnatwa -gnatwe -I.../native/ada \
+cc -std=c99 -c .../languages/c/httk_workflow.c -o httk_workflow_c.o
+gnatmake -gnat2012 -gnatwa -gnatwe -I.../languages/ada \
   -o runner runner.adb -largs httk_workflow_c.o
 ```
 
-From a workflow package, replace `.../native` with `"$HTTK_WORKFLOW_NATIVE_API"`,
+From a workflow package, replace `.../languages` with `"$HTTK_WORKFLOW_LANGUAGES_DIR"`,
 the installed SDK directory that `[workflow.build]` commands and attempts both
 see.
 

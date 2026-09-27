@@ -63,8 +63,8 @@ are merged in only after it returns.
 
 A compiled package also declares `[workflow.build]` (sources-only digests;
 `httk workflow build` compiles and registers a binary per machine — managers
-never compile). Build commands see `$HTTK_WORKFLOW_NATIVE_API`, the installed
-native SDK directory (`bash`, `c`, `cpp`, `fortran`, `rust`, `ada`, `java`, `perl`
+never compile). Build commands see `$HTTK_WORKFLOW_LANGUAGES_DIR`, the installed
+language SDK directory (`bash`, `c`, `cpp`, `fortran`, `rust`, `ada`, `java`, `perl`
 subdirectories).
 
 ## Definition vs declaration URI

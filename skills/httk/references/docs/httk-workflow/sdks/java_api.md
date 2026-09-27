@@ -1,7 +1,7 @@
-# Native Java runner API
+# Java runner API
 
 The Java SDK is a standalone, `java.base`-only bridge client. It is one source
-file, `native/java/HttkWorkflow.java`, with nested `Runner`, `Attempt`,
+file, `languages/java/HttkWorkflow.java`, with nested `Runner`, `Attempt`,
 `BridgeError`, and `Gather` types. Every bridge-backed verb uses
 `$HTTK_WORKFLOW_PYTHON -m httk.workflow._shell_bridge` through
 `ProcessBuilder`; only `--describe` is native. It needs no JNI, C linkage,
@@ -40,11 +40,11 @@ javac --release 17 -Werror -Xlint:all -d classes HttkWorkflow.java Relax.java
 ```
 
 From a workflow package, compile the installed SDK source through
-`HTTK_WORKFLOW_NATIVE_API`, which `[workflow.build]` commands and attempts both
+`HTTK_WORKFLOW_LANGUAGES_DIR`, which `[workflow.build]` commands and attempts both
 see:
 
 ```console
-javac --release 17 -Werror -Xlint:all -d classes "$HTTK_WORKFLOW_NATIVE_API/java/HttkWorkflow.java" Relax.java
+javac --release 17 -Werror -Xlint:all -d classes "$HTTK_WORKFLOW_LANGUAGES_DIR/java/HttkWorkflow.java" Relax.java
 ```
 
 The `vasp-relax-java` package of

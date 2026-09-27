@@ -1,19 +1,21 @@
-# Workflow-language runner realizations
+# Compatibility with other workflow systems
 
 *For workflows written as CWL, PWD, jobflow Maker documents, or httk v1 task
 templates.*
 
-The language integrations are runner realizations, not import commands. A
-document or template is resolved into an ordinary job by `job new`; the job is
-claimed, retried, checkpointed, journalled, and collected by the normal
-workflow machinery.
+The integrations with other workflow systems live in `httk.workflow.compat`.
+They are runner realizations, not import commands. A document or template is
+resolved into an ordinary job by `job new`; the job is claimed, retried,
+checkpointed, journalled, and collected by the normal workflow machinery. Each
+realization is selected by a *format* name: `cwl`, `pwd`, `jobflow`, or
+`httk-v1`.
 
-| Language | Bare document or package form | Installed runner |
+| Format | Bare document or package form | Installed runner |
 | --- | --- | --- |
-| CWL | `job new --workspace WS --from-runner flow.cwl` | `pkg:httk.workflow.languages.cwl/cwl_runner.py` |
-| PWD | `job new --workspace WS --from-runner graph.json` | `pkg:httk.workflow.languages.pwd/pwd_runner.py` |
-| jobflow | `job new --workspace WS --from-runner maker.json`, or a package with `language = "jobflow"` | `pkg:httk.workflow.languages.jobflow/jobflow_runner.py` |
-| httk-v1 | a package with `language = "httk-v1"` | `pkg:httk.workflow.languages.httk_v1/v1_runner.py` through the ordinary `path` runner |
+| CWL | `job new --workspace WS --from-runner flow.cwl` | `pkg:httk.workflow.compat.cwl/cwl_runner.py` |
+| PWD | `job new --workspace WS --from-runner graph.json` | `pkg:httk.workflow.compat.pwd/pwd_runner.py` |
+| jobflow | `job new --workspace WS --from-runner maker.json`, or a package with `format = "jobflow"` | `pkg:httk.workflow.compat.jobflow/jobflow_runner.py` |
+| httk-v1 | a package with `format = "httk-v1"` | `pkg:httk.workflow.compat.v1/v1_runner.py` through the ordinary `path` runner |
 
 The CWL realization needs `httk-workflow[cwl]` when the document is prepared.
 The normalized plan is carried by the job, so the machine executing the job
@@ -25,21 +27,21 @@ The machine that runs the job needs `httk-workflow[jobflow]`; use
 Maker module named by the manifest or document must be importable in that
 runner environment. This is the reverse of CWL's parser placement.
 
-## Language packages
+## Format packages
 
-A package selects a language in `[workflow.runner]`. The language supplies its
-steps, instantiate behavior, runner, workdir contract, and default
-collector. A package may override the default with `[workflow.collect]`.
-Language inputs are consumed by that realization, so `destination` is forbidden
-and `[workflow.instantiate]` is implied and forbidden. The optional `port` key
-maps a package input or output name to a document or language port; omitted
-ports use the package name. Statically known ports are checked against the
-document and duplicates are errors.
+A package selects a format with the `format` key of `[workflow.runner]`. The
+format's realization supplies its steps, instantiate behavior, runner, workdir
+contract, and default collector. A package may override the default with
+`[workflow.collect]`. Inputs are consumed by that realization, so
+`destination` is forbidden and `[workflow.instantiate]` is implied and
+forbidden. The optional `port` key maps a package input or output name to a
+document or realization port; omitted ports use the package name. Statically
+known ports are checked against the document and duplicates are errors.
 
-Language registrations expose a `collector` field and a
-`has_default_collector` flag. For languages with defaults, package resolution
-uses `httk.workflow.languages.<mod>:collect`; CWL, PWD, and jobflow set the
-flag true, while httk-v1 sets it false.
+Registrations expose a `collect` function and a `has_default_collector` flag.
+For formats with defaults, package resolution uses that `collect` function of
+the realization's `httk.workflow.compat` subpackage; CWL, PWD, and jobflow set
+the flag true, while httk-v1 sets it false.
 
 ### CWL package
 
@@ -50,7 +52,7 @@ This is the same shape used by the package fixtures:
 name = "example.cwl"
 
 [workflow.runner]
-language = "cwl"
+format = "cwl"
 document = "echo.cwl"
 
 [workflow.inputs.message]
@@ -79,7 +81,7 @@ additional import roots, and `allowed_modules` is a module-prefix allowlist:
 name = "example.pwd"
 
 [workflow.runner]
-language = "pwd"
+format = "pwd"
 document = "workflow.json"
 modules = ["module.py"]
 module_path = ["."]
@@ -114,7 +116,7 @@ form constructs the Maker with `Class(**parameters)`:
 name = "example.jobflow"
 
 [workflow.runner]
-language = "jobflow"
+format = "jobflow"
 maker = "atomate2.vasp.flows.core:DoubleRelaxMaker"
 
 [workflow.parameters.name]
@@ -140,7 +142,7 @@ a relative JSON member instead:
 
 ```toml
 [workflow.runner]
-language = "jobflow"
+format = "jobflow"
 document = "maker.json"
 ```
 
@@ -197,7 +199,7 @@ The v1 form has no document member and uses the ordinary manager:
 name = "example.v1"
 
 [workflow.runner]
-language = "httk-v1"
+format = "httk-v1"
 taskset = "vasp"
 attempts = 10
 
@@ -228,12 +230,13 @@ httk job new --workspace WS --from-runner workflow.json \
 httk job new --workspace WS --from-runner maker.json
 ```
 
-Use the generic `--format LANG` option for any bare document when matching by
-path is not appropriate. `cwl`, `pwd`, and `jobflow` select their corresponding
-bare document readers. A manifest package directory and a registered workflow
-id reject `--format` because their language is already declared.
+Use the generic `--format FORMAT` option for any bare document when matching
+by path is not appropriate. `cwl`, `pwd`, and `jobflow` select their
+corresponding bare document readers. A manifest package directory and a
+registered workflow id reject `--format` because their format is already
+declared.
 
-The resolver synthesizes an anonymous workflow with id `<language>.<stem>`.
+The resolver synthesizes an anonymous workflow with id `<format>.<stem>`.
 Document input ports become hook-consumed inputs; document outputs become
 `records`-typed outputs and the resolver generates the declaration. A bare
 jobflow Maker document exposes only its `output` result, so inputs must be
@@ -245,18 +248,18 @@ values.
 shared: the workflow is resolved and prepared once, then instantiated once per
 job. For httk-v1, the source package is snapshotted at preparation, so edits
 made during a campaign cannot leak into later jobs. Symlinks in a v1 package
-are rejected. Language-produced parameters are reserved; a caller collision is
-an error. `publish=` is ignored for language workflows because their
+are rejected. Realization-produced parameters are reserved; a caller collision
+is an error. `publish=` is ignored for these workflows because their
 realizations supply installed runners rather than copying them to the workspace
 runner store.
 
 ## Collection
 
-The collector chooses a registered provider's collector first. A language
-job without a provider falls back through its job `workflow_language` parameter
-to the language default:
+The collector chooses a registered provider's collector first. A job of one of
+these formats without a provider falls back through its job
+`workflow_language` parameter to the format's default:
 
-| Language | Default output document | Default behavior |
+| Format | Default output document | Default behavior |
 | --- | --- | --- |
 | CWL | `cwl-outputs.json` | map ports to declared roles; single `File` values become `files` entries and lists remain `DataRecord` values |
 | PWD | `pwd-outputs.json` | map ports to declared roles and create `DataRecord` values |
@@ -265,10 +268,10 @@ to the language default:
 
 The registered provider's custom hook is authoritative. Such a package records
 `workflow_collect = "package"` in the job; a provider-less collection
-degrades with a registration hint rather than silently running a language
+degrades with a registration hint rather than silently running a format
 default. The `allow_job_collector` pinned-tree fallback is attempted only
-after the language fallback and only when its digest and manifest match the
-job. A failed language or hook collector degrades that job and does not
+after the format fallback and only when its digest and manifest match the
+job. A failed format or hook collector degrades that job and does not
 stop collection of its siblings.
 
 The default CWL/PWD/jobflow collectors read the output JSON from the workdir or
@@ -321,13 +324,14 @@ Unsupported hints are dropped with a warning. Failures include
 
 ## Python API and registry
 
-The language registry is available through
-`httk.workflow.languages.available_languages()`, `language(name)`,
+The format registry is available through
+`httk.workflow.compat.available_languages()`, `language(name)`,
 `match_document(path)`, `runner_path(package, name)`, and
-`runner_reference(package, name)`. The language-specific loaders remain
-available at `httk.workflow.languages.cwl.load_cwl_plan` and
-`httk.workflow.languages.pwd.load_pwd_document`. Jobflow exposes
-`httk.workflow.languages.jobflow.document_from_maker` for creating a document
+`runner_reference(package, name)`; `language(name)` takes a format name. The
+format-specific loaders remain
+available at `httk.workflow.compat.cwl.load_cwl_plan` and
+`httk.workflow.compat.pwd.load_pwd_document`. Jobflow exposes
+`httk.workflow.compat.jobflow.document_from_maker` for creating a document
 from an MSONable Maker.
 
 ```python

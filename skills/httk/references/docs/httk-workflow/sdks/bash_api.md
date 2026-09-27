@@ -1,4 +1,4 @@
-# Native Bash runner API
+# Bash runner API
 
 *For authors writing a workflow runner in Bash.* The complete authoring surface,
 each function beside its Python equivalent, is the table in {doc}`sdk_parity`,

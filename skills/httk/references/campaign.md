@@ -308,7 +308,7 @@ serve them over OPTIMADE with httk-serve.
 
 - **Single-file runner**: author with the `Runner`/`Attempt` SDK
   (`docs/httk-workflow/runtime_helpers.md`) or plain Bash
-  (`sdks/native_bash_api.md`); `job new --workflow ./my_runner.py` publishes and
+  (`sdks/bash_api.md`); `job new --workflow ./my_runner.py` publishes and
   pins it like a packaged one.
 - **Workflow package directory**: a directory with `httk_workflow.toml`
   declaring `[workflow] name` (plus optional `requires`, minimum distribution
@@ -347,7 +347,7 @@ serve them over OPTIMADE with httk-serve.
   `--format cwl|pwd|jobflow|httk-v1`) runs CWL, Python Workflow Definition,
   jobflow/atomate2 (`maker = "atomate2…:RelaxMaker"`, with real DAG
   parallelism as child jobs), or converted httk v1 template packages without
-  rewriting (`docs/httk-workflow/workflow_languages.md`).
+  rewriting (`docs/httk-workflow/workflow_compat.md`).
 - **Finished v1 trees**: `httk workflow v1 collect --workflow-dir PKG ROOT...`
   harvests already-computed v1 runs (`docs/httk-workflow/v1_compatibility.md`);
   this is the only v1 surface to recommend.

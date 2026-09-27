@@ -1,9 +1,9 @@
-# Native Rust runner API
+# Rust runner API
 
 *For authors writing a workflow runner in Rust.* The Rust SDK is the same
 authoring surface as the {doc}`Python <../runtime_helpers>`, {doc}`Bash
-<native_bash_api>`, {doc}`C <native_c_api>`, and {doc}`Fortran
-<native_fortran_api>` ones, in idiomatic, dependency-free Rust. Like the Bash and
+<bash_api>`, {doc}`C <c_api>`, and {doc}`Fortran
+<fortran_api>` ones, in idiomatic, dependency-free Rust. Like the Bash and
 C libraries it is a **bridge client**: every verb spawns `$HTTK_WORKFLOW_PYTHON
 -m httk.workflow._shell_bridge <verb> …`, which drives the same `Attempt` object
 the Python SDK exposes, so a Rust runner and a Python, Bash, C, or Fortran runner
@@ -15,7 +15,7 @@ Unlike the Fortran SDK — which is `iso_c_binding` bindings *over* the C librar
 this crate is **not** an FFI layer over `httk_workflow.c`. It is a self-contained
 reimplementation of the same thin pattern in safe Rust: `#![forbid(unsafe_code)]`,
 **zero crates.io dependencies** (std only), so `cargo build --offline` and plain
-`rustc` work with no network at all. The crate is `native/rust/`
+`rustc` work with no network at all. The crate is `languages/rust/`
 (`Cargo.toml` and one `src/lib.rs`), packaged under `httk.workflow`, designed to
 be **path-depended** from a runner crate or **vendored** into one.
 
@@ -50,7 +50,7 @@ dependency, so nothing is fetched:
 
 ```toml
 [dependencies]
-httk_workflow = { path = ".../httk/workflow/native/rust" }
+httk_workflow = { path = ".../httk/workflow/languages/rust" }
 ```
 
 ```console
@@ -64,10 +64,10 @@ language wrote it.
 
 A Cargo path cannot name an environment variable, so a workflow package depends
 on `httk_workflow = { path = "target/sdk" }` and its `[workflow.build]` command
-first copies the installed SDK crate there from `HTTK_WORKFLOW_NATIVE_API`:
+first copies the installed SDK crate there from `HTTK_WORKFLOW_LANGUAGES_DIR`:
 
 ```console
-mkdir -p target && cp -R "$HTTK_WORKFLOW_NATIVE_API/rust" target/sdk && cargo build --release --offline
+mkdir -p target && cp -R "$HTTK_WORKFLOW_LANGUAGES_DIR/rust" target/sdk && cargo build --release --offline
 ```
 
 Its manifest then runs the registered binary (copied out of `target/release`) directly, with no `run` bridge
@@ -163,7 +163,7 @@ streaming verb streams, and it returns the bridge exit status.
 ## The Rust method table
 
 Each method is one bridge subcommand — the same subcommand the paired Bash
-function calls — so this table's C column is the {doc}`native_c_api` row this SDK
+function calls — so this table's C column is the {doc}`c_api` row this SDK
 realizes, and through it the {doc}`sdk_parity` row. `args`/`files`/`assignments`
 are `&[&str]` option arrays; a `fallback` is an `Option<&str>` default.
 

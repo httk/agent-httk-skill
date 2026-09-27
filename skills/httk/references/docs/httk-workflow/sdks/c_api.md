@@ -1,7 +1,7 @@
-# Native C runner API
+# C runner API
 
 *For authors writing a workflow runner in C.* The C SDK is the same authoring
-surface as the {doc}`Python <../runtime_helpers>` and {doc}`Bash <native_bash_api>`
+surface as the {doc}`Python <../runtime_helpers>` and {doc}`Bash <bash_api>`
 ones, in a clean C-idiomatic ABI. Like the Bash library it is a **bridge
 client**: every verb execs `$HTTK_WORKFLOW_PYTHON -m httk.workflow._shell_bridge
 <verb> …`, which drives the same `Attempt` object the Python SDK exposes, so a C
@@ -11,7 +11,7 @@ are the table in {doc}`sdk_parity`; the function-by-function C mapping is the
 table below.
 
 The SDK is one header/source pair, `httk_workflow.h` and `httk_workflow.c`,
-packaged under `httk.workflow` at `native/c/`. It is C99 with no dependency
+packaged under `httk.workflow` at `languages/c/`. It is C99 with no dependency
 beyond libc and POSIX, and it is designed to be **vendored** into a runner's own
 tree or **compiled directly** beside it. It is also the foundation the later
 Fortran bindings build on: the exported symbols are all prefixed
@@ -44,8 +44,8 @@ Build it against the packaged SDK:
 
 ```console
 cc -std=c99 -Wall -Wextra runner.c \
-   .../httk/workflow/native/c/httk_workflow.c \
-   -I.../httk/workflow/native/c -o runner
+   .../httk/workflow/languages/c/httk_workflow.c \
+   -I.../httk/workflow/languages/c -o runner
 ```
 
 The compiled binary is the runner file a job references. It is executable, so the
@@ -54,12 +54,12 @@ that starts from a runner file of your own is resolved the same way whatever
 language wrote it.
 
 From a workflow package, build against the installed SDK through
-`HTTK_WORKFLOW_NATIVE_API`, which `[workflow.build]` commands and attempts both
+`HTTK_WORKFLOW_LANGUAGES_DIR`, which `[workflow.build]` commands and attempts both
 see:
 
 ```console
-cc -std=c99 -Wall -Wextra -I"$HTTK_WORKFLOW_NATIVE_API/c" runner.c \
-   "$HTTK_WORKFLOW_NATIVE_API/c/httk_workflow.c" -o runner
+cc -std=c99 -Wall -Wextra -I"$HTTK_WORKFLOW_LANGUAGES_DIR/c" runner.c \
+   "$HTTK_WORKFLOW_LANGUAGES_DIR/c/httk_workflow.c" -o runner
 ```
 
 Its manifest then runs the registered binary directly, with no `run` bridge

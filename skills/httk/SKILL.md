@@ -60,7 +60,7 @@ elsewhere.
   `references/architecture.md` (guiding ideas, backend/view pattern, exact
   numerics, registries).
 - **legacy httk v1**: out of scope except the v2 compatibility layer —
-  converted v1 template packages run as `language = "httk-v1"` workflow
+  converted v1 template packages run as `format = "httk-v1"` workflow
   packages, `httk workflow v1 collect` harvests finished v1 trees, and
   `httk project import-v1` / `httk workflow remote import-v1` migrate v1
   projects and computer bundles. Do not recommend v1 APIs.
