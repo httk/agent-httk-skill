@@ -50,17 +50,21 @@ immediately, naming unmet requirements) and again at claim time inside the
 workspace — a manager whose environment doesn't meet it just leaves the job
 for another manager, so a runner needs no import guard.
 
-`[workflow.runner]` is one of: an executable `entry` (default `run`); an
-argument-vector `command` for a compiled/JVM/interpreted program that needs
-no `run` bridge script, e.g. `command = ["{artifacts}/relax"]` or
+`[workflow.runner]` is one of: an executable `entry` (any executable package
+member; `run.py`/`run.sh` recommended, and then the package carries no plain
+`run` member); an argument-vector `command` for a compiled/JVM/interpreted
+program that needs no bridge script, e.g. `command = ["{artifacts}/relax"]` or
 `command = ["java", "-cp", "{artifacts}/classes", "Relax"]` (only `{package}`
 and `{artifacts}` placeholders are substituted, the manager appends job args);
-or a `language` realization (CWL, PWD, jobflow, httk-v1).
+or a `language` realization (CWL, PWD, jobflow, httk-v1). `[workflow.instantiate]`
+(Python or any `+x` executable) runs after required inputs are checked, sees
+only caller-supplied parameters, and declared parameter defaults (`context.defaults`)
+are merged in only after it returns.
 
 A compiled package also declares `[workflow.build]` (sources-only digests;
 `httk workflow build` compiles and registers a binary per machine — managers
 never compile). Build commands see `$HTTK_WORKFLOW_NATIVE_API`, the installed
-native SDK directory (`c`, `cpp`, `fortran`, `rust`, `ada`, `java`, `perl`
+native SDK directory (`bash`, `c`, `cpp`, `fortran`, `rust`, `ada`, `java`, `perl`
 subdirectories).
 
 ## Definition vs declaration URI

@@ -112,9 +112,10 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
 - **Workflows**: no VASP workflows are packaged in this module — the
   `vasp.relax`/`vasp.static`/`vasp.relax-static` packages live in the
   `workflows-vasp` repository (referenced by git URI or installed; see
-  `references/workflows.md`); `httk.workflow.vasp` still ships the Python
+  `references/workflows.md`); `httk.workflow.codes.vasp` still ships the Python
   primitives (inputs, remedies, collection) and Bash VASP API those runners
-  build on, for authoring your own. A single runner file
+  build on, for authoring your own — `httk.workflow.codes` is the per-code
+  collection future codes join. A single runner file
   (`--workflow ./my_runner.py`), or a **workflow package directory** with
   `httk_workflow.toml` (declared inputs/outputs/parameters/environment,
   instantiate/collect hooks as Python or any executable, any-language
