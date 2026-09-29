@@ -144,7 +144,13 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
 - Sealing (`docs/httk-workflow/sealing.md`): signed manifests over a job's,
   workspace's, or project's contents, detecting later tampering —
   `httk job seal|unseal`, `httk workspace seal|unseal`, `httk project
-  seal|unseal` (core-owned), `httk workflow seal verify`.
+  seal|unseal` (core-owned), `httk workflow seal verify`. A job seal lives
+  inside the job directory at `<payload>/.httk-job/seal.json`, so it travels
+  wherever the job directory goes (transfer, or `job eject`/`job adopt`).
+- `job eject JOB... DEST` / `job adopt DIR...` move a quiescent job (with any
+  bound children, as one directory) out of a workspace to a free-standing job
+  directory, and back into any workspace, without either side needing to be
+  registered.
 
 ## httk-analyse (`httk.analyse`) — analysis
 

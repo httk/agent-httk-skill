@@ -83,11 +83,12 @@ protocol state; the current attempt is selected by the manager's environment.
 | --- | --- |
 | `Runner::main`, `Runner::describe`, `Runner::add_step` | `httk_workflow_runner`, `httk_workflow_main`, `httk_workflow_describe` |
 | `Attempt::invoke`, `invoke_capture` | `httk_workflow_invoke` |
-| `Attempt::context`, `parameter`, `setting`, `environment` | corresponding read functions |
+| `Attempt::context`, `parent`, `parameter`, `setting`, `environment` | corresponding read functions |
+| `Attempt::stage_input` (`true` staged, `false` absent, throws `BridgeError` otherwise) | `httk_workflow_stage_input` |
 | `Attempt::state_get`, `state_set`, `state_delete`, `state_merge` | corresponding `httk_workflow_state_*` functions |
 | `Attempt::declaration`, `declare` | `httk_workflow_declaration`, `httk_workflow_declare` |
 | `Attempt::runlog_note`, `runlog_headline`, `runlog_append`, `log` | corresponding `httk_workflow_*` functions |
-| `Attempt::put`, `remove`, `spawn` | corresponding transactional/child C functions |
+| `Attempt::put`, `remove`, `spawn`, `call` | corresponding transactional/child C functions |
 | `Attempt::children`, `child` | `httk_workflow_children`, `httk_workflow_child` |
 | `Attempt::advance`, `gather`, `succeed`, `fail`, `retry`, `pause` | corresponding outcome C functions |
 | `Attempt::batch`, `job_prepare`, `workdir_apply` | corresponding C functions |
@@ -97,7 +98,12 @@ protocol state; the current attempt is selected by the manager's environment.
 Methods taking tail arguments use `Attempt::Arguments`, an alias for
 `std::vector<std::string>`, and pass a temporary NULL-terminated C array. An
 empty vector is passed as a C NULL pointer. Methods with a fallback have an
-overload with and without that fallback.
+overload with and without that fallback. `Attempt::parent()` and
+`Attempt::parent(field)` are `std::nullopt` when the job has no reachable parent,
+and `parent("workdir")` is `std::nullopt` for a parent that uses isolated
+workdirs. C++ runners do local file work with
+`std::filesystem` rather than the C SDK's `httk_copy_file`, `httk_file_exists`,
+and `httk_join_path` helpers.
 
 ## Strings, ownership, and absent reads
 
@@ -120,8 +126,8 @@ An allocated empty C string is an engaged optional with `value->empty() ==
 true`. A NULL answer with status `HTTK_WORKFLOW_ABSENT` (`1`) is `std::nullopt`.
 A refused read with status `HTTK_WORKFLOW_REFUSED` (`2`) throws
 `httk::workflow::BridgeError`; `error.status()` preserves the C status.
-`spawn`, which must produce a child key, also throws `BridgeError` for a
-refused or missing result. The other result-returning operations retain the
+`spawn` and `call`, which must produce a child key, also throw `BridgeError` for
+a refused or missing result. The other result-returning operations retain the
 optional result shape. Command verbs return the C bridge status directly;
 `Attempt::run` returns the supervised classification (`0`, `22`, `124`, or
 `125`) rather than throwing for the program's result.

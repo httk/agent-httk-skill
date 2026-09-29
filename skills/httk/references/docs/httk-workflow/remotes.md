@@ -71,7 +71,7 @@ The `NAME:WORKSPACE` spelling is a binding, not a filesystem path. Transfer a
 job into that workspace and run its manager there:
 
 ```console
-$ httk workflow transfer --job JOB default kappa:runs
+$ httk job transfer --job JOB default kappa:runs
 $ httk workflow run --workspace kappa:runs --count 4
 ```
 
@@ -82,7 +82,7 @@ and `environment.prelude`, exactly as if the command had been run on the
 login node. Fetch finished jobs back with the reverse transfer:
 
 ```console
-$ httk workflow transfer kappa:runs default
+$ httk job transfer kappa:runs default
 ```
 
 Names listed in `machine_names` are self-addressing: `login:runs` is treated as
@@ -95,6 +95,29 @@ same host through the adapter contract, create a distinct remote with the
 $ httk workflow remote add --template local local-tree
 $ httk workspace init --name scratch local-tree:/tmp/me/httk/scratch
 ```
+
+### Job trees travel together
+
+A child job spawned by another job travels with its parent. Transferring the
+parent moves its whole tree of spawned descendants, root first, with their
+placements kept, even when a `--state` or `--placement` filter would have
+matched only the parent. A child cannot be transferred on its own while its
+parent is still in the workspace, because a child may read its parent's files
+in place (see {doc}`composing_workflows`). Make one independent first when it
+really should leave alone:
+
+```console
+$ httk job detach CHILD
+$ httk job transfer --job CHILD default kappa:runs
+```
+
+A tree leaves only when nothing in it can start while it is moving: every
+member except the root must be paused or finished, and no member may still be
+waited on by a gather. A fetch of finished work therefore brings a campaign
+back whole once it is done, and skips it, with a warning naming the blocking
+jobs, while some child is still running. To move a tree that is still in flight,
+pause its unfinished children first. `--destination-placement` is refused for a
+tree, because the children record where their parent is.
 
 ### A mounted filesystem with a separate executor
 
@@ -139,7 +162,7 @@ command about it goes through the executor (`sigma:runs`), exactly as with an
 
 ```console
 $ httk workspace init --name runs sigma:/proj/x/users/me/httk/runs
-$ httk workflow transfer --job JOB default sigma:runs
+$ httk job transfer --job JOB default sigma:runs
 $ httk workflow run --workspace sigma:runs --count 4
 $ httk workspace status sigma:runs
 ```

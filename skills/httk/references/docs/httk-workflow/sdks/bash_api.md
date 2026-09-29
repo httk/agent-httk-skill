@@ -203,18 +203,53 @@ step composed lives in shell state, so the subshell costs a step nothing.
 | Call | What it returns |
 | --- | --- |
 | `httk_workflow_parameter NAME [DEFAULT]` | one member of the job's opaque `parameters` object |
+| `httk_workflow_parameter_items [-0\|--null] NAME [DEFAULT]` | the elements of one JSON-array parameter, one per line (NUL-terminated with `-0`); strings raw, other elements as compact JSON |
 | `httk_workflow_setting NAME [DEFAULT]` | one application setting: job parameter, `HTTK_*`, workspace setting, then the call default |
 | `httk_workflow_environment NAME [DEFAULT]` | one declared workflow environment value: job override, declared setting `HTTK_*`, workspace setting, declaration default, then the call default |
+| `httk_workflow_stage_input NAME DESTINATION [DEFAULT]` | copies the payload file parameter NAME names (DEFAULT is the payload-relative fallback, e.g. `files/POSCAR`) to DESTINATION in the workdir; 1 when the payload has no such file |
 | `httk_workflow_context [FIELD]` | the attempt context, or one field of it |
 | `httk_workflow_state_get NAME` | one key of the job's JSON state |
 | `httk_workflow_declaration NAME` | one workflow declaration: the observed document, else the declared one; 1 when neither exists |
 | `httk_workflow_children [--all\|--succeeded\|--failed]` | one tab-separated row per observed child |
 | `httk_workflow_child LABEL FIELD` | one field of one observed child |
+| `httk_workflow_parent [FIELD]` | the job that spawned this one, or one field of it; 1 when there is no reachable parent |
 | `$HTTK_WORKFLOW_STEP` | the step this attempt runs |
 | `$HTTK_WORKFLOW_WORKDIR`, `$HTTK_WORKFLOW_JOB_DIR`, `$HTTK_WORKFLOW_DATA_DIR` | absolute paths; the data directory is set only for a transactional job |
 | `$HTTK_WORKFLOW_DURABLE` | `1` on a storage-durable workspace, `0` otherwise |
 
 A step starts in its workdir, so ordinary relative paths are workdir paths.
+
+`httk_workflow_parameter` prints a string raw and any other value as compact
+JSON, so an array parameter such as `values = [1, 4, 9]` reads back as the one
+line `[1,4,9]`, which plain Bash cannot take apart. `httk_workflow_parameter_items`
+prints its elements instead, one per line, in the same spelling (a string element
+raw, anything else — a number, a nested array or object — as compact JSON), ready
+for `mapfile`:
+
+```bash
+mapfile -t values < <(httk_workflow_parameter_items values)
+wait $!    # a process substitution hides its exit status; wait recovers it for set -e
+for value in "${values[@]}"; do
+    ...
+done
+```
+
+A missing parameter without a default exits 1, as `httk_workflow_parameter` does;
+DEFAULT is parsed like a `--parameter` value, so `'[1, 4, 9]'` is an array. A
+value that is not an array — including an object — is refused with exit 2 rather
+than guessed at: an object has no one obvious line spelling (keys only?
+`key=value`, when keys may contain `=`?), so read an object parameter's members
+through a JSON tool such as `jq` or declare an array parameter instead. An empty
+array prints nothing. In line mode an element containing a newline is refused
+(exit 2), so the reader never sees one element as two; `-0`/`--null` terminates
+each element with a NUL instead and carries newlines intact:
+
+```bash
+mapfile -d '' -t labels < <(httk_workflow_parameter_items --null labels)
+wait $!
+```
+
+An element containing a NUL cannot be carried by either spelling and is refused.
 
 `httk_workflow_environment` only reads names declared by the workflow and
 returns exit status 1 for an undeclared or unresolved name without a default.
@@ -272,6 +307,25 @@ done < <(httk_workflow_children --succeeded)
 `payload`, `workdir`, `data`, or `data_generation`. The observation is empty
 unless this activation followed a gather, which is why `aggregate` above hands
 what it learned to `triage` through job state.
+
+`httk_workflow_parent` reads the other direction: the job that spawned this one.
+Without a field it prints the parent as one JSON object; `FIELD` is `job_id`,
+`job_key`, `placement`, `workspace_id`, `activation_id`, `spawn_id`, `payload`, or
+`workdir`, the last two as absolute paths. It exits 1 for a root job, for a child
+whose parent is not reachable in this workspace, and for `workdir` when the
+parent uses isolated workdirs; an unknown field is refused with 2. Assign the
+answer before using it, because a command substitution inside another
+command's arguments loses its exit status under `set -e`:
+
+```bash
+parent_workdir=$(httk_workflow_parent workdir)
+# -f: a replayed step finds the link already there. The INCAR sets
+# ICHARG = 11 and LCHARG = .FALSE., so VASP only reads through the link.
+ln -sfn "$parent_workdir/CHGCAR" CHGCAR
+```
+
+See the "Sharing files with children" section of {doc}`../composing_workflows`
+for when reading in place is the right choice and what keeps it safe.
 
 ## What a step publishes
 
@@ -430,9 +484,11 @@ EOF
 ```
 
 A batch stops at its first failing line, names that line on stderr, and reports
-its exit status. Blank lines and `#` comments are ignored, and a batch cannot
-contain another batch. There is no long-lived coprocess: a batch removes the
-interpreter starts that matter without a second process to keep alive and reap.
+its exit status. An absent `stage-input` (`httk_workflow_stage_input`) is a failing
+line too, so stage optional inputs outside a batch. Blank lines and `#` comments
+are ignored, and a batch cannot contain another batch. There is no long-lived
+coprocess: a batch removes the interpreter starts that matter without a second
+process to keep alive and reap.
 
 ## Exit codes
 
@@ -459,12 +515,12 @@ instead:
 
 | Status | Meaning |
 | --- | --- |
-| `22` | `httk_workflow_run` and `httk_vasp_run`: the program exited nonzero |
+| `22` | `httk_workflow_run`, and a code's run function such as *httk-workflow-vasp*'s `httk_vasp_run`: the program exited nonzero |
 | `124` | the program timed out and its process group was terminated |
 | `125` | a checker or a diagnostic stopped the program; also what the manager's launcher reports for a runner it could not start at all |
-| `20` | `httk_vasp_run` and `httk_vasp_diagnose`: a structured diagnostic stop |
-| `21` | `httk_vasp_run`: the calculation completed without converging |
-| `3` | `httk_vasp_remedy_plan`: the reviewed policy has no safe remaining action |
+| `20` | *httk-workflow-vasp*'s `httk_vasp_run` and `httk_vasp_diagnose`: a structured diagnostic stop |
+| `21` | *httk-workflow-vasp*'s `httk_vasp_run`: the calculation completed without converging |
+| `3` | *httk-workflow-vasp*'s `httk_vasp_remedy_plan`: the reviewed policy has no safe remaining action |
 
 ## Supervised commands
 
@@ -475,7 +531,8 @@ report it writes is authoritative. Without explicit `--stdout` or `--stderr`,
 the program's output is forwarded live, in arrival order, to the inherited
 stdout or stderr while only bounded tails are retained in the report. Explicit
 output paths remain authoritative instead of being duplicated to the inherited
-streams.
+streams. An explicit output file is truncated when the run starts, so a retry in a
+persistent workdir never inherits the previous run's output.
 
 A checker spec has format `httk-workflow-checker-spec`, format version 2, an
 `argv` string array, and optional `required` and `sources` fields. Each source
@@ -493,10 +550,12 @@ timestamped line to stderr, which the manager retains too. `httk_calc`,
 *httk* v1 conveniences: templates use `string.Template` and an explicit JSON
 values object, never `eval`.
 
-## VASP functions
+## Code Bash APIs
 
-The `httk_vasp_*` surface corresponds directly to functions in
-`httk.workflow.codes.vasp`:
+A simulation code's Bash API ships with its code-support distribution, not with
+*httk-workflow*; see {doc}`../code_support`. *httk-workflow-vasp*'s
+`httk_vasp_*` surface, for example, corresponds directly to functions in
+`httk.codes.vasp`:
 
 - `prepare`, `prepare_kpoints`, `prepare_potcar`, `get_tag`, `set_tag`, and
   `nbands`;

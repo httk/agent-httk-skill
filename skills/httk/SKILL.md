@@ -121,7 +121,7 @@ after that the short name resolves. See `references/workflows.md`.
 
 For a cluster campaign, configure the workspace's manager launcher first; use
 a remote only when transport to another machine is needed. For the full
-remote/HPC path (`kappa:runs` colon workspaces, `transfer`, `campaign`
+remote/HPC path (`kappa:runs` colon workspaces, `job transfer`, `campaign`
 partitioning, Python `new_jobs` streaming, `collect --into` a store), follow
 `references/campaign.md`.
 

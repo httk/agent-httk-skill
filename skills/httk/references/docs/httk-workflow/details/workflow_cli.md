@@ -23,7 +23,7 @@ in.
 httk workspace          init | list | default | move | forget | delete | status | managers | workflows | settings show | settings set | settings unset | workflow-prelude show | workflow-prelude set | workflow-prelude unset | policy show | policy set | fsck | gc | unlock | seal | unseal
 httk workflow runner     publish | describe
 httk workflow build      [--workspace WORKSPACE] TARGET...
-httk job                 new | submit | request | delete | seal | unseal | list | show | log | why | debug
+httk job                 new | submit | request | delete | seal | unseal | detach | eject | adopt | list | show | log | why | debug | transfer
 httk workflow list       [--json]
 httk workflow describe   TARGET [--json]
 httk workflow install    URI... [--json]
@@ -40,7 +40,7 @@ httk workflow config     show | set | unset | import-v1
 httk init | identity     (core-owned: per-user configuration and named operator identities)
 httk project             repair | manifest create | manifest verify | seal | unseal   (httk-workflow mounts these beside core init | show | import-v1)
 httk workflow remote     list | add | configure | check | import-v1 | show | remove
-httk workflow transfer   [OPTIONS] SRC DST      (plus the protocol spellings: receive | offer | retire)
+httk workflow transfer   receive | offer | retire      (hidden protocol only; see `job transfer` for the user-facing verb)
 ```
 
 ### Workspace selection
@@ -59,8 +59,8 @@ line speaks.
 
 Remote-capable workspace commands use the adapter; this includes status,
 settings, and `job request`. Most job commands remain local-only. Jobs are
-created in the local default workspace, then `transfer` moves them to a remote
-workspace for execution.
+created in the local default workspace, then `job transfer` moves them to a
+remote workspace for execution.
 
 `job request ACTION --workspace REMOTE:NAME JOB_ID ...` asks the owning machine for unsigned envelopes,
 signs those envelopes with the control-center identity selected by
@@ -157,21 +157,46 @@ httk workflow build [--workspace WORKSPACE] [--json] TARGET...
 httk workflow build [--workspace WORKSPACE] [--json] --list
 ```
 
-`TARGET` may be a workflow package directory, a workspace runner-store path,
-or a job reference whose runner is a workspace package. A package directory is
-published first, then its source tree is built and its artifacts are registered
-for the local platform tag. A store path or job reference builds the already
-published source tree. `--list` does no build and prints the workspace's
-registrations; `--json` emits machine-readable build or list records. Exit 0
-means the registration completed (or the list was read); malformed targets,
-probe/build failures, and missing artifacts are nonzero failures.
+`TARGET` may be a workflow package directory, a workflow reference, a
+workspace runner-store path, or a job reference whose runner is a workspace
+package. A workflow reference is resolved exactly as `job new --workflow`
+resolves it: a registered id or alias, an installed plugin workflow, an
+installed git workflow's short name, or a git URI (fetched and installed). A
+package directory, or the directory a workflow reference resolves to, is
+published first under the same digest-pinned store name a job of it pins, then
+its source tree is built and its artifacts are registered for the local
+platform tag. A store path or job reference builds the already published source
+tree.
+
+Targets are classified without guessing: a git URI is a workflow reference; a
+path spelling (absolute, `./`, `../`, or containing `/`) is a package directory
+(write `./NAME` for one in the current directory); a glob is a job reference;
+a bare name is a runner-store name when that store entry exists, then a
+workflow name, then a job reference.
+
+`--list` does no build and prints the workspace's registrations; `--json` emits
+machine-readable build or list records. Each build record names the `target`
+as written, and for a workflow reference also the resolved `workflow` id and
+`package` directory (both `null` otherwise), plus `status`: `registered`, or
+`nothing-to-build` for a workflow reference whose package has no
+`[workflow.build]` section, which exits 0. Exit 0 means every registration
+completed (or the list was read); malformed targets, unknown names, workflow
+references that are not directory packages, a package directory without
+`[workflow.build]`, probe/build failures, and missing artifacts are nonzero
+failures.
+
+A workflow reference or package directory whose manifest declares
+`[workflow.calls]` also builds every workflow it calls, transitively. Each is
+reported as its own row carrying `called_by` and `alias`, with `status`
+`failed` and an `error` when a called workflow cannot be resolved (which makes
+the command exit 1).
 
 The build vocabulary and engine come from `httk.core.building`; this layer keeps
 the workspace runner-build store and platform-tagged registrations. The
 manager passes registered artifacts through `HTTK_WORKFLOW_RUNNER_ARTIFACTS`
-without modifying the published source tree. A plugin-sourced workflow is first resolved and pinned into
-the workspace like any other package, then built with the same command using
-its job or store runner target.
+without modifying the published source tree. A plugin-sourced workflow is
+built by its name: `httk workflow build NAME` pins it into the workspace like
+any other package and builds it.
 
 ### `job` — making jobs, and finding out about them
 
@@ -183,17 +208,58 @@ its job or store runner target.
 | `job delete [--force] JOB...` | remove selected job payloads and state markers (remote: over the adapter) | `--workspace`, `--force`, `--adapter-timeout` |
 | `job seal [--keys REFS] JOB...` | seal the payloads of selected quiescent jobs | `--workspace`, `--keys` overrides the `seal.keys` setting |
 | `job unseal [--force] JOB...` | remove the seals of selected jobs, refused while the workspace is sealed | `--workspace`, `--force` skips the confirmation |
+| `job detach [OPTIONS] JOB...` | make spawned jobs independent of their parents, permanently | `--workspace`, optional `--operator` (recorded; default identity when omitted) |
+| `job eject [OPTIONS] JOB... DEST` | move quiescent jobs out of the workspace to free-standing job directories | `--workspace`; like `mv`, an existing `DEST` directory receives each job as `DEST/<job-key>` |
+| `job adopt [OPTIONS] DIR...` | move free-standing job directories into the workspace | `--workspace`, `--placement` (default: where each job was ejected from; refused for a job tree) |
 | `job list [OPTIONS]` | list jobs as a cheap table (remote: over the adapter) | `--workspace`, `--kind`, `--placement` (prefix), `--limit`, `--after`, `--tag-contains`, `--counts`, `--json`, `--adapter-timeout` |
 | `job show [OPTIONS] JOB...` | describe jobs from their state (remote: over the adapter) | `--workspace`, `--no-children`, `--json`, `--adapter-timeout` |
 | `job log [OPTIONS] JOB...` | print transition histories (remote: over the adapter) | `--workspace`, `--limit`, `--json`, `--adapter-timeout` |
 | `job why [OPTIONS] JOB...` | explain why jobs are not running (remote: over the adapter) | `--workspace`, `--json`, `--adapter-timeout` |
 | `job debug [OPTIONS] JOB` | drive one job to a terminal state in front of you | `--workspace`, `--step`, `--placement`, `--follow-children`, `--timeout`, `--log-level` |
+| `job transfer [OPTIONS] SRC DST` | move jobs between two workspaces — a registered name, else a workspace directory | `--job`, `--state`, `--placement`, `--destination-placement`, `--adapter-timeout`, `--strict-environment`, `--json` |
 
 When giving more than one `JOB_ID`, name the workspace explicitly.
 
 `job show` gains a `sealed` line — `yes` with the signer roles, or `no` — and,
 in `--json`, a `sealed` boolean plus `seal_roles`. `job seal` and `job unseal`
 are the per-job half of {doc}`../sealing`; a job must be quiescent to be sealed.
+
+`job detach` makes a spawned job independent of its parent: it no longer moves
+with its parent's tree, it can be transferred on its own, and `Attempt.parent`
+reads `None` for it. It stays in any join that references it. Detaching is a
+file in the payload rather than a state transition, so it works on a job in any
+state except `transferring`, sealed or not, and it cannot be undone. Each job
+prints `detached` or `already detached`; a job with no parent is refused.
+For a spawned job, `job show` adds a `detached` line — `yes` or `no`, with the
+parent's key — and `--json` always carries a `detached` boolean.
+
+`job eject` and `job adopt` move a job out of a workspace and into one without
+either workspace knowing the other, so neither needs to be registered (reach an
+unregistered workspace with `httk -C DIR`). `job eject` accepts a quiescent job
+that is not bound to its live parent or in an unresolved join, and refuses a
+destination inside any workspace. The job directory it leaves behind is the
+whole job: payload, seal, tree metadata, the state it was in, and any shared
+workspace runner it pins; the workspace keeps no copy. A job with bound children
+leaves as the root of its tree: every bound descendant, each of which must be
+paused or terminal, travels inside the same directory under
+`.httk-transfer/tree/<placement>/<job_key>/`. `httk workflow seal verify DIR`
+verifies a sealed one in place. Each job prints `JOB_ID ejected PATH`, and a
+selected descendant that left inside its root's directory prints
+`JOB_ID ejected with its parent`. `job adopt` verifies a directory, moves it in
+(a rename on one filesystem; across filesystems a copy that is verified before
+the directory is removed), restores the job to the state it was ejected in, and
+installs a runner it carries; it prints `JOB_ID adopted STATE PAYLOAD`. A tree
+comes back whole, each member at the placement it left from, so `--placement` is
+refused for it, and a member's directory nested inside it cannot be adopted on
+its own; every member is checked before anything is imported. A job whose
+ejection is still in progress is not retired by `httk workflow transfer retire`.
+It refuses a directory made by a transfer to a
+named workspace (use `httk job transfer`), and a copy of a directory whose
+job already passed through this workspace, which it leaves in place. Both are
+crash-safe: an interrupted `job eject` is finished by the next `job eject` or
+transfer recovery in that workspace, and an interrupted `job adopt` by adopting
+the same directory again. Neither works in a sealed workspace or project; a
+sealed job keeps its seal.
 
 An operator `pause` request against `claimed`, `running`, or `committing` is
 deferred: the manager records it and pauses the job at the next attempt
@@ -227,6 +293,75 @@ threshold without progressing; and any **pending** operator request still in
 
 CWL, PWD, and jobflow documents use `job new --from-runner DOCUMENT`; see
 {doc}`/workflow_compat` for PWD, CWL, jobflow, and httk-v1 details.
+
+### `job transfer` — moving jobs between two workspaces
+
+`job transfer` is one verb that takes two workspace endpoints — a source and a
+destination — and moves jobs between them, whichever way they point. Each of
+SRC and DST is tried first as a registered workspace name, exactly as
+elsewhere, and then, if that miss, as a workspace directory (one whose root
+directly contains `.httk-workspace/`; no upward discovery); a registered name
+always wins over a same-named directory, so `./NAME` addresses the directory
+unambiguously. A directory endpoint is always local — only a registered
+`REMOTE:NAME` binding can point at a remote:
+
+```console
+httk job transfer [--job JOB_ID …] [--state STATE …] [--placement P] \
+    [--destination-placement P] [--adapter-timeout SECONDS] [--json] SRC DST
+```
+
+Which legs run over an adapter and which stay in this filesystem follows
+entirely from where the two endpoints are bound:
+
+| Direction | What happens | `--job` |
+| --- | --- | --- |
+| local → remote | each named job is detached, its sealed bundle pushed to the remote, and imported there | UUIDs, prefixes, paths, or globs; required |
+| remote → local | the selected jobs are offered, pulled home, imported, and their sources retired | canonical UUIDs only; optional sweep |
+| local → local | each named job is detached from the source and imported into the destination directly, in this filesystem | UUIDs, prefixes, paths, or globs; required |
+| remote → remote | the client relays the selected offers through local staging and pushes them to the destination (v1; a direct source-to-destination path is deferred) | canonical UUIDs only; optional sweep |
+
+`--state` (repeatable, default `succeeded` and `failed`) chooses which finished
+kinds a sweep moves, `--placement` restricts it to one subtree,
+`--destination-placement` lands the jobs somewhere other than the placement they
+had, and `--adapter-timeout` bounds every adapter operation the move runs.
+For a local source, `--job` accepts a UUID, tag/key prefix, job directory,
+placement directory, or glob such as `jobs/silicon*`; paths and globs are
+resolved from the current working directory and must be inside that source
+workspace. A remote source accepts only canonical job UUIDs, because its
+selectors are resolved on the remote machine.
+When `--job` is supplied, each named job must be eligible before any job is
+sealed; by-id moves accept any quiescent state, while an explicit `--state`
+remains an additional filter. With no `--job`, the sweep remains skip-tolerant
+and defaults to `succeeded` and `failed`.
+`--strict-environment` blocks before state moves when a checked destination
+environment is unresolved or cannot be read. Transfer checks intentionally use
+job overrides, destination settings, and declared defaults; they do not use the
+client process environment as a destination substitute. A remote settings read
+that is unavailable produces one immediate warning in non-strict mode.
+
+For remote → remote, repeated `--job` values constrain the source offer before
+the relay pulls anything; omitting them keeps the skip-tolerant terminal-state
+sweep.
+
+A spawned child moves with its parent. Selecting a job selects its whole tree —
+the job and every child it spawned that is still in the workspace and not
+detached, recursively — whatever `--state` and `--placement` say, and the
+children that come along are named on standard error. Every child must be
+`paused` or finished, and none may be in an unresolved join; otherwise the tree
+stays where it is (a sweep skips it with a warning, an explicit `--job` is
+refused). A child named on its own is refused, naming its parent: transfer the
+parent, or first make the child independent with `httk job detach`.
+`--destination-placement` is refused for a selection containing such a tree,
+because its children record their parent's placement.
+
+Bundles carry sources only for workflows that declare `[workflow.build]`;
+compiled artifacts are machine-local and are never transferred. After importing
+such a bundle, run `httk workflow build --workspace WORKSPACE TARGET` on the destination
+before starting its managers; the import operation repeats this reminder.
+
+The hidden `receive`/`offer`/`retire` protocol spellings a remote peer invokes
+on this workspace remain under `httk workflow transfer`, unchanged — see "The
+protocol spellings, and what is gone" below.
 
 ### `collect` — the finished jobs, as summaries
 
@@ -571,58 +706,13 @@ remote, because removing it would leave that transfer with no way home;
 `--force` skips the interactive confirmation and **nothing else** — the refusal
 stands either way. Fetch or retire the transfer first.
 
-### `transfer` — moving jobs between two workspaces
-
-`transfer` is one verb that takes two registered workspace names — a source and a
-destination — and moves jobs between them, whichever way they point:
-
-```console
-httk workflow transfer [--job JOB_ID …] [--state STATE …] [--placement P] \
-    [--destination-placement P] [--adapter-timeout SECONDS] [--json] SRC DST
-```
-
-Both names resolve through the registry, so which legs run over an adapter and
-which stay in this filesystem follows entirely from where the two are bound:
-
-| Direction | What happens | `--job` |
-| --- | --- | --- |
-| local → remote | each named job is detached, its sealed bundle pushed to the remote, and imported there | UUIDs, prefixes, paths, or globs; required |
-| remote → local | the selected jobs are offered, pulled home, imported, and their sources retired | canonical UUIDs only; optional sweep |
-| local → local | each named job is detached from the source and imported into the destination directly, in this filesystem | UUIDs, prefixes, paths, or globs; required |
-| remote → remote | the client relays the selected offers through local staging and pushes them to the destination (v1; a direct source-to-destination path is deferred) | canonical UUIDs only; optional sweep |
-
-`--state` (repeatable, default `succeeded` and `failed`) chooses which finished
-kinds a sweep moves, `--placement` restricts it to one subtree,
-`--destination-placement` lands the jobs somewhere other than the placement they
-had, and `--adapter-timeout` bounds every adapter operation the move runs.
-For a local source, `--job` accepts a UUID, tag/key prefix, job directory,
-placement directory, or glob such as `jobs/silicon*`; paths and globs are
-resolved from the current working directory and must be inside that source
-workspace. A remote source accepts only canonical job UUIDs, because its
-selectors are resolved on the remote machine.
-When `--job` is supplied, each named job must be eligible before any job is
-sealed; by-id moves accept any quiescent state, while an explicit `--state`
-remains an additional filter. With no `--job`, the sweep remains skip-tolerant
-and defaults to `succeeded` and `failed`.
-`--strict-environment` blocks before state moves when a checked destination
-environment is unresolved or cannot be read. Transfer checks intentionally use
-job overrides, destination settings, and declared defaults; they do not use the
-client process environment as a destination substitute. A remote settings read
-that is unavailable produces one immediate warning in non-strict mode.
-
-For remote → remote, repeated `--job` values constrain the source offer before
-the relay pulls anything; omitting them keeps the skip-tolerant terminal-state
-sweep.
-
-Bundles carry sources only for workflows that declare `[workflow.build]`;
-compiled artifacts are machine-local and are never transferred. After importing
-such a bundle, run `httk workflow build --workspace WORKSPACE TARGET` on the destination
-before starting its managers; the import operation repeats this reminder.
-
 ### The protocol spellings, and what is gone
 
-`transfer` also carries the frozen argument vectors one machine runs on another
-over an adapter. Operator-facing vectors use workspace names; the hidden
+`job transfer` shares its machinery with the frozen argument vectors one
+machine runs on another over an adapter, addressed as `httk workflow transfer
+receive|offer|retire` — hidden, and spelled `workflow`, not `job`, because a
+remote peer invokes these by exact name, not through the operator verb.
+Operator-facing vectors use workspace names; the hidden
 `--by-path` spelling is the path-only protocol form used after the client probes
 the owning machine. They are protocol rather than operator interface — a local→remote move invokes
 `receive` on the destination, a fetch invokes `offer` then `retire` on the source.
@@ -647,19 +737,21 @@ machine's workspace.
 
 The pre-release `transfer send` and `transfer fetch` and
 `transfer status` verbs are **gone** — they no longer parse. Move to the single
-`transfer SRC DST` verb, and to `manager run --workspace NAME` for starting managers (below)
+`job transfer SRC DST` verb, and to `manager run --workspace NAME` for starting managers (below)
 and `workspace status NAME` for reading a remote workspace's markers.
 
 | Removed | Now |
 | --- | --- |
-| `transfer send REMOTE JOB …` | `transfer --job JOB … LOCAL REMOTE` |
-| `transfer fetch --remote REMOTE --workspace LOCAL` | `transfer REMOTE LOCAL` |
+| `transfer send REMOTE JOB …` | `job transfer --job JOB … LOCAL REMOTE` |
+| `transfer fetch --remote REMOTE --workspace LOCAL` | `job transfer REMOTE LOCAL` |
 | `transfer status REMOTE` | `workspace status REMOTE` |
 
 An earlier release also renamed two whole groups: `httk workflow computer …`
 became `httk workflow remote …` (git's word for the same idea), and
-`httk workflow tasks …` (once `httk workflow remote send|fetch|…`) became today's
-`httk workflow transfer`. A job whose `runner.path` pins a
+`httk workflow tasks …` (once `httk workflow remote send|fetch|…`) became
+`httk workflow transfer` and then, once the operator verb moved to the `job`
+group, today's `httk job transfer` (the hidden protocol spellings stayed
+`httk workflow transfer receive|offer|retire`). A job whose `runner.path` pins a
 `pkg:httk.workflow.runners/vasp_*` or `pkg:httk.workflow.vasp.runners/vasp_*` form
 breaks too: the VASP workflows left the module for
 [workflows-vasp](https://github.com/httk/workflows-vasp), and a job pinning either
@@ -1380,7 +1472,7 @@ httk workspace init kappa:/scratch/rar/httk/runs
 httk workspace settings set --key slurm.partition --value batch kappa:runs
 httk workspace settings set --key vasp.command --value "srun -n 32 vasp_std" kappa:runs
 httk job new --workflow vasp.relax --input structure=POSCAR --tag silicon
-httk workflow transfer --job JOB-ID default kappa:runs
+httk job transfer --job JOB-ID default kappa:runs
 httk workflow run --workspace kappa:runs --workers 8
 httk workspace status kappa:runs
 ```
@@ -1389,7 +1481,7 @@ The machine that owns a workspace chooses its path; scheduler settings belong
 to the workspace instead. Remote init sends the path and registers its basename
 on the owning machine.
 
-`transfer default kappa:runs` detaches each selected job from the local default
+`job transfer default kappa:runs` detaches each selected job from the local default
 workspace and imports it on the remote, at the placement it had here unless
 `--destination-placement` puts it elsewhere. `run --workspace kappa:runs` submits the
 manager invocation via the remote adapter; the remote invokes
@@ -1410,7 +1502,7 @@ as a substitute for destination settings.
 To bring stopped jobs home, use the reverse transfer and then collect:
 
 ```console
-httk workflow transfer --state succeeded --state failed --placement project/screening --json \
+httk job transfer --state succeeded --state failed --placement project/screening --json \
     kappa:runs default
 ```
 

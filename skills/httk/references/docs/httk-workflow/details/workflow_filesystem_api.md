@@ -1062,6 +1062,15 @@ unclaimed when its own environment does not meet every entry, exactly like a
 missing capability. The member is omitted when empty, and a manager that
 predates it ignores it.
 
+The optional top-level `calls` member maps an alias (label syntax) to the
+workflow reference a job may call as a sub-workflow: a workflow name, or a
+commit-pinned git URI. It is written when the job's workflow declares
+`[workflow.calls]` (an empty object when it declares none of them but the
+table), and is absent for a job that declares nothing. A manager SHOULD leave a
+ready job unclaimed while any recorded reference does not resolve on its
+machine or names a compiled package not built in the workspace, and a runner
+SDK MUST refuse a call to a workflow the member does not name.
+
 The literal pool name `default` is reserved for jobs requiring no explicit
 routing. A manager started without pool configuration MUST advertise
 `default`. Thus a trivial deployment uses the value shown above without any
@@ -1474,6 +1483,28 @@ excluded from every payload digest. An implementation MUST report the declared
 and the observed document side by side and MUST NOT merge them; a document that
 cannot be read is reported as absent, with the reading tool's damage flag set.
 
+`.httk-job/tree/` is the second reserved name: the job-tree metadata the manager
+and operator tools own, which travels with the payload like the rest of
+`.httk-job/`. A runner MUST NOT write there.
+
+- `tree/spawns/<attempt-id>.json` records the children one committed outcome
+  spawned, as `{"format": "httk-workflow-spawns", "format_version": 1,
+  "children": [{"job_id", "job_key", "label", "placement", "spawn_id"}]}` copied
+  from that outcome's `spawn.json`. While the parent is `committing`, the manager
+  publishes it (temporary file, atomic rename, and in the storage-durable
+  profile the file and every directory it created synchronized) **before**
+  moving the first child into place, so no registered child is missing from its
+  parent's records. A replayed commit MUST find an existing fragment
+  byte-identical and otherwise stop with a corruption error. A reader takes the
+  union of all fragments, de-duplicated by `job_id`, and trusts an entry only
+  when the named child is live at the recorded placement and its own `job.json`
+  names this parent's `job_id` and, when the entry records one (a hand-written
+  `spawn.json` may omit it), the entry's `spawn_id`.
+- `tree/detached.json` marks a child an operator made independent of its parent
+  (`{"format": "httk-workflow-detached", "format_version": 1, "detached_at",
+  "operator"}`). It is permanent, requires no state transition, and leaves the
+  `parent` member of `job.json` in place as provenance.
+
 Separating them matters in persistent mode: a late process from an old attempt
 can only publish beneath its own attempt-control name. Its outcome cannot
 replace or impersonate the new attempt's outcome.
@@ -1558,7 +1589,7 @@ that needs one MUST treat its absence as a missing dependency of that library
 rather than as a protocol violation. The ones this implementation exports are:
 
 ```text
-HTTK_WORKFLOW_VASP_BASH_API=<absolute packaged VASP Bash library>
+HTTK_WORKFLOW_<CODE>_BASH_API=<absolute Bash API of each installed code, e.g. HTTK_WORKFLOW_VASP_BASH_API>
 HTTK_WORKFLOW_PERL_API=<absolute packaged Perl SDK directory>
 HTTK_WORKFLOW_LANGUAGES_DIR=<absolute installed httk/workflow/languages directory>
 HTTK_WORKFLOW_RUNNER_ARTIFACTS=<absolute registered build-artifacts directory>
@@ -2004,6 +2035,64 @@ the complete bundle first, appends an import frame, then renames the embedded
 marker into the target workspace's state tree. The extra transfer metadata exists
 only while the job is detached or retained for transfer provenance.
 
+An *ejected* job is such a bundle addressed to no workspace: its manifest has a
+null `destination_workspace_id` and no transfer sequence. The source records the
+chosen target path in its transfer ledger, moves the bundle there (one rename,
+or across filesystems a copy to a hidden sibling that is verified and renamed
+into place before the source copy is removed), and retires the source without an
+acknowledgement, keeping no retired copy. Recovery resumes from the ledger: a
+bundle still in the workspace is moved; a verified copy at the target means only
+the workspace copy remains to be removed; neither is payload loss. Any workspace
+may *adopt* the directory: it moves it into its staging area (one rename, or
+across filesystems a copy verified before the directory is removed), imports it
+exactly as an addressed bundle, and keeps the individual acknowledgement as its
+replay receipt. An adoption intent record, written before the move, lets
+recovery publish a job whose directory is already gone. A second directory with
+the same transfer id whose job has since left is refused as stale. The transfer
+envelope `.httk-transfer/` is excluded from payload digests and job seals alike,
+so a sealed job verifies while ejected and after adoption.
+
+A tree root ejects with its bound descendants, which must all be paused or
+terminal. Its manifest lists them top-down in `eject_tree`, each with the
+transfer id reserved for it; each member is sealed as an ejected bundle of its
+own whose manifest names the root's transfer in `eject_root`, and is moved into
+the root's envelope at `.httk-transfer/tree/<placement>/<job_key>/` before the
+root itself leaves. Adoption checks every member first, refuses a member
+directory adopted on its own, then imports every member at its recorded
+placement, and then the root; a tree keeps its placements, because each child's
+record of its parent's placement is immutable. Whether a job already arrived is
+decided by its live import frame naming the transfer, not by the acknowledgement,
+which garbage collection expires. An ejection's ledger is never retired by name:
+until the ejection finishes, its bundle is the job itself.
+
+### Job trees move together
+
+A spawned child is **bound** to its parent while it is not detached (see
+`.httk-job/tree/detached.json`) and its parent has a live, non-`transferring`
+marker at the placement its `job.json` records. A transfer implementation MUST
+NOT move a bound child on its own, and MUST NOT move a parent while it has bound
+children unless those children leave with it as one tree:
+
+- the tree of a selected job is the job plus, recursively, every bound child its
+  spawn records confirm; it is selected whole regardless of any state or
+  placement filter that selected the root;
+- every member other than the root MUST be `paused` or terminal and none may be
+  referenced by an unresolved join, so that no manager can claim a member
+  between the eligibility check and its fence; otherwise the whole tree stays;
+- the root is fenced first and the members top-down. A member whose parent failed
+  to fence stays behind with it. Because each member's parent is already
+  `transferring` when the member is fenced, the member is no longer bound at that
+  moment, and a member left behind by a partial failure is free to follow later;
+- the destination placement of a multi-member tree MUST equal its source
+  placement, because every child records its parent's placement immutably.
+
+A parent without spawn records (one that spawned before they existed) cannot
+list its children. Such children are still bound while the parent is live, but
+the parent can leave without them. The tree metadata is excluded from digests
+and seals like the rest of `.httk-job/`, so tampering can only separate a tree,
+never corrupt one. A peer implementing an older profile moves the files intact but
+does not enforce the rule.
+
 For moving whole projects, a self-contained workspace is preferable: controlled
 detach and attach carry its state tree, journals, and all arbitrary placements
 together.
@@ -2068,6 +2157,11 @@ parent remains committing.
 
 Each child is an ordinary independently schedulable job with one job file, one
 state marker, its own attempts, and the ability to create more children.
+Because its `job.json` names the parent's `job_key` and `placement`, a running
+child can locate its parent's payload as `<workspace>/<placement>/<job_key>`
+without a scan, for example to read a large shared file in place; the SDKs
+expose this as the `parent` read. The location is only meaningful while parent
+and child share a workspace.
 
 ### Waiting and joining
 
@@ -2287,7 +2381,10 @@ Codes emitted by this manager itself are reserved. Those currently in use are:
 - `runner_unavailable` — a runner outside the payload could not be resolved,
   opened, or entered at all;
 - `runner_mismatch` — the bytes of such a runner did not match the
-  `runner.sha256` the job pinned.
+  `runner.sha256` the job pinned;
+- `code_support_unavailable` — the Bash API of an installed simulation-code
+  support package could not be found, so the attempt environment could not be
+  built.
 
 A runner library that dispatches steps on a runner's behalf publishes ordinary
 runner failures, so its codes are reserved too. Those of the runner libraries

@@ -199,9 +199,11 @@ status.
 | `httk_workflow_describe()` | `httk_workflow_describe` |
 | `httk_workflow_invoke(argv, output)` | `httk_workflow_invoke` |
 | *`sub`* `httk_workflow_context(value, field, status)` | `httk_workflow_context` |
+| *`sub`* `httk_workflow_parent(value, field, status)` | `httk_workflow_parent` |
 | *`sub`* `httk_workflow_parameter(name, value, fallback, status)` | `httk_workflow_parameter` |
 | *`sub`* `httk_workflow_setting(name, value, fallback, status)` | `httk_workflow_setting` |
 | *`sub`* `httk_workflow_environment(name, value, fallback, status)` | `httk_workflow_environment` |
+| `httk_workflow_stage_input(name, destination, fallback)` | `httk_workflow_stage_input` |
 | *`sub`* `httk_workflow_state_get(name, value, status)` | `httk_workflow_state_get` |
 | `httk_workflow_state_set(name, value)` | `httk_workflow_state_set` |
 | `httk_workflow_state_delete(name)` | `httk_workflow_state_delete` |
@@ -215,6 +217,7 @@ status.
 | *`sub`* `httk_workflow_put(source, destination, operation, status)` | `httk_workflow_put` |
 | *`sub`* `httk_workflow_remove(destination, operation, missing_ok, status)` | `httk_workflow_remove` |
 | *`sub`* `httk_workflow_spawn(label, job_key, args, status)` | `httk_workflow_spawn` |
+| *`sub`* `httk_workflow_call(label, workflow, job_key, args, status)` | `httk_workflow_call` |
 | *`sub`* `httk_workflow_children(value, selection, status)` | `httk_workflow_children` |
 | *`sub`* `httk_workflow_child(label, field, value, status)` | `httk_workflow_child` |
 | `httk_workflow_advance(next_step, args)` | `httk_workflow_advance` |
@@ -231,10 +234,20 @@ status.
 | `httk_template_render(template_file, output, values_file)` | `httk_template_render` |
 | `httk_compress(args)` | `httk_compress` |
 | `httk_decompress(args)` | `httk_decompress` |
+| `httk_copy_file(source, destination)` | `httk_copy_file` |
+| `httk_getenv(name, fallback)` | (pure Fortran, `get_environment_variable`) |
+
+`httk_workflow_parent` leaves `value` unallocated with status `1` when the job has
+no reachable parent, and for `field="workdir"` when the parent uses isolated
+workdirs.
+
+`httk_getenv` is a function returning an always-allocated string: the variable's
+value, or `fallback` (default `""`) when it is unset or empty.
 
 Booleans are Fortran `logical`: `httk_workflow_remove`'s `missing_ok` is an
-optional `logical`, marshalled to the C `int` flag. As in C, the `httk_vasp_*`
-surface of the Bash SDK has no dedicated wrappers; reach a `vasp-*` verb through
+optional `logical`, marshalled to the C `int` flag. As in C, a code's Bash API,
+such as *httk-workflow-vasp*'s `httk_vasp_*`, has no dedicated wrappers; reach a
+`<code>-*` verb such as `vasp-*` through
 `httk_workflow_invoke`, which is why the example below runs the configured
 command through `httk_workflow_run` and classifies its result.
 

@@ -117,6 +117,30 @@ exit status and takes the default breadcrumb message `"<step> exited with status
 code `2` (`REFUSED`) — never `1`, which is the `ABSENT` convention for an
 ordinary answer — so a handler can `?` its way out of an unexpected bridge failure.
 
+Ordinary host failures propagate the same way. `StepError` implements `From` for
+`std::io::Error`, `std::fmt::Error`, `std::num::ParseIntError`,
+`std::num::ParseFloatError`, `std::str::Utf8Error`, and
+`std::string::FromUtf8Error`, so `?` works directly on a file operation or a
+parse. Such an error aborts with code `1` (`httk_workflow::HOST_FAILURE`, the
+status an uncaught Python exception exits with) and a breadcrumb message that
+names the kind of failure and carries the error's own text:
+
+```rust
+fn collect(attempt: &Attempt) -> Result<(), StepError> {
+    // A missing file aborts with "I/O error: No such file or directory (os error 2)".
+    let energy: f64 = std::fs::read_to_string("energy.txt")?.trim().parse()?;
+    attempt.state_set("energy", &energy.to_string())?;
+    attempt.succeed()?;
+    Ok(())
+}
+```
+
+A `std::io::Error` does not know which path failed; when the breadcrumb should
+name it, or for an error type without a conversion, map it explicitly with
+`map_err(|error| StepError::with_message(1, format!("cannot read energy.txt: {error}")))`.
+The conversions are the std-only set a handler routinely meets; there is no
+blanket `From<E: Error>`, which would collide with the reflexive `From<StepError>` since `StepError` is itself an `Error`.
+
 `HTTK_WORKFLOW_DESCRIBE=1` and a `--describe` argument each make `Runner::main`
 print the runner description and exit `0` before any step runs. The description is
 produced natively, byte-for-byte what a Python, Bash, C, or Fortran runner prints
@@ -175,9 +199,11 @@ are `&[&str]` option arrays; a `fallback` is an `Option<&str>` default.
 | `Runner::description(&self)` | `httk_workflow_describe` |
 | `Attempt::invoke(argv)` | `httk_workflow_invoke` |
 | `Attempt::context(field)` | `httk_workflow_context` |
+| `Attempt::parent(field)` | `httk_workflow_parent` |
 | `Attempt::parameter(name, fallback)` | `httk_workflow_parameter` |
 | `Attempt::setting(name, fallback)` | `httk_workflow_setting` |
 | `Attempt::environment(name, fallback)` | `httk_workflow_environment` |
+| `Attempt::stage_input(name, destination, fallback)` | `httk_workflow_stage_input` |
 | `Attempt::state_get(name)` | `httk_workflow_state_get` |
 | `Attempt::state_set(name, value)` | `httk_workflow_state_set` |
 | `Attempt::state_delete(name)` | `httk_workflow_state_delete` |
@@ -191,6 +217,7 @@ are `&[&str]` option arrays; a `fallback` is an `Option<&str>` default.
 | `Attempt::put(source, destination)` | `httk_workflow_put` |
 | `Attempt::remove(destination, missing_ok)` | `httk_workflow_remove` |
 | `Attempt::spawn(label, args)` | `httk_workflow_spawn` |
+| `Attempt::call(label, workflow, args)` | `httk_workflow_call` |
 | `Attempt::children(selection)` | `httk_workflow_children` |
 | `Attempt::child(label, field)` | `httk_workflow_child` |
 | `Attempt::advance(next_step, args)` | `httk_workflow_advance` |
@@ -209,10 +236,17 @@ are `&[&str]` option arrays; a `fallback` is an `Option<&str>` default.
 | `Attempt::decompress(args)` | `httk_decompress` |
 
 Booleans are Rust `bool`: `Attempt::remove`'s `missing_ok`, and `Attempt::fail`'s
-`retryable`. `Attempt::gather` takes a `Gather` options struct with `when`,
+`retryable`. `Attempt::stage_input` returns `Ok(true)` when staged and
+`Ok(false)` when the payload has no such file. `Attempt::parent` returns
+`Ok(None)` when the job has no reachable parent, and `Attempt::parent(Some("workdir"))`
+is `Ok(None)` for a parent that uses isolated workdirs. `Attempt::call` spawns
+another registered workflow (an id or alias, a git URI, a runner file, or a
+package directory) as a child and returns its job key; `args` carries the
+`call` options (`--file NAME=PATH`, `--input NAME=PATH`, `--parameter K=V`, …). `Attempt::gather` takes a `Gather` options struct with `when`,
 `count`, `on_impossible`, and `priority` fields, each `Option`, defaulting to the
-bridge's own default (`Gather::default()`). As in C, the `httk_vasp_*` surface of
-the Bash SDK has no dedicated methods; reach a `vasp-*` verb through
+bridge's own default (`Gather::default()`). As in C, a code's Bash API, such as
+*httk-workflow-vasp*'s `httk_vasp_*`, has no dedicated methods; reach a `<code>-*`
+verb such as `vasp-*` through
 `Attempt::invoke`, which is why the example below runs the configured command
 through `Attempt::run` and classifies its result. The `--details` and `--priority`
 options of `fail` are likewise reachable through `Attempt::invoke`.
@@ -227,6 +261,10 @@ and Fortran SDKs':
 | `httk_workflow::OK` (`0`) | the call succeeded |
 | `httk_workflow::ABSENT` (`1`) | the answer is legitimately absent: an unset state key, a missing parameter without a default, a child that was not observed |
 | `httk_workflow::REFUSED` (`2`) | the call is refused: bad usage, a protocol violation, a corrupt attempt context — also the exit status when `HTTK_WORKFLOW_PYTHON` is unset |
+
+`httk_workflow::HOST_FAILURE` (`1`) is not a bridge status: it is the exit
+status of a handler aborted by a host error propagated with `?` (see
+[Registration and dispatch](#registration-and-dispatch)).
 
 The read return type folds `OK`/`ABSENT` into `Ok(Some)`/`Ok(None)` and `REFUSED`
 into `Err(BridgeError::Refused)`, so a read is an ordinary `match` and never a

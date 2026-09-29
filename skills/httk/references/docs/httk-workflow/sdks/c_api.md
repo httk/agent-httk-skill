@@ -150,9 +150,11 @@ bridge exit status out-parameter.
 | `httk_workflow_describe()` | `httk_workflow_main --describe` | `Runner.description` |
 | `httk_workflow_invoke(out, argv)` | `_httk_workflow_bridge` | `shell_bridge.main` |
 | `httk_workflow_context(field, status)` | `httk_workflow_context` | `Attempt.context` |
+| `httk_workflow_parent(field, status)` | `httk_workflow_parent` | `Attempt.parent`, `ParentJob` |
 | `httk_workflow_parameter(name, fallback, status)` | `httk_workflow_parameter` | `Attempt.parameter` |
 | `httk_workflow_setting(name, fallback, status)` | `httk_workflow_setting` | `Attempt.setting` |
 | `httk_workflow_environment(name, fallback, status)` | `httk_workflow_environment` | `Attempt.environment` |
+| `httk_workflow_stage_input(name, destination, fallback)` | `httk_workflow_stage_input` | `Attempt.stage_input` |
 | `httk_workflow_state_get(name, status)` | `httk_workflow_state_get` | `JobState.read` |
 | `httk_workflow_state_set(name, value)` | `httk_workflow_state_set` | `JobState.set` |
 | `httk_workflow_state_delete(name)` | `httk_workflow_state_delete` | `JobState.delete` |
@@ -166,6 +168,7 @@ bridge exit status out-parameter.
 | `httk_workflow_put(source, dest, status)` | `httk_workflow_put` | `Attempt.put` |
 | `httk_workflow_remove(dest, missing_ok, status)` | `httk_workflow_remove` | `Attempt.remove` |
 | `httk_workflow_spawn(label, args, status)` | `httk_workflow_spawn` | `Attempt.spawn` |
+| `httk_workflow_call(label, workflow, args, status)` | `httk_workflow_call` | `Attempt.call` |
 | `httk_workflow_children(selection, status)` | `httk_workflow_children` | `Attempt.children` |
 | `httk_workflow_child(label, field, status)` | `httk_workflow_child` | `ChildResult` |
 | `httk_workflow_advance(next_step, args)` | `httk_workflow_advance` | `Attempt.advance` |
@@ -182,10 +185,26 @@ bridge exit status out-parameter.
 | `httk_template_render(template, output, values)` | `httk_template_render` | `render_template` |
 | `httk_compress(args)` | `httk_compress` | `compress_files` |
 | `httk_decompress(args)` | `httk_decompress` | `decompress_files` |
+| `httk_copy_file(source, destination)` | — | `shutil.copyfile` |
+| `httk_file_exists(path)` | — | `Path.is_file` |
+| `httk_join_path(a, b)` | — | `Path.__truediv__` |
 
-The `httk_vasp_*` surface of the Bash SDK has no dedicated C wrappers; a C runner
-that needs a VASP subcommand reaches it through `httk_workflow_invoke` with the
-same `vasp-*` verb, which is why the example below runs the configured command
+`httk_workflow_parent` returns the parent job as compact JSON, or one field of
+it (`job_id`, `payload`, `workdir`, ...), and reports `HTTK_WORKFLOW_ABSENT` when
+the job has no reachable parent; `workdir` is also absent for a parent that uses
+isolated workdirs.
+
+The last three rows are local helpers that never call the bridge: they exist
+because C has no standard way to copy a file, test for a regular file, or join
+paths. `httk_join_path` returns a malloc'd string under the memory-ownership
+rules above, and `httk_copy_file` reports `HTTK_WORKFLOW_OK` or
+`HTTK_WORKFLOW_REFUSED` like the bridge verbs. It is refused when the source is
+not a regular file or names the same file as the destination; a copy refused
+mid-way may leave a partial destination, as `shutil.copyfile` does.
+
+A code's Bash API, such as *httk-workflow-vasp*'s `httk_vasp_*`, has no dedicated
+C wrappers; a C runner that needs such a subcommand reaches it through
+`httk_workflow_invoke` with the same `<code>-*` verb (`vasp-*`), which is why the example below runs the configured command
 through `httk_workflow_run` and classifies its result.
 
 ## Exit codes

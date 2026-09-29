@@ -85,9 +85,11 @@ read default means the bridge's absent convention applies.
 | `Runner->main` | `Runner.main` | `httk_workflow_main` |
 | `Attempt->invoke(\@argv)` | — | — |
 | `context`, `parameter`, `setting`, `environment` | same-named methods | same-named bridge functions |
+| `parent` | `Attempt.parent` | `httk_workflow_parent` |
+| `stage_input` | same-named method | `httk_workflow_stage_input` |
 | `state_get`, `state_set`, `state_delete`, `state_merge` | same-named methods | same-named bridge functions |
 | `declaration`, `declare` | same-named methods | same-named bridge functions |
-| `children`, `child`, `spawn` | same-named methods | same-named bridge functions |
+| `children`, `child`, `spawn`, `call` | same-named methods | same-named bridge functions |
 | `runlog_note`, `runlog_headline`, `runlog_append` | `log.append` | same-named bridge functions |
 | `log` | logging | `httk_workflow_log` |
 | `put`, `remove` | same-named methods | same-named bridge functions |
@@ -100,7 +102,14 @@ read default means the bridge's absent convention applies.
 `fail($code, $message, $retryable)` and `remove($path, $missing_ok)` take Perl
 booleans. `gather($step, { when => ..., count => ..., on_impossible => ...,
 priority => ... })` forwards only defined options. The `invoke` method is the
-escape hatch for bridge subcommands without a dedicated wrapper.
+escape hatch for bridge subcommands without a dedicated wrapper. `parent` with
+no field returns the parent job as compact JSON and `parent($field)` one of
+its fields; both return `undef` when the job has no reachable parent, and
+`parent('workdir')` is `undef` for a parent that uses isolated workdirs.
+`call($label, $workflow, \@args)` spawns another registered workflow (an id or
+alias, a git URI, a runner file, or a package directory) as a child and
+returns its job key; `\@args` carries the `call` options (`--file NAME=PATH`,
+`--input NAME=PATH`, `--parameter K=V`, …).
 
 ## A VASP relaxation package
 

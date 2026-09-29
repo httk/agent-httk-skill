@@ -3,8 +3,8 @@
 The complete path: create a project, set up workspaces (local and remote),
 instantiate a workflow over inputs and parameters, send jobs to an HPC system,
 monitor, fetch results home, collect, and analyse. `httk workspace …` and
-`httk job …` are top-level command groups; workflow execution and transfers
-remain under `httk workflow …`. The full command tree is in the docs snapshot
+`httk job …` (which owns `job transfer`) are top-level command groups; workflow
+execution remains under `httk workflow …`. The full command tree is in the docs snapshot
 (`docs/httk-workflow/workflow_cli.md`); managers in `taskmanager.md`.
 
 ## 1. Project and local workspace
@@ -148,7 +148,7 @@ a non-interactive-shell test.
 ## 5. Send, run, monitor
 
 ```console
-$ httk workflow transfer --job silicon--0c4f default kappa:runs
+$ httk job transfer --job silicon--0c4f default kappa:runs
 $ httk workflow run --workspace kappa:runs --workers 8
 $ httk workspace status kappa:runs
 ```
@@ -198,11 +198,17 @@ and `mem` unless given; the local adapter injects host `procs`/`mem`.
 `--count N` starts N managers (auto-detected capacities split, explicit pairs
 per manager); each manager owns its allotment.
 
-- `transfer SRC DST` is the one verb for moving jobs either direction. Local →
+- `job transfer SRC DST` is the one verb for moving jobs either direction. Local →
   remote detaches each named job, pushes its sealed bundle, imports it there.
   Transfers are idempotent and resumable: rerunning the same command resumes.
   The sealed digest pins every path, content, executable bit and symlink
-  target — corruption is detected, never silent.
+  target — corruption is detected, never silent. SRC/DST try a registered
+  workspace name first, then fall back to a workspace directory (one
+  containing `.httk-workspace/`), so unregistered workspaces work too
+  (`./NAME` addresses a directory that a registered name shadows). `job eject
+  JOB... DEST` / `job adopt DIR...` move a quiescent job out to a
+  free-standing directory and back into any workspace, bypassing registration
+  entirely.
 - `run --workspace kappa:runs` invokes a detached manager on the owning machine;
   that manager uses the target workspace's `manager.launch` setting
   (`manager run` is the advanced spelling; `run` locally serves until idle,
@@ -226,7 +232,7 @@ per manager); each manager owns its allotment.
 ## 6. Fetch results home and collect
 
 ```console
-$ httk workflow transfer --state succeeded --state failed kappa:runs default
+$ httk job transfer --state succeeded --state failed kappa:runs default
 $ httk workflow collect
 ```
 
@@ -287,7 +293,7 @@ Roots are assigned to partitions by policy (`hash` — deterministic by key,
 `round-robin`, `explicit`); spawned children always inherit their parent's
 workspace. `campaign collect` streams partition after partition. Partitions
 pointing at remote workspaces are submitted to locally and moved with
-`transfer`. Use `--placement` recipes (hash-prefix, batch buckets, per-family
+`job transfer`. Use `--placement` recipes (hash-prefix, batch buckets, per-family
 subtrees) to bound directory fan-out inside each workspace.
 
 ## 8. Analyse and store
