@@ -75,13 +75,17 @@ $ httk workspace init --name default .
 $ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --input structure=POSCAR --tag silicon
 $ httk workspace settings set --key vasp.command --value "srun -n 32 vasp_std" default
 $ httk workflow run
-$ httk workflow collect
+$ httk collect
 ```
 
 `job new` publishes the packaged relaxation runner into the workspace and pins
 its digest (upgrading httk cannot change queued jobs); `run` drives every job
 until idle; `collect` prints one JSON `CollectedJob` summary per finished job
-(`--raw` emits mechanical `JobRecord` summaries). Packaged VASP workflows keep
+(`--raw` emits mechanical `JobRecord` summaries). `httk collect DIR --into results.sqlite --id-base BASE` also
+collects a tree of finished calculations that were *not* run through httk:
+collectors registered by *httk-workflow-vasp* (and the QE, ABINIT, CP2K and ORCA
+packages) recognize each calculation directory; `--dry-run` lists what would be
+collected. Packaged VASP workflows keep
 results in the persistent `run/` workdir by default; add
 `--data-mode transactional` to `job new` when a curated `data/` copy is also
 required.

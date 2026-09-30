@@ -59,6 +59,19 @@ The definition's type must match the Python scalar annotation, and nullable
 Python fields cannot use a non-nullable definition. Custom names must carry a
 registered provider prefix. Conflicting declarations fail at decoration time.
 
+A curated, registered definition can be used directly. It is served under its
+registered prefix, keeping its `$id`, unit and description:
+
+```python
+from httk.core import load_property_definition
+
+@entry_record("example.curated-result")
+class CuratedResult(DataEntryRecord):
+    total_energy: Annotated[float, load_property_definition("https://schemas.httk.org/defs/v0.1/properties/core/total_energy")]
+
+assert "_httk_total_energy" in CuratedResult.entry_type_definition().properties
+```
+
 Record-valued fields remain ordinary references; they do not need `StrongLink`.
 When their target is a served family, *httk-store* and *httk-serve* expose them as
 OPTIMADE relationships. The storage reference pins the nested record; it is not
@@ -70,6 +83,6 @@ definition in an importable module shared by your importer and server. The store
 checks the supplied classes against its persisted layout; it does not import
 Python classes or execute code named by the database.
 
-See the [three-file serving walkthrough](https://docs.httk.org/dev/main/serving-data.html)
+See the [three-file serving walkthrough](https://docs.httk.org/dev/develop/serving-data.html)
 for CIF structures, JSON results, SQLite storage, and a separate serving script.
 The API is documented in {mod}`httk.core.entry_records`.

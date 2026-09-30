@@ -233,7 +233,7 @@ per manager); each manager owns its allotment.
 
 ```console
 $ httk job transfer --state succeeded --state failed kappa:runs default
-$ httk workflow collect
+$ httk collect
 ```
 
 The reverse transfer offers finished jobs on the remote, pulls, imports, and

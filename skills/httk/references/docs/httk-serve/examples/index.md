@@ -6,6 +6,7 @@ Runnable scripts from the repository's `examples/` directory.
 :maxdepth: 1
 
 demo_server/serve
+existing_database/serve
 in_memory_backend
 provider_server/serve
 query_in_process

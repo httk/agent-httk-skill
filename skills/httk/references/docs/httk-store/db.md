@@ -63,6 +63,8 @@ search DSL and stored properties, record replacement lineages, bulk ingestion
 fresh-store profile), the permanentization role model with `store.fsck()`
 recovery, OPTIMADE serving, and store-layout versioning.
 
+To query or serve an existing SQL database in place, see {doc}`details/db-tables`.
+
 (serving-application-records)=
 ## Serving application records
 
@@ -104,3 +106,6 @@ those forms. Multiple decorated records with the same family type are grouped
 into one local family and their property definitions must agree where names
 overlap. Existing plain frozen dataclasses should continue to use the explicit
 declaration APIs.
+
+Registered core records such as `Run` and `FileRecord` may be listed in `records=`
+next to the decorated classes to serve `_httk_runs` and `files` as well.

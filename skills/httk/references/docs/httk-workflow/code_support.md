@@ -140,6 +140,34 @@ print([code.name for code in installed_codes()])
   non-convergence, so "nonconverged" is decided after "process failure"; a code
   that exits nonzero on non-convergence (CP2K) must check non-convergence
   first. Choose the order deliberately for each code.
+- **Collect layout belongs to the workflow package.** A code package ships
+  reading helpers in `httk.codes.<code>.collect` (for example
+  `read_total_energy(path)`), never one collector per workflow; a workflow's
+  `collect.py` names the files its outputs come from, located with
+  `record.result_file` and `record.parameter`, so a copied workflow that keeps
+  more results adds lines to its own hook.
+
+## Shipping collectors
+
+A code package can also teach `httk collect` to recognize finished
+calculations of its code that were not run through a workspace (see
+{doc}`collecting`). Each collector is a recognize package directory
+(`httk_workflow.toml` with `[workflow.recognize]`, `recognize.py`, `collect.py`)
+shipped as package data inside the code package, for example
+`src/httk/codes/vasp/collectors/vasp-relax/`, and registered next to the code:
+
+```python
+# src/httk/registry/codes/vasp/__init__.py
+from httk.core.register import register_code, register_collector
+
+register_code("vasp", bridge="httk.codes.vasp._bridge", bash_api="httk.codes.vasp:httk-vasp.sh")
+register_collector("vasp.calculation.relax", package="httk.codes.vasp:collectors/vasp-relax")
+```
+
+The registered name is the package's manifest `name`. Registration records
+strings only; nothing of the code package is imported until a directory's
+markers match and its `recognize.py` hook runs. A user's own collector package
+of the same name, given with `--collector DIR`, replaces the shipped one.
 
 ## Available code distributions
 
