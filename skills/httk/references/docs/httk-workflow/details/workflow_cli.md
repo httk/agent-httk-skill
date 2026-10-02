@@ -86,6 +86,7 @@ job UUIDs when precise attribution matters.
 | Command | What it does | Notable options |
 | --- | --- | --- |
 | `workspace init [OPTIONS] PATH...` | create or adopt workspaces, registering each name (basename or `--name`) centrally and recording it in the project's `members.json` | `--name` (one path only), `--setting`, `--no-durable` |
+| `workspace daemon WORKSPACE --policy POLICY` | run the confined Slurm file-command broker | `--initialize`, `--reload`, `--export-endpoint`, `--check`, `--once` |
 | `workspace list [--json] [REMOTE:]` | list local or owning-machine workspaces | |
 | `workspace default [--unset] [NAME]` | read or record this project's default name | |
 | `workspace adopt [PATH...] [--name NAME] [--json]` | register copied workspaces on this machine under the names their project's `members.json` records | `--name` (one path only) |
@@ -381,18 +382,25 @@ protocol spellings, and what is gone" below.
 | --- | --- |
 | `--state`, `--placement`, `--raw`, `--allow-job-collector` | a workspace only |
 | `--dry-run`, `--prefer NAME`, `--exclude PATTERN`, `--collector DIR` | a calculation tree only |
-| `--into PATH`, `--id-base BASE`, `--id-series SERIES`, `--no-id-ledger`, `--id-ledger PATH`, `--no-bare-runs`, `--degraded`, `--fail-fast`, `--batch-size N` | both |
+| `--into PATH`, `--id-base BASE`, `--id-series SERIES`, `--no-id-ledger`, `--id-ledger PATH`, `--no-bare-runs`, `--upgrade`, `--degraded`, `--fail-fast`, `--batch-size N` | both |
 
 An option given for the other kind of target is refused. A workspace nested in a
 calculation tree is collected as a workspace with the default states and is not
 walked. `--dry-run` prints one `httk-collect-claim` line per claimed, declined
 or workspace directory and collects nothing; it cannot be combined with
-`--into`. See {doc}`/collecting` for recognized calculations.
+`--into`. A calculation's summary line names its `"directory"` relative to the
+swept root. See {doc}`/collecting` for recognized calculations.
 
 With `--into`, a sealed id ledger keeps entry ids stable across rebuilds. It is
 on by default at `<into>.ids.sqlite`; `--id-ledger PATH` relocates it and
 `--no-id-ledger` disables it (ids then become unstable across rebuilds). See
 {doc}`/stable_ids`.
+
+`--upgrade` (only with `--into`) lets an existing store take an additive layout
+change: new record kinds appended to a family or new families, for example a
+typed record kind a newer *httk* ships. Without it such a store is refused with
+a message naming `--upgrade`; a change that is not additive still needs a
+rebuild. Keep a backup of the store before upgrading.
 
 `--degraded` prints only the degraded per-job lines; the trailing summary still
 counts the whole sweep, so a filtered listing never hides how many jobs ran. It
@@ -710,14 +718,20 @@ unambiguous.
 | `remote import-v1 [OPTIONS] SOURCE...` | map legacy *httk* v1 computer bundles | `--name` (one source only), `--global` |
 | `remote show [--json] NAME...` | describe remotes and their settings | |
 | `remote remove [--force] NAME...` | remove remote bundles | |
+| `remote daemon configure REMOTE` | import an approved endpoint catalog | required `--endpoint`, `--mount-root`, `--requests`, `--responses` |
+| `remote daemon health REMOTE` | check the confined daemon | `--request-id`, `--wait-seconds` |
+| `remote daemon start REMOTE` | start one approved manager configuration | required `--configuration`, `--request-id`; `--wait-seconds` |
+| `remote daemon status REMOTE` | inspect a manager | required `--handle`; `--request-id`, `--wait-seconds` |
+| `remote daemon cancel REMOTE` | request manager cancellation | required `--handle`, `--request-id`; `--wait-seconds` |
 
 `remote add --template` accepts `local` (same-machine transport), `ssh`
-(rsync plus command execution over SSH), or `mount` (a locally mounted remote
-filesystem for transfers plus a configurable executor for commands). These
-templates describe how to reach a machine; they do not describe how that machine
-starts managers. Configure
-manager launch separately in the target workspace with `manager.launch`, such
-as a packaged `slurm` launcher.
+(rsync plus command execution over SSH), `mount` (a locally mounted remote
+filesystem plus a command executor), or `mount-daemon` (typed file requests to a
+confined destination broker). The first three use the target workspace
+`manager.launch` setting, such as a packaged `slurm` launcher. `mount-daemon`
+selects a locally approved serial or MPI launcher configuration through the daemon; it refuses generic
+`REMOTE:NAME` operations. Transfer jobs using absolute mounted workspace paths.
+See {doc}`/remotes` for configuration and request-ID retry rules.
 
 `remote show` never prints a credential *value*: a remote setting stored in
 the manifest-excluded `credentials.json` is reported by name only, so a
@@ -1357,15 +1371,15 @@ with aged segments behind it; `collect` and `job log` report that timeline with
 Remote definitions are versioned directories containing `remote.json` and one
 executable `adapter`. The operation name travels in each versioned JSON request;
 the dispatcher prints one JSON result and sends diagnostics to stderr. Commands
-and remote commands are always argument arrays. The maintained templates implement that
+and remote commands are always argument arrays. The general maintained templates implement that
 protocol through {py:mod}`httk.workflow.adapter_protocol`, which is the public
 name of the packaged implementation. {doc}`adapter_authoring` is the reference
 for writing one of your own: the bundle layout, the exact request and result
 document of the six operations (`configure`, `install`, `invoke`, `push`, `pull`,
-and `status`), and the rules for a custom adapter.
+and `status`), the optional `daemon` operation, and the rules for a custom adapter.
 
-Maintained `local`, `ssh` and `mount` templates are packaged with
-the module. Project definitions shadow global definitions. `REMOTE:NAME` names
+Maintained `local`, `ssh`, `mount` and `mount-daemon` templates are packaged with
+the module. The last uses a separate dispatcher for its restricted file protocol. Project definitions shadow global definitions. `REMOTE:NAME` names
 a workspace on a remote. `remote import-v1` maps recognized legacy *httk* v1 computer bundles
 by reading assignment-only configuration; legacy shell executables are never
 copied or run. Any other `kind` in a `remote.json` is refused rather than
@@ -1422,6 +1436,10 @@ required. All three kinds implement the same six operations:
 `httk_command` overrides how `httk` is spelled on the far side, for example
 `httk_command="/proj/venv/bin/httk"`; without it the plain `httk` on the remote
 `PATH` is used, and locally a `python3 -m httk.core.cli` fallback applies.
+
+`mount-daemon` supports `configure`, `install` (a health request), and the optional
+`daemon` operation. It refuses the generic operations in the table above. Its
+eight settings and typed request/result contract are in {doc}`adapter_authoring`.
 
 ### Quoting
 
@@ -1575,3 +1593,13 @@ banner or a profile's greeting printed on the far side's stdout makes the fetch
 stop with *remote offer did not return a transfer offer document* before
 anything is pulled or imported. Put such greetings on stderr, or behind a
 non-interactive-shell test, on any host a remote adapter reaches.
+
+
+## `workflow mpi run`
+
+`httk workflow mpi run -- APPLICATION ARG...` executes one application through the
+current daemon MPI allocation. The approved configuration fixes nodes, ranks and CPUs;
+there are no caller-supplied Slurm options. The wrapper requires an active daemon
+MPI manager, streams stdout/stderr, uses `/dev/null` for stdin and returns the step
+status. A connection failure produces an uncertain result without resubmission.
+See {doc}`/workspace_daemon` for policy, containment and shared-memory requirements.

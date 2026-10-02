@@ -127,9 +127,13 @@ $ httk workspace settings set --key vasp.command --value "srun -n 32 vasp_std" k
 
 A *remote* is one reachable machine (named like `git remote`). The owning
 machine chooses the workspace path; it registers under its basename, so it is
-addressed as `kappa:runs` from then on. Remote templates are `ssh` or `local`
-transport; scheduler selection belongs to the workspace launcher. `remote show`
-never prints credential values.
+addressed as `kappa:runs` from then on. Templates include `ssh` and `local`
+command transports, `mount` with a separate executor, and `mount-daemon` for
+signed typed requests through a confined destination broker. Ordinary remote
+execution uses the destination workspace launcher; `mount-daemon` starts only
+operator-approved configurations. See
+[`workspace-daemon.md`](workspace-daemon.md) for daemon setup, key handling,
+and mounted-path transfers. `remote show` never prints credential values.
 
 httk₂ is never installed on the remote for you — set up *httk-workflow* there
 yourself (a venv, `pipx install httk-workflow`, a module) so it answers from a
