@@ -101,3 +101,8 @@ values = enthalpy(
 )
 assert all(isclose(actual, expected) for actual, expected in zip(values, (-1.0, -0.8)))
 ```
+
+As records (see {doc}`records`), a `ChemicalPotentialRegion` binds one
+`chemical_potential_region` value: `elements`, the host stoichiometry and total
+energy, and the competing stoichiometries and total energies (possibly empty),
+on the same total-energy scale as the potentials.

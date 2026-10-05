@@ -101,3 +101,10 @@ the next snapshot includes all phases currently accumulated by the builder.
 The plotting API is a presentation layer: use `energy_above_hull` and
 `phase_lines` for programmatic analysis. For hulls over non-materials
 coordinates, see {doc}`generic-hulls`.
+
+As records (see {doc}`records`), a `PhaseDiagram` binds one
+`convex_hull_phase_diagram` value over its energy-known phases (unknown-energy
+phases are excluded): `elements`, `phase_ids`, atomic-fraction `compositions`,
+`energies_per_atom`, `energies_above_hull_per_atom`, `stable` (within the
+construction `tolerance`, which is also recorded). Energies are on the scale
+supplied; only hull distances are scale-independent.

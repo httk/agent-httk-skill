@@ -8,7 +8,7 @@ health/start/status/cancel requests. Requests cannot carry commands, paths or
 Slurm arguments. This is an opt-in deployment feature with strict Linux,
 Bubblewrap (no unsandboxed fallback), Slurm and site requirements. Read
 [`workspace_daemon.md`](docs/httk-workflow/details/workspace_daemon.md) (trust,
-layout, quotas, MPI, site acceptance) and
+layout, quotas, parallel launches, site acceptance) and
 [`remotes.md`](docs/httk-workflow/details/remotes.md) before deployment. Local
 tests do not establish HPC or site acceptance.
 
@@ -32,20 +32,21 @@ Layout: the workspace and exchange are siblings in a dedicated parent that
 contains nothing else, on one filesystem and one mount (jobs move by plain
 rename). The exchange must not exist yet, or be empty.
 
-Approved manager configurations are global `--template daemon` launchers.
-Keys: `slurm.partition|account|gres|reservation|cpus_per_task|mem|time_limit`,
-`manager.workers|command`, `environment.prelude`; MPI only via
-`slurm.mpi=pmix` (needs `manager.workers=1` and `daemon.mpi.control_root`).
-Optional `daemon.*` site keys have defaults and must agree across launchers. A
-`slurm` launcher cannot be approved. The broker sees the host read-only (Slurm,
-MUNGE, user database just work); job sandboxes see only
-`daemon.readonly_paths` (default: `/usr`, the Python installation, where httk
-is imported from), so add software trees jobs need there.
+Trust model: the manager is trusted and runs unconfined in its Slurm batch
+job; each job attempt runs in its own Bubblewrap sandbox that can write only
+that job's directory (the workspace is readable). Approved manager
+configurations are ordinary global `slurm` launchers that set
+`manager.confine=bwrap` (`confine.*` keys; `slurm.*`, `manager.workers|command`,
+`environment.prelude` as usual). The broker sees the host read-only (Slurm,
+MUNGE, user database just work); attempts see `confine.readonly_paths` (default:
+`/usr`, `/etc`, the Python installation, where httk is imported from), so add
+software trees jobs need with `--add-path`.
 
 ```console
-httk workflow launcher add --template daemon --global small \
-  --set slurm.cpus_per_task=2 --set slurm.mem=4G \
+httk workflow launcher add --template slurm --global small \
+  --set manager.confine=bwrap --set slurm.cpus_per_task=2 --set slurm.mem=4G \
   --set slurm.time_limit=01:00:00 --set manager.workers=2
+httk workflow launcher configure --add-path confine.readonly_paths=/software small
 httk workspace daemon /proj/campaign/workspace --initialize \
   --exchange /proj/campaign/exchange --launcher small \
   --authorize ed25519:CLIENT_PUBLIC_KEY
@@ -64,11 +65,12 @@ server-side to the exchange; a mount alone does not confine it. Mount without
 `follow_symlinks`.
 
 To change launchers or keys, stop the daemon, edit launchers, then
-`httk workspace daemon WORKSPACE --reload` (given `--launcher`/`--authorize`
+`httk workspace daemon WORKSPACE --reload` (launcher edits take effect only
+after reload) (given `--launcher`/`--authorize`
 lists replace the stored ones). It rewrites `endpoint.json`; clients need no
 reconfiguration. Queued and running jobs keep their frozen snapshot. A change
 of the fixed connection (workspace, exchange, state, snapshots, cluster) needs
-a new enrollment; Slurm client paths, `slurm.conf` and readonly paths may change.
+a new enrollment; Slurm client paths, `slurm.conf`, Bubblewrap and Python may change.
 
 ## Client
 
@@ -115,6 +117,10 @@ synchronized (130 minutes skew allowed). A cancel acknowledgement is not proof
 that the manager stopped. `status.json` and `managers.json` are informational
 only.
 
-For MPI launchers the workflow runs the application through
-`httk workflow mpi run -- /opt/application/bin/program input.dat`. Complete the
-multi-node and communication checks in the full reference before relying on it.
+Parallel launches: code commands name only the program (`vasp.command =
+"vasp_std"`); the attempt's launch prefix `HTTK_WORKFLOW_LAUNCH`
+(`manager.launch_template` or the built-in Slurm prefix) supplies the parallel
+start. Under confinement it is a launch client that asks the trusted manager to
+start rank sandboxes; use `$HTTK_WORKFLOW_LAUNCH ./program input.dat`. Each
+launch style needs its own site acceptance (multi-node communication, shared
+memory, isolation, spawn, cancellation); see the full reference.

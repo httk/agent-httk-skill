@@ -31,7 +31,8 @@ binding names, not paths into `result`: `isotropic[4]` or
 value, and a series is keyed by its definition name (such as
 `vibrational_thermodynamics`) with a dictionary of member lists as its value,
 so each entry carries its own value. A value with a derivation is the
-statistic `records()` stores as a `DerivedDataRecord`. Fields without a
+statistic `records()` stores as a statistic kind of its base (or a
+`DerivedDataRecord` for a caller-chosen base). Fields without a
 published definition (van Hove, scattering or velocity-spectrum series, bond
 order, fit diagnostics) may get
 an OPTIMADE unit expression through `units=`, validated against the vendored

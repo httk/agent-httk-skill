@@ -8,7 +8,9 @@ the selected channel and whether its spin basis is spin-summed or resolved.
 No degeneracy factor is applied to DOSCAR's nonmagnetic total. As records (see
 {doc}`records`), a spin-summed result binds to `electronic_density_of_states`
 (`energies`, `density`, `integrated_density`) and `fermi_energy`; a
-spin-resolved channel has no definition and raises `ValueError`.
+collinear `up` or `down` channel binds to
+`spin_channel_electronic_density_of_states` (`spin`, `energies`, `density`,
+`integrated_density`, per cell and per eV in that channel) and `fermi_energy`.
 
 `band_edges_from_wavefunctions(wavefunctions, spin, occupation_tolerance=..., energy_reference=...)`
 selects one zero-based spin channel from an existing `PlaneWaveFunctions`

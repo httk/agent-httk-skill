@@ -78,8 +78,10 @@ for job in new_jobs(ws, "git+https://github.com/httk/workflows-vasp#vasp-relax",
 ## 3. Workspace settings (travel with the jobs)
 
 ```console
-$ httk workspace settings set --key vasp.command --value "srun -n 32 vasp_std" default
+$ httk workspace settings set --key vasp.command --value "vasp_std" default
 ```
+
+`vasp.command` names only the program; the launch prefix supplies the parallel start (`srun` or the launcher's `manager.launch_template`).
 
 Scalar settings are exported into each attempt's environment
 (`vasp.command` → `HTTK_VASP_COMMAND`); a real environment variable is a
@@ -122,7 +124,7 @@ $ httk workflow remote check kappa                    # verifies httk answers th
 $ httk workspace init kappa:/scratch/rar/httk/runs
 $ httk workspace settings set --key manager.launch --value cluster kappa:runs
 $ httk workspace settings set --key slurm.partition --value batch kappa:runs
-$ httk workspace settings set --key vasp.command --value "srun -n 32 vasp_std" kappa:runs
+$ httk workspace settings set --key vasp.command --value "vasp_std" kappa:runs
 ```
 
 A *remote* is one reachable machine (named like `git remote`). The owning

@@ -75,10 +75,12 @@ From an empty directory containing a VASP-5 `POSCAR`:
 $ httk project init --name myproject .
 $ httk workspace init --name default .
 $ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --input structure=POSCAR --tag silicon
-$ httk workspace settings set --key vasp.command --value "srun -n 32 vasp_std" default
+$ httk workspace settings set --key vasp.command --value "vasp_std" default
 $ httk workflow run
 $ httk collect
 ```
+
+`vasp.command` names only the program; the attempt's launch prefix (`HTTK_WORKFLOW_LAUNCH`) supplies the parallel start.
 
 `job new` publishes the packaged relaxation runner into the workspace and pins
 its digest (upgrading httk cannot change queued jobs); `run` drives every job

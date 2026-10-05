@@ -100,20 +100,41 @@ assert stress.residuals == ((1.0, 4.0, 6.0, 5.0, 3.0, 2.0),)
 
 ## Property bindings
 
-A statistic's population is part of its meaning, and derivation terms do not
-carry the weighting, so statistics bind only for their natural population.
-`httk.analyse.records.bound_values(result)` binds the raw `EnergyErrors.statistics`
-(`rmse`, `mae`, `bias`, `maximum_absolute_error`) to `total_energy_per_atom`
-(eV/atom) with the matching derivation term, only when `weighting="configuration"`
-(otherwise nothing is bound). `ForceErrors.component_statistics` binds to the
-core `atomic_force` (eV/angstrom) with the same four derivation terms, each value
-the `(x, y, z)` vector of that statistic, only when `weighting="atom"`
-(otherwise nothing is bound); vector-norm statistics, per-configuration and
-per-species statistics stay in the result only. The four
-`StressErrors.component_statistics` metrics to the core `stress_tensor` (GPa) as
-lists of six in `xx, yy, zz, yz, xz, xy` order, again with derivation terms.
-Stress errors have no weighting parameter and always bind. Offset-corrected
-statistics and the percentile are not bound.
+Each result always binds one dictionary-valued summary that carries its conditions
+as members, so differently weighted or offset-corrected summaries are distinct
+values of the same definition:
+
+- `EnergyErrors` binds `energy_prediction_errors` (`validation/energy_prediction_errors`):
+  `weighting`, `offset_per_atom` (null, the raw comparison), `count`, `bias`, `mae`,
+  `rmse`, `maximum_absolute_error`, `percentile95_absolute_error` (eV/atom) and the
+  per-configuration `residuals`. When an offset was applied it also binds
+  `corrected_energy_prediction_errors`, the same definition with `offset_per_atom`
+  set and the corrected statistics and residuals; it is a separate record with its
+  own content id.
+- `ForceErrors` binds `force_prediction_errors`: `weighting`, atom `count`, the five
+  component statistics as `(x, y, z)` vectors, `mean_vector_error`, `rms_vector_error`,
+  per-configuration vector errors and component RMSE, and per-species statistics
+  aligned with `species_labels` (the code-point sorted labels of the result's
+  per-species statistics).
+- `StressErrors` binds `stress_prediction_errors`: `count`, the five component
+  statistics as six-vectors in `xx, yy, zz, yz, xz, xy` order (GPa) and `residuals`.
+
+The summaries are always bound, so `records()` never warns about an empty binding
+for these types. Maximum and 95th-percentile errors are unweighted under every
+weighting.
+
+In addition, the natural populations keep queryable derivation records, which
+equal the matching summary members. A statistic's population is part of its
+meaning and derivation terms do not carry the weighting, so the raw
+`EnergyErrors.statistics` (`rmse`, `mae`, `bias`, `maximum_absolute_error`) bind to
+`total_energy_per_atom` (eV/atom) with the matching derivation term only when
+`weighting="configuration"`. `ForceErrors.component_statistics` binds to the core
+`atomic_force` (eV/angstrom) with the same four derivation terms, each value the
+`(x, y, z)` vector, only when `weighting="atom"`. The four
+`StressErrors.component_statistics` metrics bind to the core `stress_tensor` (GPa) as
+lists of six in `xx, yy, zz, yz, xz, xy` order, again with derivation terms, always.
+Atom-weighted energy errors and configuration-weighted force errors therefore bind
+only the summary.
 
 ```python
 from httk.analyse.matsci.mlip import energy_errors
@@ -122,6 +143,8 @@ from httk.analyse.records import bound_values
 bound = bound_values(energy_errors([0.0, 0.0], [1.0, 1.0], atom_counts=[1, 1]))
 assert [b.field for b in bound][0] == "statistics.rmse"
 assert bound[0].value == 1.0
+assert bound[-1].field == "energy_prediction_errors"
+assert bound[-1].value["offset_per_atom"] is None
 ```
 
 These summaries describe residuals on the supplied samples; they do not
@@ -143,6 +166,18 @@ automatic unit conversion.
 total energies in eV and a constant atom count. It reports a fitted slope in
 eV/atom/ps, the intercept at the first time, residual RMS and observed endpoint
 change. Thermostat/barostat energy exchange is not a model conservation test.
+`records()` stores the result as one `nve_energy_drift` dictionary (slope,
+intercept at `start`, residual RMS, observed endpoint change, `start`, `stop`
+and `samples`).
+
+```python
+import numpy as np
+from httk.analyse.matsci.validation import energy_drift
+from httk.analyse.records import bound_values
+
+drift = energy_drift(np.arange(5.0), 2.0 * np.arange(5.0), atom_count=2, ensemble="NVE")
+assert bound_values(drift)[0].value["samples"] == 5
+```
 
 `force_energy_consistency` evaluates `-dE/dx` using central differences at an
 explicit displacement in angstrom and compares with forces in eV/angstrom.

@@ -215,17 +215,32 @@ $ httk workflow remote daemon cancel confined --handle MANAGER_HANDLE --request-
 $ httk job adopt /mnt/cluster/exchange/outbox/JOB_KEY
 ```
 
-Managers started by the daemon adopt bundles from `inbox`. `status` without
+`--configuration` names one of the global `slurm` launchers the operator
+approved for the daemon (each sets `manager.confine=bwrap`); `endpoint.json`
+lists them with their digests. Managers started by the daemon adopt bundles
+from `inbox` and run every job attempt confined to its own job directory.
+`status` without
 `--handle` is passive: it prints the informational `status.json` and
 `managers.json` from the exchange without a request. With `--handle` it sends
-the signed `manager_status` request. See {doc}`workspace_daemon` for the job
-lifecycle, rejected bundles and trust.
+the signed `manager_status` request. The passive `managers.json` also reports
+each manager's outcome (scheduler state, exit code, times) and the bundles still
+waiting; once a manager's Slurm job has ended, `httk workflow remote daemon log
+confined --handle MANAGER_HANDLE` prints its published log.
+
+To give up on bundles that no manager has adopted, run `httk workflow remote
+daemon withdraw confined --request-id ID [--bundle NAME]`. It first takes your
+bundles still in `inbox` back locally, then asks the broker to return those it
+already moved into its staging area. Both end up in `outbox/withdrawn/NAME`; then
+`httk job adopt /mnt/cluster/exchange/outbox/withdrawn/NAME`. Update the broker
+before using `withdraw`: an old broker silently drops the unknown operation, and
+the client then times out. See
+{doc}`workspace_daemon` for the job lifecycle, rejected bundles and trust.
 
 ### Request ids and retries
 
 Replace `REQUEST_ID` and `ANOTHER_REQUEST_ID` with separately generated
-32-character lowercase hexadecimal ids, and keep them. Start and cancel require
-an explicit id; health and status generate one unless supplied. Each call prints
+32-character lowercase hexadecimal ids, and keep them. Start, cancel and withdraw
+require an explicit id; health and status generate one unless supplied. Each call prints
 its id to stderr before dispatch and a validated JSON response to stdout.
 
 - After a timeout, retry with **the same id and identical fields**. Never retry
@@ -244,7 +259,7 @@ acceptance window and replay rules.
 
 ### Waiting and exit codes
 
-`health`, `start`, `status` and `cancel` accept `--wait-seconds` from 0.05 to
+`health`, `start`, `status`, `cancel` and `withdraw` accept `--wait-seconds` from 0.05 to
 120 (default 10). Exit 0 means a positive protocol outcome; `refused`, `busy`,
 `uncertain` and unacknowledged calls exit 2. `UNKNOWN` is a valid status and
 does not establish completion. A cancellation acknowledgement does not confirm
@@ -268,10 +283,12 @@ filesystem call may exceed the polling or adapter timeout.
 
 The client controls the exchange and its own workspace content; `job adopt`
 keeps its usual client trust boundary when parsing bundles. The destination
-daemon enforces payload confinement independently. The `status.json` and
-`managers.json` files are informational and never acted on. MPI configurations
-need the additional site configuration and acceptance described in
-{doc}`workspace_daemon`.
+confines each job attempt independently: its managers run every attempt, and
+every rank of a parallel launch, in a sandbox that can write only that job's
+directory. The `status.json` and `managers.json` files are informational and
+never acted on. Parallel launches need the site configuration and acceptance
+described in {doc}`workspace_daemon`. Postprocess scripts are never run by the
+destination: run `httk workflow postprocess` on the adopted job locally.
 
 ## From Python
 

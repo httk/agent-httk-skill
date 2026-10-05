@@ -114,3 +114,8 @@ condition number is for the column-scaled design matrix; it describes the
 linear solve and is not parameter confidence. Inspect the strain window and
 fit stability under changed sampling. These are small-strain linear models,
 not finite-pressure or nonlinear elasticity fits.
+
+As records (see {doc}`records`), an `ElasticFit` binds the same values as its
+`tensor`; an unstable or singular tensor raises `ValueError` exactly as
+`ElasticTensor` does. Fit diagnostics (offsets, residuals, condition number)
+are not bound.

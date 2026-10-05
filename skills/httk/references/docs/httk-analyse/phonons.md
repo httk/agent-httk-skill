@@ -97,7 +97,9 @@ internal energies, entropies and heat capacities). A quasi-harmonic result binds
 one `quasiharmonic_thermodynamics` series whose
 `total_helmholtz_free_energies` are the minimized `free_energies`, static energy
 included, with `equilibrium_volumes`, `bulk_moduli` and
-`volumetric_thermal_expansions`.
+`volumetric_thermal_expansions`. A `GruneisenFit` binds one
+`mode_gruneisen_parameters` value (`reference_volume`, `values`, and the integer
+polynomial `degree`).
 
 ## Phonopy mesh
 
