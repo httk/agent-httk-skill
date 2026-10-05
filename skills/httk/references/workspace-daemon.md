@@ -63,8 +63,8 @@ To change launchers or keys, stop the daemon, edit launchers, then
 `httk workspace daemon WORKSPACE --reload` (given `--launcher`/`--authorize`
 lists replace the stored ones). It rewrites `endpoint.json`; clients need no
 reconfiguration. Queued and running jobs keep their frozen snapshot. A change
-of the fixed connection (paths, Slurm executables, cluster) needs a new
-enrollment.
+of the fixed connection (workspace, exchange, state, snapshots, cluster) needs
+a new enrollment; Slurm client paths, `slurm.conf` and broker paths may change.
 
 ## Client
 
