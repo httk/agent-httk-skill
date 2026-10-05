@@ -37,7 +37,10 @@ Keys: `slurm.partition|account|gres|reservation|cpus_per_task|mem|time_limit`,
 `manager.workers|command`, `environment.prelude`; MPI only via
 `slurm.mpi=pmix` (needs `manager.workers=1` and `daemon.mpi.control_root`).
 Optional `daemon.*` site keys have defaults and must agree across launchers. A
-`slurm` launcher cannot be approved.
+`slurm` launcher cannot be approved. The broker sees the host read-only (Slurm,
+MUNGE, user database just work); job sandboxes see only
+`daemon.readonly_paths` (default: `/usr`, the Python installation, where httk
+is imported from), so add software trees jobs need there.
 
 ```console
 httk workflow launcher add --template daemon --global small \
@@ -51,7 +54,8 @@ httk workspace daemon /proj/campaign/workspace
 ```
 
 Repeat `--launcher` and `--authorize` per item. `--initialize` writes
-`exchange/endpoint.json` (public trust anchors and digests). `--check` enters
+`exchange/endpoint.json` (public trust anchors and digests) and ends with the
+sandbox check (fix and `--reload` if it fails). `--check` enters
 the real broker sandbox and checks the scheduler clients; it does not submit
 work or test compute-node execution. `--once` does one bounded scan; normal
 startup polls until SIGINT/SIGTERM (use a site supervisor). Repeat non-default
@@ -64,7 +68,7 @@ To change launchers or keys, stop the daemon, edit launchers, then
 lists replace the stored ones). It rewrites `endpoint.json`; clients need no
 reconfiguration. Queued and running jobs keep their frozen snapshot. A change
 of the fixed connection (workspace, exchange, state, snapshots, cluster) needs
-a new enrollment; Slurm client paths, `slurm.conf` and broker paths may change.
+a new enrollment; Slurm client paths, `slurm.conf` and readonly paths may change.
 
 ## Client
 
