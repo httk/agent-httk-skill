@@ -129,11 +129,12 @@ A *remote* is one reachable machine (named like `git remote`). The owning
 machine chooses the workspace path; it registers under its basename, so it is
 addressed as `kappa:runs` from then on. Templates include `ssh` and `local`
 command transports, `mount` with a separate executor, and `mount-daemon` for
-signed typed requests through a confined destination broker. Ordinary remote
+signed typed requests and job eject/adopt through a confined destination
+broker's exchange directory. Ordinary remote
 execution uses the destination workspace launcher; `mount-daemon` starts only
 operator-approved configurations. See
 [`workspace-daemon.md`](workspace-daemon.md) for daemon setup, key handling,
-and mounted-path transfers. `remote show` never prints credential values.
+and exchange-directory job flow. `remote show` never prints credential values.
 
 httk₂ is never installed on the remote for you — set up *httk-workflow* there
 yourself (a venv, `pipx install httk-workflow`, a module) so it answers from a
@@ -346,7 +347,7 @@ serve them over OPTIMADE with httk-serve.
   --file NAME=PATH`). Callable: packaged ids/aliases, your own runner file,
   a package directory, or a bare language document — resolved like `job new`.
   File plumbing between calls is explicit; declarations are provenance, not
-  wiring (`docs/httk-workflow/composing_workflows.md`). `scaffold_job()` is
+  wiring (`docs/httk-workflow/details/composing_workflows.md`). `scaffold_job()` is
   `new_job()` stopped short of submission (a payload directory for `spawn`).
 - **Runners in other languages**: the SDK exists in Python, Bash, C, Fortran,
   Perl, Ada, C++, Java, and Rust (`docs/httk-workflow/sdks/`) — the native
@@ -359,5 +360,5 @@ serve them over OPTIMADE with httk-serve.
   parallelism as child jobs), or converted httk v1 template packages without
   rewriting (`docs/httk-workflow/workflow_compat.md`).
 - **Finished v1 trees**: `httk workflow v1 collect --workflow-dir PKG ROOT...`
-  harvests already-computed v1 runs (`docs/httk-workflow/v1_compatibility.md`);
+  harvests already-computed v1 runs (`docs/httk-workflow/details/v1_compatibility.md`);
   this is the only v1 surface to recommend.

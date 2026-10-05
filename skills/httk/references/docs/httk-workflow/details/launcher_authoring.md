@@ -1,10 +1,9 @@
 # Writing a manager launcher in detail
 
-*For operators and integrators who need to start workflow managers with a
-scheduler or process system the maintained templates do not cover.* A launcher
-is to starting managers what a remote is to reaching a machine. A remote
-adapter moves data and executes commands on a machine; a launcher starts one or
-more managers on the machine that hosts a workspace.
+A launcher starts one or more workflow managers on the machine that hosts a
+workspace, just as a remote adapter moves data and runs commands on a machine.
+This guide covers writing one for a scheduler or process system that the
+maintained templates do not cover.
 
 ## The bundle
 
@@ -16,11 +15,11 @@ my-cluster/
 └── launcher
 ```
 
-Project launchers live below
-`PROJECT/httk_project/launchers/NAME/`; global launchers live below
-`$XDG_CONFIG_HOME/httk/launchers/NAME/`. Project definitions shadow global
-definitions of the same name. The `process` name is reserved for the built-in
-detached-process implementation and cannot be defined as a bundle.
+Project launchers live below `PROJECT/httk_project/launchers/NAME/` and global
+launchers below `$XDG_CONFIG_HOME/httk/launchers/NAME/`. A project definition
+shadows a global definition of the same name. The name `process` is reserved
+for the built-in detached-process implementation and cannot be defined as a
+bundle.
 
 The maintained Slurm template is installed with:
 
@@ -36,9 +35,9 @@ The executable is normally a small wrapper:
 exec python3 -m httk.workflow.launch_runtime "$@"
 ```
 
-It receives one temporary JSON request filename, prints exactly one JSON result
-object, and writes diagnostics to stderr. The engine never invokes it through a
-shell.
+It receives the name of one temporary JSON request file, prints exactly one JSON
+result object, and writes diagnostics to stderr. The engine never invokes it
+through a shell.
 
 ## `launcher.json`
 
@@ -67,15 +66,15 @@ The maintained format is:
 | `required_binaries` | no | Programs checked with `shutil.which` on the launcher host |
 | `timeout_seconds` | no | Positive operation timeout, default `60` |
 
-`launcher` must exist and be executable. `required_binaries` is checked locally;
-it should name `qsub` when the launcher itself calls a local `qsub`, but not a
-binary that only exists after a remote hop. A custom kind is allowed in the
-metadata, but the packaged dispatcher refuses kinds it does not implement.
+`launcher` must exist and be executable. `required_binaries` is checked
+locally: list `qsub` when the launcher itself calls a local `qsub`, but not a
+binary that only exists after a remote hop. The metadata may name a custom
+kind, but the packaged dispatcher refuses kinds it does not implement.
 
 ## The request and result envelopes
 
-Every operation is sent as a request like this (the operation-specific members
-follow the envelope):
+Every operation is sent as a request like this, with the operation-specific
+members following the envelope:
 
 ```json
 {
@@ -110,46 +109,62 @@ The dispatcher prints one result object:
 ```
 
 The engine checks the format, version, operation, and `ok`. A refusal has
-`ok: false` and an `error`; the dispatcher still exits zero so that the JSON
+`ok: false` and an `error`, and the dispatcher still exits zero so that the JSON
 refusal crosses the boundary intact. A non-zero dispatcher exit, malformed JSON,
 or a mismatched envelope is an engine error. Stderr is attached as
-`diagnostics` on successful results. The caller can override the positive
-`timeout_seconds` bound for one operation; a timeout raises `TimeoutError`.
+`diagnostics` on successful results. The caller can override the
+`timeout_seconds` bound for one operation with another positive value; a
+timeout raises `TimeoutError`.
+
+The engine refuses an unknown operation, malformed metadata or result, a
+non-executable dispatcher, a missing required binary, a non-zero dispatcher
+exit, or a result that does not confirm success. It also refuses a launcher that
+tries to take over remote transport, because reaching a machine belongs to a
+remote adapter.
 
 ## The two operations
 
 `check` verifies every `required_binaries` entry with `shutil.which` and returns
-the kind. It performs no submission.
+the kind. It submits nothing.
 
 `start` receives an absolute `workspace`, the full manager `argv`, a positive
 manager `count`, the workspace `settings` mapping, and the bundle's
-`launcher_settings` mapping; for the maintained Slurm kind, bundle settings
-take precedence over workspace settings for keys the kind consumes. Settings are not copied
-into the bundle: `slurm.account`, `slurm.partition`, `slurm.time_limit`,
-`slurm.nodes`, `slurm.cpus_per_task`, `slurm.ntasks`,
-`slurm.ntasks_per_node`, `slurm.mem`, `slurm.gres`, and `slurm.reservation` are scheduler
-settings; `manager.workers` belongs to the manager command; and
-`environment.prelude` is shell setup such as module loads. A launcher may use
-other settings, but should keep its interpretation explicit.
+`launcher_settings` mapping. The maintained Slurm kind merges them, with bundle
+settings taking precedence over workspace settings for the keys the kind
+consumes; custom launchers define their own merge. Workspace settings are not
+copied into the bundle. The settings fall into three groups:
+
+- scheduler settings: `slurm.account`, `slurm.partition`, `slurm.time_limit`,
+  `slurm.nodes`, `slurm.cpus_per_task`, `slurm.ntasks`,
+  `slurm.ntasks_per_node`, `slurm.mem`, `slurm.gres`, and `slurm.reservation`;
+- `manager.workers` and `manager.allocation`, which belong to the manager
+  command;
+- `environment.prelude`, shell setup such as module loads.
+
+A launcher may use other settings, but should keep its interpretation explicit.
 
 The maintained Slurm dispatcher writes one mode-0700 script below
 `.httk-workspace/batch/`, adds `--chdir`, output, and error paths, and calls
-`sbatch` once per requested manager. Its final command is an argument-quoted
-`exec` line. If `environment.prelude` is set, the prelude runs under `set -e`
-first and the manager command is resolved on the resulting `PATH` as
-`manager.command` (default `httk`); without a prelude, the supplied Python
-interpreter argv is preserved. If submission fails after some jobs were
+`sbatch` once per requested manager. The script's final command is an
+argument-quoted `exec` line. If `environment.prelude` is set, the prelude runs
+first under `set -e`, and the manager command is resolved on the resulting
+`PATH` as `manager.command` (default `httk`). Without a prelude, the supplied
+Python interpreter argv is preserved. Unless the argv already has one, the
+dispatcher appends `--allocation` with the `manager.allocation` setting
+(default `slurm`), so each manager probes its job's nodes; see
+[allocation probes](#allocation-probes). A successful result contains the parsed
+Slurm job IDs and the script path. If submission fails after some jobs were
 accepted, the refusal includes `submitted` and `job_ids` so the operator can
-cancel those jobs. The successful result contains the parsed Slurm job IDs and
-the script path.
+cancel those jobs.
 
 ## A PBS launcher
 
-Here is a compact custom dispatcher. It follows the same request/result rules,
+This compact custom dispatcher follows the same request and result rules,
 composes PBS directives from workspace settings, and submits the same manager
-command once per requested count. In a real bundle, save it as `launcher`, add
-the executable bit, use `"kind": "pbs"`, and list `qsub` in
-`required_binaries`.
+command once per requested count. In a real bundle, save it as `launcher`, make
+it executable, use `"kind": "pbs"`, and list `qsub` in `required_binaries`. It
+points each manager at the bundle's `allocation` probe
+([below](#allocation-probes)) unless `manager.allocation` names another.
 
 ```python
 #!/usr/bin/env python3
@@ -184,7 +199,7 @@ def main():
         refusal(operation, "unsupported operation")
         return
     workspace = Path(request["workspace"])
-    settings = request.get("settings", {})
+    settings = {**request.get("settings", {}), **request.get("launcher_settings", {})}
     directory = workspace / ".httk-workspace" / "batch"
     directory.mkdir(parents=True, exist_ok=True)
     script = directory / ("manager-" + uuid.uuid4().hex + ".pbs")
@@ -202,7 +217,11 @@ def main():
     lines.append("set -e")
     if settings.get("environment.prelude"):
         lines.append(str(settings["environment.prelude"]))
-    lines.append("exec " + shlex.join(request["argv"]))
+    argv = list(request["argv"])
+    if "--allocation" not in argv:
+        bundle = request["launcher_dir"]
+        argv += ["--allocation", settings.get("manager.allocation", f"exec:{bundle}/allocation")]
+    lines.append("exec " + shlex.join(argv))
     script.write_text("\n".join(lines) + "\n")
     os.chmod(script, 0o700)
     jobs = []
@@ -217,4 +236,95 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
+
+## Allocation probes
+
+A manager learns its nodes, processors, memory and devices from the allocation
+probe its `--allocation SPEC` selects: `auto`, `none`, `slurm`, `host`, or
+`exec:PATH` (see {doc}`taskmanager` under "Allocations"). A launcher appends the
+spec its managers need; the maintained Slurm dispatcher appends the
+`manager.allocation` setting, default `slurm`. A scheduler without a built-in
+probe uses `exec:PATH`: the manager runs PATH, without a shell or arguments,
+inside the allocation when it starts, and the executable prints one envelope on
+stdout:
+
+```json
+{
+  "format": "httk-workflow-allocation",
+  "format_version": 1,
+  "kind": "pbs",
+  "end_time": 1790000000,
+  "cpus_per_proc": 8,
+  "nodes": [
+    {"host": "n001", "procs": 4, "mem": 128000, "gpus": 2,
+     "cpus": ["0-7", "8-15", "16-23", "24-31"],
+     "gpu_ids": ["0", "1"], "gpu_variable": "CUDA_VISIBLE_DEVICES",
+     "local": true}
+  ],
+  "resources": {"license": 2}
+}
+```
+
+| Member | Required | Meaning |
+| --- | --- | --- |
+| `format`, `format_version` | yes | `httk-workflow-allocation`, `1` |
+| `kind` | yes | A label naming the probe, such as `pbs` |
+| `end_time` | no | Epoch second the allocation ends, a positive number or `null` |
+| `cpus_per_proc` | no | CPUs per processor slot, a positive integer, default `1` |
+| `nodes` | yes | Non-empty list of nodes with unique `host` names |
+| `nodes[].host` | yes | Non-empty host name |
+| `nodes[].procs` | yes | Processor slots on the node, a non-negative integer |
+| `nodes[].mem` | no | Memory in MB; the allocation has a `mem` capacity only when every node gives it |
+| `nodes[].gpus` | no | GPUs on the node, default `0` |
+| `nodes[].cpus` | no | One Linux cpulist (`0-7`, `0,2,4-6`) per processor slot, `procs` entries |
+| `nodes[].gpu_ids` | no | One non-empty device id per GPU, `gpus` entries |
+| `nodes[].gpu_variable` | with `gpu_ids` | The environment variable the ids belong in, such as `CUDA_VISIBLE_DEVICES` |
+| `nodes[].local` | no | Whether this is the manager's host, default `false`; at most one node may set it to `true` |
+| `resources` | no | Extra non-negative integer capacities; not `procs`, `mem`, `gpus`, `nodes`, `maxtime` or `mintime` |
+
+CPU sets of different slots on one node must be disjoint, and GPU IDs on that
+node must be unique. The same CPU numbers or GPU IDs may occur on different
+nodes. Set `local: true` when the scheduler's name for the manager's host differs
+from its operating-system hostname, so local CPU and GPU binding applies.
+
+Unknown members are refused. The capacity the manager advertises is the node
+sums of `procs`, `gpus` and `mem`, the node count as `nodes`, and the extra
+`resources`; `--worker-resource` overrides any of them. A non-zero exit, a
+timeout after 60 seconds, or an invalid envelope stops the manager with an error
+naming the probe and the end of its stderr.
+
+Maintained scheduler integrations use the private `_scheduler.Scheduler`
+interface for environment detection, aggregate capacity, allocation end,
+node probing and default application-step arguments. The Slurm implementation
+lives in `_slurm`; the manager consumes normalized allocation metadata and
+placement results. Site integrations use the launcher bundle, allocation
+envelope and `manager.launch_template` described here without importing those
+private Python modules.
+
+For the PBS launcher above, save this as `allocation` next to `launcher` and
+make it executable. `$PBS_NODEFILE` lists one line per processor slot, repeating
+each host:
+
+```python
+#!/usr/bin/env python3
+import collections
+import json
+import os
+
+with open(os.environ["PBS_NODEFILE"]) as nodefile:
+    slots = collections.Counter(line.strip() for line in nodefile if line.strip())
+print(json.dumps({
+    "format": "httk-workflow-allocation",
+    "format_version": 1,
+    "kind": "pbs",
+    "nodes": [{"host": host, "procs": procs} for host, procs in slots.items()],
+}))
+```
+
+The PBS dispatcher appends `--allocation exec:BUNDLE/allocation` by default;
+setting it explicitly is equivalent:
+
+```console
+httk workflow launcher configure --set manager.allocation=exec:/home/me/.config/httk/launchers/pbs-cluster/allocation pbs-cluster
 ```

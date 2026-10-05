@@ -33,7 +33,7 @@ elsewhere.
 ## How to help — task routing
 
 - **"Run calculations / a campaign / on a cluster"** → read
-  `references/campaign.md`. For a signed file-mounted Slurm broker, also read
+  `references/campaign.md`. For a confined file-mounted Slurm broker (exchange directory), also read
   `references/workspace-daemon.md`. This is the toolkit's center of gravity:
   project →
   workspace → jobs → (remote) → run → monitor → transfer back → collect →
@@ -129,8 +129,8 @@ For a cluster campaign, configure the workspace's manager launcher first; use
 a remote only when transport to another machine is needed. For the full
 remote/HPC path (`kappa:runs` colon workspaces, `job transfer`, `campaign`
 partitioning, Python `new_jobs` streaming, `collect --into` a store), follow
-`references/campaign.md`. For the signed `mount-daemon` workflow, including
-identity keys and absolute-path transfers, see
+`references/campaign.md`. For the confined `mount-daemon` workflow, including
+identity keys and exchange-directory job eject/adopt, see
 `references/workspace-daemon.md`.
 
 ## Core ideas to keep in mind (details: references/architecture.md)

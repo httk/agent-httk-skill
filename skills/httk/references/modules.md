@@ -141,7 +141,7 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   provenance in the framework. A `Run`'s input/artifact/output edges are
   servable as semantic OPTIMADE relationships in both directions (see
   `data-serving.md`).
-- Sealing (`docs/httk-workflow/sealing.md`): signed manifests over a job's,
+- Sealing (`docs/httk-workflow/details/sealing.md`): signed manifests over a job's,
   workspace's, or project's contents, detecting later tampering —
   `httk job seal|unseal`, `httk workspace seal|unseal`, `httk project
   seal|unseal` (core-owned), `httk workflow seal verify`. A job seal lives

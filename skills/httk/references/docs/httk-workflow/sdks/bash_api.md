@@ -216,6 +216,8 @@ step composed lives in shell state, so the subshell costs a step nothing.
 | `$HTTK_WORKFLOW_STEP` | the step this attempt runs |
 | `$HTTK_WORKFLOW_WORKDIR`, `$HTTK_WORKFLOW_JOB_DIR`, `$HTTK_WORKFLOW_DATA_DIR` | absolute paths; the data directory is set only for a transactional job |
 | `$HTTK_WORKFLOW_DURABLE` | `1` on a storage-durable workspace, `0` otherwise |
+| `httk_workflow_context deadline`, `$HTTK_WORKFLOW_DEADLINE` | the epoch second at which the manager stops this attempt; only when the attempt has a `maxtime`, otherwise the call exits 1 and the variable is unset |
+| `httk_workflow_context binding`, `$HTTK_WORKFLOW_NODELIST`, `$HTTK_WORKFLOW_NODEFILE`, `$HTTK_WORKFLOW_LAUNCH` | the nodes, nodefile and launch prefix the attempt was given: the context object (its `file` member names `binding.json`, which adds per-node `gpu_ids` and `cpus`), the comma-separated hosts, the nodefile path (one host line per processor slot), and the shell-quoted launch prefix (such as `srun ...`, set only when one applies; run it with `eval` when it may hold quoted words); only when the manager has a node inventory, otherwise the call exits 1 and the variables are unset |
 
 A step starts in its workdir, so ordinary relative paths are workdir paths.
 
@@ -288,7 +290,7 @@ jq '.outputs = {"structures": 3}' declared.json >refined.json
 httk_workflow_declare workflow refined.json
 ```
 
-See {doc}`../declarations` for the declared/observed contract and what a collect
+See {doc}`../details/declarations` for the declared/observed contract and what a collect
 reports.
 
 `httk_workflow_children` prints `label`, terminal state, job key, workdir, and
@@ -324,7 +326,7 @@ parent_workdir=$(httk_workflow_parent workdir)
 ln -sfn "$parent_workdir/CHGCAR" CHGCAR
 ```
 
-See the "Sharing files with children" section of {doc}`../composing_workflows`
+See the "Sharing files with children" section of {doc}`../details/composing_workflows`
 for when reading in place is the right choice and what keeps it safe.
 
 ## What a step publishes
@@ -342,8 +344,8 @@ read back from the draft by whichever process asks next.
 
 | Call | Meaning |
 | --- | --- |
-| `httk_workflow_advance STEP [--state NAME=VALUE ...] [--priority N] [--resource NAME=INT ...]` | run `STEP` next; the state is written before publication |
-| `httk_workflow_gather STEP [--when C] [--count N] [--on-impossible STEP] [--priority N] [--resource NAME=INT ...]` | wait for the children spawned on this attempt, then run `STEP` at the optional priority |
+| `httk_workflow_advance STEP [--state NAME=VALUE ...] [--priority N] [--resource NAME=VALUE ...]` | run `STEP` next; the state is written before publication |
+| `httk_workflow_gather STEP [--when C] [--count N] [--on-impossible STEP] [--priority N] [--resource NAME=VALUE ...]` | wait for the children spawned on this attempt, then run `STEP` at the optional priority |
 | `httk_workflow_succeed` | the job is done |
 | `httk_workflow_retry REASON` | repeat this activation within the job's attempt budget |
 | `httk_workflow_pause REASON` | stop until an operator resumes the job |
@@ -386,8 +388,8 @@ job: its workflow, its claim pool, its priority, its resources, and its runner.
 | `--workdir-mode persistent\|isolated`, `--workdir-path PATH` | the child's workdir |
 | `--data-mode none\|transactional` | whether the child owns durable data |
 | `--retry-on CODE`, `--max-attempts-per-activation N`, `--max-total-attempts N`, `--max-activations N` | the child's retry policy |
-| `--resources @FILE.json` | the child's requested resources |
-| `--step-resources @FILE.json` | the child's per-step resource requirements |
+| `--resources @FILE.json` | the child's requested resources (`maxtime` and `mintime` as Slurm duration strings) |
+| `--step-resources @FILE.json` | the child's per-step resource requirements (time labels as Slurm duration strings) |
 
 `inherit` copies this job's own `(source, path, sha256)`, which is what a campaign
 whose steps all live in one published runner wants. A payload runner cannot be
@@ -426,7 +428,7 @@ child's job tag defaults to the label, just as with `spawn`.
 | `--workflow-id ID` | override the workflow id written into the child's `job.json` |
 
 Calling needs the workspace root reachable from where the step runs, the same
-condition `httk_workflow_children` needs. See {doc}`../composing_workflows` for
+condition `httk_workflow_children` needs. See {doc}`../details/composing_workflows` for
 the full model, a worked example, and how results move between calls.
 
 ### Gathering them
@@ -438,8 +440,11 @@ runs `STEP` when the condition holds. `--when` is `all_succeeded` (the default),
 `--priority` changes the priority of the activation that resumes after the join.
 When the condition can no longer be met the job advances to `--on-impossible` if
 one is named, and fails with `dependency_failure` otherwise. Add
-`--resource NAME=INT` one or more times to `httk_workflow_advance` or
-`httk_workflow_gather` to set the next activation's resource requirement.
+`--resource NAME=VALUE` one or more times to `httk_workflow_advance` or
+`httk_workflow_gather` to set the next activation's resource requirement. A
+value is an integer, except for the reserved time labels `maxtime` and
+`mintime`, which take a Slurm duration such as `--resource maxtime=1:30:00`
+(`M`, `M:S`, `H:M:S`, `D-H`, `D-H:M`, or `D-H:M:S`).
 
 ### Data and workdir changes
 
@@ -610,6 +615,6 @@ these functions is `vasp.relax-bash` of workflows-vasp: see {doc}`../vasp_runner
 Trivial path matching and field splitting use normal quoted Bash constructs.
 Native code does not source or expose the legacy `HT_TASK_*` or `VASP_*`
 function names. Unchanged *httk* v1 workflows continue to use
-[*httk* v1 task compatibility](v1_compatibility.md). For a step-by-step
+[*httk* v1 task compatibility](../details/v1_compatibility.md). For a step-by-step
 conversion, see
-[*httk* v1 migration guide](httk_v1_migration_guide.md).
+[*httk* v1 migration guide](../httk_v1_migration_guide.md).
