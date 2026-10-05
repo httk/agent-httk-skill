@@ -101,7 +101,12 @@ manager adopts them. A finished job (succeeded/failed/cancelled, no parent, no
 unfinished children) auto-ejects to `outbox/<job_key>` about 60 s later;
 `job adopt` takes it back. Refused bundles land in `outbox/rejected/`, with the
 reason in `status.json`. Failed jobs are never retried automatically: adopt,
-fix, eject again.
+fix, eject again. Manager (Slurm job) outcomes: `managers.json` lists each manager's
+scheduler state, exit code and times plus bundles still waiting; a finished
+manager's Slurm output is at `outbox/managers/<handle>.log`
+(`httk workflow remote daemon log REMOTE --handle H`). If no manager can run,
+`httk workflow remote daemon withdraw REMOTE --request-id ID [--bundle NAME]`
+returns waiting bundles unchanged to `outbox/withdrawn/<name>` for `job adopt`.
 
 After a timeout, retry the same request ID with identical fields; the daemon
 never submits a duplicate. `uncertain` means the operator must reconcile with
