@@ -47,30 +47,36 @@ httk workflow launcher add --template slurm --global small \
   --set manager.confine=bwrap --set slurm.cpus_per_task=2 --set slurm.mem=4G \
   --set slurm.time_limit=01:00:00 --set manager.workers=2
 httk workflow launcher configure --add-path confine.readonly_paths=/software small
-httk workspace daemon /proj/campaign/workspace --initialize \
-  --exchange /proj/campaign/exchange --launcher small \
-  --authorize ed25519:CLIENT_PUBLIC_KEY
-httk workspace daemon /proj/campaign/workspace --check
-httk workspace daemon /proj/campaign/workspace
+httk workspace daemon init /proj/campaign/workspace \
+  --exchange /proj/campaign/exchange --add launchers=small \
+  --add authorized_keys=ed25519:CLIENT_PUBLIC_KEY
+httk workspace daemon check /proj/campaign/workspace
+httk workspace daemon run /proj/campaign/workspace
 ```
 
-Repeat `--launcher` and `--authorize` per item. `--initialize` writes
-`exchange/endpoint.json` (public trust anchors and digests) and ends with the
-sandbox check (fix and `--reload` if it fails). `--check` enters
-the real broker sandbox and checks the scheduler clients; it does not submit
-work or test compute-node execution. `--once` does one bounded scan; normal
-startup polls until SIGINT/SIGTERM (use a site supervisor). Repeat non-default
-`--state`/`--snapshots` on later calls. The SSHFS account must be restricted
+Repeat `--add` per item; `--set KEY=VALUE` sets other keys (`bwrap`, `python`,
+`sbatch`, `squeue`, `scancel`, `sacct`, `slurm_conf`, `max_submissions`,
+`force`; `cluster`/`scontrol` at `init` only). `init` saves
+`<state>/configuration.json`, writes `exchange/endpoint.json` (public trust
+anchors and digests) and ends with the `check`. `show WORKSPACE [--json]`
+prints the enrollment and configuration. `check` enters the real broker
+sandbox and checks the scheduler clients; it does not submit work or test
+compute-node execution. `run --once` does one bounded scan; `run` polls until
+SIGINT/SIGTERM (use a site supervisor). Repeat non-default `--state` on later
+calls; `--snapshots` is remembered. The SSHFS account must be restricted
 server-side to the exchange; a mount alone does not confine it. Mount without
 `follow_symlinks`.
 
-To change launchers or keys, stop the daemon, edit launchers, then
-`httk workspace daemon WORKSPACE --reload` (launcher edits take effect only
-after reload) (given `--launcher`/`--authorize`
-lists replace the stored ones). It rewrites `endpoint.json`; clients need no
-reconfiguration. Queued and running jobs keep their frozen snapshot. A change
-of the fixed connection (workspace, exchange, state, snapshots, cluster) needs
-a new enrollment; Slurm client paths, `slurm.conf`, Bubblewrap and Python may change.
+Changing the configuration: edit launchers with `httk workflow launcher
+configure`, or the daemon configuration with `httk workspace daemon configure
+WORKSPACE --set|--add|--remove KEY=VALUE` (lists `launchers`,
+`authorized_keys`), then restart `run`. There is no approval or reload step:
+every `check`/`run` re-reads the configuration and current launcher bundles and
+activates changes, rewriting `endpoint.json` (clients read it live). A
+change cannot be activated while a daemon is running, so stop it first; a
+restart also applies an httk upgrade. Queued and running jobs keep their frozen snapshot. A change of the
+fixed connection (workspace, exchange, state, snapshots, cluster) needs a new
+enrollment.
 
 ## Client
 
@@ -123,4 +129,21 @@ Parallel launches: code commands name only the program (`vasp.command =
 start. Under confinement it is a launch client that asks the trusted manager to
 start rank sandboxes; use `$HTTK_WORKFLOW_LAUNCH ./program input.dat`. Each
 launch style needs its own site acceptance (multi-node communication, shared
-memory, isolation, spawn, cancellation); see the full reference.
+memory, isolation, spawn, cancellation).
+
+The built-in Slurm prefix is `env SLURM_HOSTFILE=<nodefile> srun [--mpi=M]
+--ntasks=T --distribution=arbitrary --exact --cpus-per-task=C ...` (no
+`--nodes`/`--nodelist`; a custom `manager.launch_template` using
+`--distribution=arbitrary` must not pass them either). `manager.launch_mpi=<plugin>`
+adds `--mpi=<plugin>` (ignored with a template); Intel MPI needs `pmi2`:
+`httk workflow launcher configure --set manager.launch_mpi=pmi2 small`, then
+restart the daemon.
+
+`manager.confine.block_mpi_spawn` (under `manager.confine=bwrap`) is `on`
+(default), `auto` or `off`. With `on`, the rank helper keeps Slurm's `PMI_FD`,
+relays PMI-1 through a filter that refuses `MPI_Comm_spawn` and fails closed
+on anything else, and drops `PMI_PORT`; `auto` is `on` when `PMI_FD` is set,
+else `off`; `off` passes Slurm's PMI through, so spawn escapes the sandbox. It
+does not cover a non-Slurm PMIx server (e.g. an Open MPI `mpirun` template).
+See the full reference, [PMI-2
+launches](docs/httk-workflow/details/workspace_daemon.md#pmi-2-launches-intel-mpi).

@@ -53,9 +53,11 @@ $ httk workflow run --count 4 --workspace default
 | `manager.launch` | Launcher name; the built-in `process` launcher is the default. |
 | `manager.count` | Default number of managers; `--count N` overrides it for one invocation. |
 | `manager.workers` | Default number of workers per manager; `--workers N` overrides it. |
-| `manager.command` | The manager interpreter/command used after `environment.prelude`; without a prelude, the launching Python interpreter is used. |
+| `manager.command` | The manager interpreter/command used after `environment.prelude`; without a prelude, the launching Python interpreter is used (for a daemon submission, the daemon configuration's `python`). |
 | `manager.allocation` | The `--allocation` probe a launcher passes its managers: `auto`, `none`, `slurm`, `host` or `exec:PATH`; the Slurm launcher's default is `slurm`. |
 | `manager.launch_template` | Argv template for the attempt launch prefix; placeholders `{procs}` `{nodes}` `{hosts}` `{nodefile}` `{gpus}` `{mem}` `{cpus_per_proc}`. |
+| `manager.launch_mpi` | Slurm MPI plugin appended as `--mpi=<name>` to the built-in Slurm launch step (for example `pmi2` for Intel MPI); ignored when `manager.launch_template` is set. |
+| `manager.confine.block_mpi_spawn` | Under `manager.confine=bwrap`: `on` (default) relays confined ranks' Slurm PMI-1 and refuses `MPI_Comm_spawn`, `auto` does so only when Slurm sets `PMI_FD`, `off` passes Slurm's PMI through; see [PMI-2 launches](workspace_daemon.md#pmi-2-launches-intel-mpi). |
 | `manager.bind_cpus` | `true`, `1` or `yes` pins locally executed attempts to the CPUs of their processor slots; off by default. |
 | `manager.confine`, `confine.*` | Attempt confinement; see [Confinement](#confinement). |
 | `slurm.account` | Slurm account directive. |
@@ -68,9 +70,13 @@ $ httk workflow run --count 4 --workspace default
 | `slurm.mem` | Slurm memory allocation. |
 | `slurm.gres` | Slurm generic resource request. |
 | `slurm.reservation` | Slurm reservation. |
+| `slurm.export` | sbatch `--export` mode for a workspace-daemon manager submission: `NONE` (default) or `NIL`. |
 | `environment.prelude` | Shell setup run before the manager, such as a module load or environment activation. |
 
-The `slurm.*` values become batch directives. `environment.prelude` runs before
+The `slurm.*` values become batch directives, except `slurm.export`, which sets
+the `sbatch --export` command-line mode (`NONE` or `NIL`, default `NONE`) of a
+workspace-daemon manager submission; see the site's `sbatch` manual for what
+each mode means. `environment.prelude` runs before
 the manager under `set -e`, and `manager.command` is then looked up on the
 resulting `PATH`. Without a prelude, the launcher preserves the Python
 interpreter that started the command.
@@ -168,8 +174,8 @@ reason until it is available again.
 ### Pinned settings
 
 A `slurm` launcher pins its own values of `manager.confine`,
-`manager.launch_template`, `manager.bind_cpus` and every `confine.*` key on each
-manager it starts: they are passed as `--setting KEY=VALUE`, appended after any
+`manager.launch_template`, `manager.launch_mpi`, `manager.confine.block_mpi_spawn`, `manager.bind_cpus` and every
+`confine.*` key on each manager it starts: they are passed as `--setting KEY=VALUE`, appended after any
 `--setting` given on the command line, and the last occurrence of a key wins.
 Pinned values override the workspace setting of the same key and stay fixed
 for the manager's lifetime. Every other workspace setting, and any of these

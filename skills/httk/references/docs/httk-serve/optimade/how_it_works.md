@@ -145,13 +145,45 @@ Relative to OPTIMADE v1.0.0, the implementation includes:
   still match nothing (deferred),
 - nested property names of dictionary properties, such as
   `_httk_errors.rmse < 0.01` or `_httk_errors.labels HAS "O"`, with every
-  operator family including `LENGTH` (the outer length of the member list as
-  served). `HAS` and its variants apply to one-dimensional list members, and a
+  operator family including `LENGTH` (the length of the flattened member
+  list). `HAS` and its variants apply to one-dimensional list members, and a
   member through a list of dictionaries flattens to the list of its values. The
-  in-memory provider route filters every member of a served dictionary; the
-  stored route filters the members whose backing declares member queries (typed
-  records do) and answers `501` for the others. An unknown member, or a member
-  of a non-dictionary property, is a `400 Bad Request`,
+  same names cover members of list-of-dictionary properties, flattened per
+  OPTIMADE: `species.chemical_symbols` is the list of every species' symbols,
+  and `authors.lastname` that of every author's last name. The in-memory
+  provider route filters every member of a served dictionary; the stored route
+  filters the members whose backing declares member queries (typed records do,
+  including structures `species` in *httk-atomistic* stores) and answers `501`
+  for the others, such as other stored list-of-dictionary members. An unknown
+  member, or a member of a property that is neither a dictionary nor a list of
+  dictionaries, is a `400 Bad Request`. A float literal compared with an exact
+  stored value (such as `species.concentration` or `elements_ratios`) uses
+  exact rational equality with the decimal literal on stored routes and float
+  equality with the served value on the in-memory route, so
+  `0.3333333333333333` matches 1/3 only in memory. The vendored upstream
+  definition of structures `assemblies` declares a dictionary rather than a
+  list of dictionaries (an upstream defect; trajectories `assemblies` is a
+  list), so its member types follow that declaration,
+- correlated (zip) filters such as `elements:elements_ratios HAS "Si":0.375`
+  over one-dimensional list properties, each value slot with its own
+  operator (`=`, `!=`, `<`, `<=`, `>`, `>=`). `HAS` and `HAS ALL` require
+  every value tuple to match at some element position (positions may differ
+  between tuples), `HAS ANY` requires some value tuple to match, and
+  `HAS ONLY` requires every position to match some value tuple. A null slot
+  value never matches, and `HAS ONLY` ignores positions holding one. The
+  in-memory provider route supports any combination of one-dimensional list
+  properties, top-level or dictionary members, including ordering slots such
+  as `elements:elements_ratios HAS "Si":>0.3`; lists of unequal length make
+  the filter unknown (neither it nor its negation matches). The stored route
+  supports a zip where the owning projection declares it (typed-record
+  dictionary members sharing a dimension, and in *httk-atomistic* stores
+  `elements:elements_ratios` and the structures `species` constituent members
+  such as `species.chemical_symbols:species.concentration`) and answers `501`
+  otherwise. There, rational slots (`elements_ratios`,
+  `species.concentration`) compare as exact rationals with `=` and `!=` only;
+  ordering them answers `501`. A zip over a property that is not a
+  one-dimensional list is a `400`, and string matching inside a zip is a
+  grammar error (`400`),
 - the `references`, `files`, and `trajectories` entry types,
 - per-property metadata (`meta.property_metadata` and the
   `x-optimade-metadata-definition` in property definitions),
@@ -165,8 +197,8 @@ Optional parts of the specification that are not implemented: cross-source sort
 merging, filtering on relationship paths nested deeper than one level
 (`references.structures.x`), on relationship `meta`
 (`.description`/`.role`), and relationship `LENGTH` filters (`501 Not
-Implemented`), zip filters (`a:b HAS "x":"y"`, rejected as invalid syntax with a
-`400`), the sparse JSON Lines layout, transaction mechanisms, and rejection of
+Implemented`), `HAS` with an operator outside a zip (`elements HAS < "x"`,
+`501`), the sparse JSON Lines layout, transaction mechanisms, and rejection of
 unrecognized query parameters.
 
 ## The `_httk_relationships` filter extension

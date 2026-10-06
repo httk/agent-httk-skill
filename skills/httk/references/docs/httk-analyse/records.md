@@ -76,6 +76,15 @@ with Backend.sqlite() as database:
     assert [row[0].value for searcher in searchers for row in searcher.results()] == [fit.bulk_modulus]
 ```
 
+Correlated (zip) filters pair one-dimensional list members of one dictionary
+value that share a dimension, position by position:
+`_httk_convex_hull_phase_diagram.phase_ids:_httk_convex_hull_phase_diagram.stable HAS "AB":TRUE`
+matches phase diagrams in which phase `AB` is stable. Each slot may take its own
+comparison operator (`"AB":>0.1`). `HAS ALL` requires
+every tuple at some position, `HAS ANY` some tuple, and `HAS ONLY` that every
+position matches some tuple; an absent optional member (`phase_ids`) makes the
+filter unknown, and members of different dimensions are not implemented.
+
 `bound_values(result, **selection)` lists every binding as
 `BoundValue(field, binding, value)`, where `binding` is a
 `FieldBinding(definition, derivation=None)`. `field` is a binding

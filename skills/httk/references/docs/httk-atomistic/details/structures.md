@@ -409,6 +409,32 @@ assert records["known-but-empty"]["lattice_vectors"] is None
 assert records["known-but-empty"]["chemical_formula_reduced"] is None
 ```
 
+Structures served from a store also filter on the OPTIMADE nested names of
+`species`, each member flattened over every species as the specification
+defines: `species.name`, `species.original_name`, `species.chemical_symbols`,
+`species.concentration` (exact rational equality, like `elements_ratios`),
+`species.mass` (only constituents that state a mass), `species.attached` and
+`species.nattached` accept `HAS`, `HAS ALL`, `HAS ANY`, `HAS ONLY`, `LENGTH`
+and `IS KNOWN`/`IS UNKNOWN` (always known), for example
+`species.chemical_symbols HAS ALL "Fe","Ni" AND species.concentration HAS 0.25`.
+`species` itself accepts `LENGTH` and `IS KNOWN`/`IS UNKNOWN`.
+`assemblies` members are not filterable on stored structures. On ClickHouse the
+constituent and attachment members are rejected, like `elements`, because they
+nest correlated subqueries more than one level deep.
+
+Stored structures also accept two correlated (zip) filters, in either order:
+`elements:elements_ratios` (for example `elements:elements_ratios HAS "Si":0.375`)
+and `species.chemical_symbols:species.concentration` (for example
+`species.chemical_symbols:species.concentration HAS "Ge":0.625`). A value pair
+matches one composition row, or one species constituent; `HAS ALL` needs every
+pair matched by some row, `HAS ANY` some pair, and `HAS ONLY` every row matched
+by some pair. Ratios and concentrations compare as exact rationals with `=` and
+`!=` only (exact values have no orderable stored form); element symbols accept
+every comparison operator. An incomplete composition keeps the
+`elements:elements_ratios` filter unknown. Other combinations, including
+`species.mass` (not every constituent states a mass), answer not implemented.
+On ClickHouse both are rejected like `elements`.
+
 ## Shared Behavior, `unwrap`, and `unview`
 
 `unwrap(obj)` returns the most raw representation available:

@@ -81,7 +81,7 @@ for job in new_jobs(ws, "git+https://github.com/httk/workflows-vasp#vasp-relax",
 $ httk workspace settings set --key vasp.command --value "vasp_std" default
 ```
 
-`vasp.command` names only the program; the launch prefix supplies the parallel start (`srun` or the launcher's `manager.launch_template`).
+`vasp.command` names only the program; the launch prefix supplies the parallel start (`srun`, with `manager.launch_mpi` choosing its MPI plugin, or the launcher's `manager.launch_template`).
 
 Scalar settings are exported into each attempt's environment
 (`vasp.command` → `HTTK_VASP_COMMAND`); a real environment variable is a

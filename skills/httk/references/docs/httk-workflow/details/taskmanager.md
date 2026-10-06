@@ -346,6 +346,14 @@ shape the launch:
 - `manager.launch_template`: the argv template for the attempt launch prefix;
   placeholders `{procs}` `{nodes}` `{hosts}` `{nodefile}` `{gpus}` `{mem}`
   `{cpus_per_proc}`.
+- `manager.launch_mpi`: the Slurm MPI plugin appended as `--mpi=<name>` to the
+  built-in Slurm launch step (for example `pmi2` for Intel MPI); ignored when
+  `manager.launch_template` is set.
+- `manager.confine.block_mpi_spawn`: under `manager.confine=bwrap`, `on`
+  (default) relays confined ranks' Slurm PMI-1 and refuses `MPI_Comm_spawn`,
+  `auto` does so only when Slurm sets `PMI_FD`, and `off` passes Slurm's PMI
+  through; see
+  [PMI-2 launches](workspace_daemon.md#pmi-2-launches-intel-mpi).
 - `manager.bind_cpus`: `true`, `1` or `yes` (any case) pins every locally
   executed attempt to the CPUs of its processor slots; anything else, or no
   value, leaves CPU affinity alone; set it before the manager starts (see
@@ -354,8 +362,8 @@ shape the launch:
   [confining attempts](#confining-attempts).
 
 A `slurm` launcher pins its own values of `manager.confine`,
-`manager.launch_template`, `manager.bind_cpus` and `confine.*` on the managers
-it starts with the manager option `--setting KEY=VALUE` (not shown in `--help`;
+`manager.launch_template`, `manager.launch_mpi`, `manager.confine.block_mpi_spawn`, `manager.bind_cpus` and
+`confine.*` on the managers it starts with the manager option `--setting KEY=VALUE` (not shown in `--help`;
 the last occurrence of a key wins). Pinned values override the workspace
 settings and stay fixed for the manager's lifetime; all other workspace
 settings are read live at each claim. See
@@ -751,19 +759,23 @@ needs quoting, so `$HTTK_WORKFLOW_LAUNCH vasp_std` usually works there too. Insi
 is
 
 ```text
-env SLURM_HOSTFILE=NODEFILE srun --nodes=N --ntasks=T --nodelist=HOSTS
-     --distribution=arbitrary --exact --cpus-per-task=C
+env SLURM_HOSTFILE=NODEFILE srun [--mpi=M] --ntasks=T --distribution=arbitrary
+     --exact --cpus-per-task=C
      [--mem=MBM | --mem-per-cpu=MBM] [--gpus=G | --gres=none]
 ```
 
-with `T` the nodefile's line count, equal to the reserved processor slots.
+with `T` the nodefile's line count, equal to the reserved processor slots,
+and `M` the workspace setting `manager.launch_mpi` when it is set.
 A share with zero slots adds no task. A reservation with no processor slots
 gets no default scheduler launch prefix; a parallel application must request
 the processor slots it will use. The default Slurm prefix rejects a mixed
 placement with GPUs on a node without processor slots. The prefix sets `SLURM_HOSTFILE` to the
 nodefile for its own `srun` only, so the arbitrary distribution places exactly
 the reserved tasks on each node while any other `srun` the runner starts is
-unaffected. `--cpus-per-task` repeats the
+unaffected. The hostfile alone names the nodes: `srun` refuses `--nodes` with
+the arbitrary distribution, and a `--nodelist` would replace the hostfile, so
+the prefix passes neither (a custom `manager.launch_template` using
+`--distribution=arbitrary` must not either). `--cpus-per-task` repeats the
 allocation's normalized CPUs per processor slot, captured by the probe when
 the manager starts. A one-node attempt with `mem` gets `--mem` (its share); a multi-node
 one gets `--mem-per-cpu`, its `mem` divided over its tasks' CPUs and rounded
@@ -819,7 +831,11 @@ and standard error stay separate, and the client exits with the launch's exit
 status. One launch runs at a time per attempt; further requests wait. A
 launch is stopped when its attempt is cancelled, times out, is drained or
 publishes its outcome, and a client stopped with `SIGTERM`, for instance by a
-code helper's timeout, returns only after the ranks are gone. The attempt keeps
+code helper's timeout, returns only after the ranks are gone (a helper that
+then kills the client can return about a second before ranks ignoring
+`SIGTERM` are reaped). A launch counts as finished when the launcher's local
+process group (such as `srun`) is gone; remote tasks of a killed `srun` end
+when Slurm cleans up the step. The attempt keeps
 its placement until every launch is reaped. The client needs `flock` on the
 workspace filesystem (on Lustre, mount with `flock` or `localflock`). ORCA,
 which starts its own MPI, is supported on one node only under confinement.
@@ -1170,7 +1186,11 @@ inherits a commit leaves the tree for GC.
 A manager is never required to run policy-gated cleanup, so it can disappear
 between any two instructions. It runs always-safe cleanup at startup and the
 full policy-gated collection at a clean exit. A clean manager removes its own
-metadata directory; a crash leaves it for `journal_days` collection.
+metadata directory; a crash leaves it for `journal_days` collection
+(`manager_directories`). The trusted launch records of confined launches in
+it are removed first, once the manager has been silent for its lease times the
+takeover grace factor and each recorded process group is provably gone; a
+directory still holding a record is kept as takeover evidence.
 
 On a quota'd HPC filesystem, what remains to manage is failed and cancelled
 attempt evidence, retained journal history, interrupted transaction trash and

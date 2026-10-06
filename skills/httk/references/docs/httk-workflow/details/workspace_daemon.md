@@ -63,11 +63,15 @@ settings and the workspace settings. What it does not do on the trusted side:
   unconfined, so review what you build.
 
 Every manager on an enrolled workspace must confine its attempts: once
-`--initialize` has created `.httk-workspace/exchange/`, a manager whose
-effective `manager.confine` is not `bwrap` refuses to start. This applies to
-`--inline`, process-launched and manually started managers as well, so run
-them with `--setting manager.confine=bwrap` or set `manager.confine=bwrap` as a
-workspace setting.
+`httk workspace daemon init` has written the enrollment marker
+`.httk-workspace/exchange/enrollment.json`, a manager whose effective
+`manager.confine` is not `bwrap` refuses to start, and a running one stops
+claiming work if the workspace setting changes. This applies to `--inline`,
+process-launched and manually started managers as well, so run them with
+`--setting manager.confine=bwrap` or set `manager.confine=bwrap` as a
+workspace setting. Only the daemon writes the marker (`init` creates it, and
+`check` and `run` restore it when it is missing); a manager run with `--exchange` on a workspace that was
+never enrolled creates the staging directories but does not enroll it.
 
 ### Host requirements
 
@@ -101,7 +105,7 @@ contains nothing else:
 /proj/campaign/        dedicated parent: exactly these two entries
   workspace/           workspace data root
   exchange/            the only client-mounted directory
-    endpoint.json      public endpoint, written by --initialize and --reload
+    endpoint.json      public endpoint, rewritten when a changed configuration is activated
     requests/ responses/   signed command mailbox
     inbox/             the client drops job bundles here
     outbox/            ejected jobs, rejected/, withdrawn/, managers/, status.json, managers.json
@@ -110,8 +114,8 @@ contains nothing else:
 - Anything else in the parent is refused, naming the entry: the broker has
   read-write access to the parent.
 - The workspace and exchange must be on one filesystem and one mount, so that
-  jobs move by a plain rename. A probe checks this at `--initialize` and
-  `--reload`, and the broker rechecks it every time it starts.
+  jobs move by a plain rename. A probe checks this at `init`, and the broker
+  rechecks it every time it starts.
 - The parent must be disjoint from the daemon state and snapshot directories,
   the *httk* data directory and the runtime paths.
 - Entries whose names start with `.` or that are not plain file names
@@ -210,47 +214,58 @@ httk workflow launcher configure --add-path confine.readonly_paths=/software sma
 ```
 
 `--add-path` extends a colon-separated `confine.*` path list without restating
-its computed default. Setup reads the bundles without executing them and
-refuses one that:
+its computed default. List the launchers in the daemon configuration (see
+[Daemon configuration](#daemon-configuration)). The daemon reads the bundles
+without executing them and refuses one that:
 
 - is not a global launcher, or whose name does not match
   `[a-z][a-z0-9_-]{0,63}`;
-- is not of kind `slurm`, or whose `launcher` executable differs from the
-  packaged `slurm` template of the installed *httk-workflow*;
+- is not of kind `slurm`;
 - does not set `manager.confine=bwrap`, or has a malformed or unknown
   `confine.*` setting;
 - asks for resources above the sanity limits (see [Resources](#resources))
-  without `--force`;
+  unless the configuration sets `force=true`;
 - lies inside the daemon parent, state or snapshot directories, or is
   world-writable.
 
-Setup freezes each approved launcher's `launcher.json` and executable digest.
-Submissions use only the frozen settings, so editing a bundle has no effect
-until `--reload`. Each frozen launcher setting `manager.confine`,
-`manager.launch_template`, `manager.bind_cpus` and `confine.*` is pinned on the
+Every start of the daemon (`check` and `run`) reads the listed bundles again
+and freezes their settings, with the digest of their `launcher.json`, into the
+runtime snapshot it serves. The broker submits through the installed *httk*
+and never runs a bundle's `launcher` executable. Each frozen launcher setting `manager.confine`,
+`manager.launch_template`, `manager.launch_mpi`, `manager.bind_cpus`, `manager.confine.block_mpi_spawn` and `confine.*` is pinned on the
 managers it starts and cannot be changed by workspace settings; every other
 workspace setting still applies live inside the manager, as for any manager.
 
-### Broker configuration
+### Daemon configuration
 
-The broker's own configuration belongs to the enrollment. `--initialize`
-discovers what is not given; `--reload` keeps the stored value unless a flag
-gives a new one:
+The daemon configuration is saved in the private state directory
+(`<state>/configuration.json`). `init` and `configure` take `--set KEY=VALUE`
+for any key; `--add KEY=VALUE` (and, in `configure`, `--remove KEY=VALUE`)
+changes one item of a list, while `--set` replaces a whole list with a
+comma-separated value. `init` discovers what is not given:
 
-| Flag | Default at `--initialize` |
-| --- | --- |
-| `--bwrap PATH` | `bwrap` on `PATH`; the Bubblewrap of the broker sandbox |
-| `--python PATH` | the running interpreter; runs the broker and the submitted managers |
-| `--sbatch PATH`, `--squeue PATH`, `--scancel PATH` | discovered on `PATH` |
-| `--sacct PATH` | on `PATH` when present; optional, used only to report how managers ended |
-| `--scontrol PATH` | on `PATH`; used only to discover the cluster name |
-| `--cluster NAME` | `SLURM_CLUSTER_NAME`, the `ClusterName` of the Slurm configuration, or a bounded `scontrol show config` call |
-| `--slurm-conf PATH` | `SLURM_CONF` when it names a file, else `/etc/slurm/slurm.conf` when present |
-| `--max-submissions N` | 128 |
+| Key | Meaning | Default at `init` |
+| --- | --- | --- |
+| `launchers` | approved global `slurm` launchers, the configurations clients can start | none; at least one is required |
+| `authorized_keys` | Ed25519 public keys allowed to sign requests | none; at least one is required |
+| `bwrap` | the Bubblewrap of the broker sandbox | `bwrap` on `PATH` |
+| `python` | runs the broker, and the submitted managers of launchers without `environment.prelude` | the running interpreter |
+| `sbatch`, `squeue`, `scancel` | the Slurm clients | on `PATH` |
+| `sacct` | optional, used only to report how managers ended | on `PATH` when present |
+| `slurm_conf` | optional fixed Slurm configuration file | `SLURM_CONF` when it names a file, else `/etc/slurm/slurm.conf` when present |
+| `max_submissions` | lifetime quota of manager starts (see [Quotas](#quotas)) | 128 |
+| `force` | `true` approves CPU, memory and time above the sanity limits | `false` |
+| `cluster` (`init` only) | the fixed Slurm cluster name | `SLURM_CLUSTER_NAME`, the `ClusterName` of the Slurm configuration, or a bounded `scontrol show config` call |
+| `scontrol` (`init` only) | used only to discover the cluster name | on `PATH` |
 
-The initial operator environment and `PATH` are trusted. Other broker
-tunables (record limit, polling, command timeout, request lifetime of 3600
-seconds) are fixed.
+Executables are resolved when set, and relative paths are taken from the
+current directory. An empty value (`--set sacct=`) unsets `sacct` or
+`slurm_conf`. The cluster belongs to the fixed enrollment, together with the
+workspace, exchange, state and snapshot directories: `configure` refuses
+`cluster` and `scontrol`, and a new `slurm_conf` keeps the enrolled cluster.
+The initial operator environment and `PATH` are trusted. Other broker tunables
+(record limit, polling, command timeout, request lifetime of 3600 seconds) are
+fixed.
 
 ### Client identities
 
@@ -265,33 +280,37 @@ python -c 'from httk.core.identity import identity_public_key; print(identity_pu
 ### Initializing and running
 
 ```console
-httk workspace daemon /proj/campaign/workspace --initialize \
-  --exchange /proj/campaign/exchange --launcher small \
-  --authorize ed25519:REPLACE_WITH_CLIENT_PUBLIC_KEY
-httk workspace daemon /proj/campaign/workspace --check
-httk workspace daemon /proj/campaign/workspace
+httk workspace daemon init /proj/campaign/workspace \
+  --exchange /proj/campaign/exchange --add launchers=small \
+  --add authorized_keys=ed25519:REPLACE_WITH_CLIENT_PUBLIC_KEY
+httk workspace daemon check /proj/campaign/workspace
+httk workspace daemon run /proj/campaign/workspace
 ```
 
-Pass `--launcher` and `--authorize` once per item. Setup prints the approved
-launcher and key lists. Relative paths are taken from the current directory.
+Repeat `--add` once per item. `init` and `configure` print the enrollment and
+the configuration, as `httk workspace daemon show WORKSPACE` does (`--json`
+for one JSON document). Relative paths are taken from the current directory.
 
-- `--initialize` requires that the exchange does not exist or is an empty
-  directory. It creates the exchange and its subdirectories, the workspace
-  staging directories (which enroll the workspace), the ledger, the private
-  response key and a fresh enrollment, saves the approved settings, publishes
-  the active approval and writes `exchange/endpoint.json`. It then runs the
-  same check as `--check`; if that fails, the enrollment is kept and printed
-  guidance says to fix the broker configuration or the launchers and run
-  `--reload`, which checks again.
-- `--check` enters the real broker sandbox, rechecks the layout and checks the
+- `init` requires that the exchange does not exist or is an empty directory.
+  It creates the exchange and its subdirectories, the workspace staging
+  directories, the enrollment marker that enrolls the workspace, the ledger,
+  the private response key and a fresh enrollment, saves the configuration,
+  publishes the runtime snapshot and writes `exchange/endpoint.json`. It then
+  runs the same check as `check`; if that fails, the enrollment is kept and
+  printed guidance says to fix the launchers or the configuration and run
+  `check` again.
+- `check` and `run` first activate the configuration (see
+  [Configuration changes](#configuration-changes)).
+- `check` enters the real broker sandbox, rechecks the layout and checks the
   scheduler clients, without submitting work or validating compute-node
   execution.
-- `--once` processes one bounded scan. Normal startup polls until SIGINT or
+- `run --once` processes one bounded scan. `run` polls until SIGINT or
   SIGTERM; a site service supervisor can restart the foreground daemon.
 - `--state DIR` (default: `workspace-daemons/<workspace-path-hash>` below the
-  *httk* data directory) and `--snapshots DIR` (default: `<state>.snapshots`)
-  must be repeated on later invocations when not the default. Place state on a
-  local filesystem. Slurm writes each manager's output to `<snapshots>/jobs/`,
+  *httk* data directory) must be repeated on later invocations when not the
+  default; `--snapshots DIR` (default: `<state>.snapshots`) is remembered by
+  the enrollment and only checked when given again. Place state on a local
+  filesystem. Slurm writes each manager's output to `<snapshots>/jobs/`,
   so that directory must be reachable at the same path from the batch nodes;
   state and the exchange need not be.
 
@@ -320,18 +339,23 @@ Slurm's partition and site defaults apply:
   to minutes.
 - Zero or unlimited requests are rejected.
 - Values above 1024 CPUs per task, 1,048,576 MiB per node or 10,080 minutes
-  are refused at `--initialize` and `--reload` unless `--force` is passed.
+  are refused unless the daemon configuration sets `force=true`.
 
 Each signed start submits exactly one manager, with the launcher's batch
-directives plus `--parsable`, `--export=NIL`, `--no-requeue`,
+directives plus `--parsable`, `--export=<mode>`, `--no-requeue`,
 `--input=/dev/null`, `--clusters`, the job name `httk-<handle>` and its output
-file. The batch script, piped to `sbatch`, writes nothing into the workspace.
-It runs the frozen `environment.prelude` under `set -e` in a login shell, then
-the manager: `manager.command` (default `httk`) on the resulting `PATH` when a
-prelude is set, otherwise the enrollment's `--python`. Because of
-`--export=NIL`, the manager's environment comes from the login shell and the
-prelude, not from the daemon. The workspace's own `environment.prelude` does
-not apply to daemon submissions.
+file. The export mode is the launcher setting `slurm.export`, either `NONE`
+(the default when unset) or `NIL`; see the site's `sbatch` manual for what each
+means on that cluster. The batch script, piped to `sbatch`, writes nothing into
+the workspace. It runs the frozen `environment.prelude` under `set -e` in a
+login shell, then the manager: `manager.command` (default `httk`) on the
+resulting `PATH` when a prelude is set, otherwise the configured `python`.
+With a prelude, the approved launcher's content, not `python`, therefore
+decides which interpreter runs the manager; the configuration digest covers that
+content. With the default `--export=NONE`, the manager's environment comes from
+the login shell and the prelude, not from the daemon; `NIL` was observed to
+break the login-shell Lmod environment on one site, so `NONE` is the default.
+The workspace's own `environment.prelude` does not apply to daemon submissions.
 
 The manager is `httk workflow manager run --by-path --workspace WORKSPACE
 --exchange --idle` with the launcher's `--workers` (from `manager.workers`),
@@ -340,49 +364,43 @@ The manager is `httk workflow manager run --by-path --workspace WORKSPACE
 `slurm` launcher starts, places attempts on the allocation's nodes and serves
 until Slurm's time limit drains it; see {doc}`taskmanager`.
 
-### Changing approved launchers
+### Configuration changes
 
-Stop the daemon, edit the launchers, then run:
+Edit a launcher bundle with `httk workflow launcher configure`, or the daemon
+configuration with `httk workspace daemon configure`, then restart the daemon:
 
 ```console
-httk workspace daemon /proj/campaign/workspace --reload
+httk workspace daemon configure /proj/campaign/workspace --add launchers=large \
+  --remove authorized_keys=ed25519:REPLACE_WITH_REVOKED_KEY
+httk workspace daemon run /proj/campaign/workspace
 ```
 
-`--reload` approves the launchers again with the same checks, keeps the stored
-launcher names and authorized keys unless `--launcher` or `--authorize` is
-given (given lists replace the stored ones), and keeps the stored broker
-configuration unless a flag changes it. It prints the resulting lists and
-rewrites `endpoint.json`. It refuses a change of the fixed connection
-(workspace, exchange, state, snapshots, cluster), naming the key: that needs a
-new enrollment. Slurm client paths, `slurm.conf`, Bubblewrap and Python may
-change on reload.
-
-Reload refuses while the daemon holds its lifetime ledger lock. Startup checks
-its chosen snapshot against the active approval after taking the same lock, so
-a startup racing with a reload cannot serve revoked keys or old approvals.
-Clients read configuration digests live from `endpoint.json` and need no
-reconfiguration.
+`configure` approves the result exactly as a start would and saves it only
+when it is accepted; it publishes nothing, so it also works while the daemon
+runs. Every `check` and `run` compiles the saved configuration with the
+current launcher bundles. When the result differs from the active runtime
+snapshot, it publishes a new snapshot, rewrites `endpoint.json` and prints the
+launchers whose approval changed; otherwise it publishes nothing. Publishing
+needs the daemon's ledger lock, so a changed configuration is refused while
+the daemon runs: stop it first. Clients read configuration digests live from
+`endpoint.json` and need no reconfiguration.
 
 Queued and running managers keep the settings they were submitted with. New
 starts must name a currently approved launcher and its exact digest; a
-retained old snapshot does not authorize them. Reload preserves the
+retained old snapshot does not authorize them. Activation preserves the
 enrollment, ledger, response key and old snapshots. Installed binaries and
 site configuration file contents remain operator-maintained external
 dependencies.
 
 ### Upgrading
 
-After updating *httk-workflow* on the remote host, stop the daemon and run
-`--reload` once. An approved launcher must keep the packaged `slurm` launcher
-executable byte for byte, so when an upgrade changes that template,
-`--reload` refuses the existing bundles: remove them with
-`httk workflow launcher remove`, create them again with
-`httk workflow launcher add --template slurm --global` and the same settings,
-then reload. An enrollment created by an earlier development version with a
-different snapshot format is refused; see
-[Earlier enrollments](#earlier-enrollments). Update the client before or
-together with the remote host: the current client reads both versions of
-`managers.json`, an older one only version 1.
+After updating *httk-workflow* on the remote host, restart the daemon. An
+enrollment made by an earlier development version without a saved
+configuration has one created from its active snapshot (with `force=false`)
+at the first start. An enrollment with a different snapshot format is
+refused; see [Earlier enrollments](#earlier-enrollments). Update the client
+before or together with the remote host: the current client reads both
+versions of `managers.json`, an older one only version 1.
 
 ## Job flow
 
@@ -453,8 +471,8 @@ unknown operation without a response.
 
 The internal version-3 format requires identity signatures. The maintained
 client builds and signs documents with its configured *httk* operator
-identity; an unsigned request is never executed. The `--authorize` keys
-are the allowed Ed25519 public keys, and removing a key
+identity; an unsigned request is never executed. The configured
+`authorized_keys` are the allowed Ed25519 public keys, and removing a key
 also stops it from replaying old results. This authorization rule is separate
 from the ordinary, optional attribution meaning of *httk* identity signatures.
 
@@ -566,7 +584,7 @@ operator to inspect and clean up. The manager's own log is the workspace's
 
 ### Quotas
 
-The record limit (4096) limits all durable request records. `--max-submissions`
+The record limit (4096) limits all durable request records. `max_submissions`
 limits manager starts admitted over the enrollment's lifetime, including
 refused or uncertain starts. Both are cumulative quotas, not active-job counts.
 Exhaustion returns a nonpersisted `busy` response, retryable with the same
@@ -593,7 +611,9 @@ $HTTK_WORKFLOW_LAUNCH ./program input.dat
 The client asks the trusted manager to start the launch, and the manager runs
 `<rendered launch template> <rank helper>`: the template is rendered from the
 placement held in the manager's memory, with a manager-owned nodefile for
-`{nodefile}` and `SLURM_HOSTFILE`. The manager never interprets the program
+`{nodefile}` and `SLURM_HOSTFILE` in the trusted launch directory
+`.httk-workspace/managers/<manager_id>/launches/<attempt_id>.<request_id>/`,
+which jobs can only read. The manager never interprets the program
 and arguments. The code run helpers prepend the prefix themselves, so code
 command settings and workflow packages are the same confined and unconfined.
 
@@ -611,6 +631,15 @@ command settings and workflow packages are the same confined and unconfined.
 - `SIGTERM` or `SIGINT` to the client (for example from a code helper's
   timeout) does not end it: it asks the manager to stop the launch and returns
   only after the ranks are gone. A killed client stops the launch too.
+  Accepted limitation: a code helper escalates to `SIGKILL` of the client
+  after its own termination grace (10 s by default), and the manager
+  escalates the ranks after its cancellation grace, so with ranks that ignore
+  `SIGTERM` the helper can return about a second before the manager has
+  reaped them. Ranks that honour `SIGTERM` are gone before the helper returns.
+- A launch's `exited` or `stopped` status, and therefore the attempt's
+  commit, follows the launcher's local process group (for example `srun`).
+  When a killed `srun` leaves remote tasks, they end when Slurm cleans up the
+  step, possibly a few seconds later.
 - The attempt keeps its placement and is not committed, sealed or ejected
   until every launch it made has been reaped. A launch whose processes outlive
   `SIGKILL` is reported as uncertain, and that attempt can start no further
@@ -652,8 +681,8 @@ the attempt do not: set them as `confine.environment.<NAME>`.
 ### Shared memory
 
 The ranks of one launch on a node share a private directory
-`<confine.shm_root>/httk-<request_id>` (default root `/dev/shm`, mode 0700,
-owner checked), mounted at `/dev/shm`. This supports POSIX shared-memory files
+`<confine.shm_root>/httk-<token>` (default root `/dev/shm`, mode 0700,
+owner checked; the token is a random name the manager chose for the launch), mounted at `/dev/shm`. This supports POSIX shared-memory files
 without exposing unrelated host shared-memory objects. The last rank to leave
 a node removes the directory. After a node failure or a killed rank a stale
 directory may remain; removing it is a site cleanup item, for example in a
@@ -680,12 +709,60 @@ support. Host networking and the PMIx endpoint are service authorities: the
 site must verify that they do not let ranks launch unconfined processes or
 reach other protected services.
 
+### PMI-2 launches (Intel MPI)
+
+Intel MPI under Slurm needs `srun --mpi=pmi2`. Set it on the daemon's approved
+launcher, then restart the daemon so `run` picks up the changed launcher:
+
+```bash
+httk workflow launcher configure --set manager.launch_mpi=pmi2 small
+```
+
+The setting is pinned on the managers the daemon starts, and the built-in
+step becomes `srun --mpi=pmi2 ...`. A `manager.launch_template` owns its argv
+and must contain `--mpi=pmi2` itself.
+
+With spawn blocking (the default), Slurm's `PMI_FD` socket stays in the rank helper; the rank gets a private
+socket as its `PMI_FD`. The helper relays the PMI-1 simple protocol, which
+Intel MPI speaks over `srun --mpi=pmi2`, one request at a time and only for
+Slurm's PMI-1 commands. `MPI_Comm_spawn` (any `mcmd=` block or `cmd=mcmd`) is
+answered with `cmd=spawn_result rc=-1` and never reaches Slurm, so the
+application sees a spawn error and the rank's launch stderr gets
+`httk-workflow rank: PMI refused MPI_Comm_spawn`.
+
+The relay fails closed. A PMI-2 wire client (for example an application linked
+against Slurm's `libpmi2`), a request over 1024 bytes, any other command, or
+a request containing `mcmd` anywhere (even in a key, value or service name)
+ends the rank's PMI channel with an `httk-workflow rank: PMI refused: ...`
+line, and MPI initialization then fails. A `PMI_FD` that is not a socket
+refuses the launch.
+
+Spawn blocking is the pinned launcher setting `manager.confine.block_mpi_spawn`,
+read only under `manager.confine=bwrap` and ignored without confinement:
+
+- `on` (default): the relay above. `PMI_PORT` is also dropped from the rank
+  environment, and a rank whose relay cannot start is killed and refused.
+- `auto`: `on` when Slurm sets `PMI_FD`, otherwise `off`.
+- `off`: the rank gets Slurm's own `PMI_FD` and `PMI_PORT`, so
+  `MPI_Comm_spawn` starts processes outside the sandbox.
+
+The setting does not cover a non-Slurm PMIx server, such as the one of an
+Open MPI `mpirun` launch template. Slurm's PMIx plugin does not implement
+spawn, so `--mpi=pmix` needs no filter.
+
+For site acceptance, run the spawn probe (see [Launch
+acceptance](#launch-acceptance)) and a multi-node Intel MPI job, and confirm
+that the sandbox cannot reach the munge socket: keep `/run/munge` and `/run`
+out of `confine.readonly_paths`. A rank that can create munge credentials
+could contact `srun`'s PMI-2 port or `slurmctld` directly.
+
 ### Launch acceptance
 
 Each launch style needs its own site acceptance; none is claimed here:
 
-- the built-in `srun` prefix with PMIx (`confine.pmix_roots` set to the
-  `slurmd` spool parent of the step directories);
+- the built-in `srun` prefix with `manager.launch_mpi=pmi2` for Intel MPI (the rank helper filters PMI-1
+  spawn requests; see [PMI-2 launches](#pmi-2-launches-intel-mpi)) or on a site whose default MPI plugin is PMIx (`confine.pmix_roots`
+  set to the `slurmd` spool parent of the step directories);
 - Open MPI `mpirun`, for example through
   `manager.launch_template=mpirun -np {procs} --hostfile {nodefile}`;
 - NSC `mpprun`;
