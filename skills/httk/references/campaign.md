@@ -11,7 +11,7 @@ execution remains under `httk workflow …`. The full command tree is in the doc
 
 ```console
 $ httk project init --name screening .        # creates the httk_project/ anchor
-$ httk workspace init --name default .
+$ httk workspace init --name default workspace
 ```
 
 A *project* is the directory a campaign lives in (identity, settings, the
@@ -26,7 +26,7 @@ One job from one structure:
 ```console
 $ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' \
       --input structure=POSCAR --parameter kpoint_density=30.0 --tag silicon
-silicon--0c4f…	/…/jobs/silicon--0c4f…
+silicon--0c4f…	/…/workspace/jobs/silicon--0c4f…
 ```
 
 - `--workflow` takes a workflow name, alias, or git URI — a git URI (e.g. the
@@ -94,7 +94,9 @@ with `job new --environment NAME=VALUE`.
 Except for `workspace forget` and `workspace delete`, workspace arguments are
 optional: the CLI walks up from the current directory to find
 `.httk-workspace/`, then uses the project default and registry default. The workspace anchor is
-`.httk-workspace/`; a job payload contains `job.json`, `files/`, `run/`,
+`.httk-workspace/`; a workspace is a directory of its own (`workspace init` refuses a non-empty
+directory); payloads live at `jobs/<placement>/<job_key>` (empty placement by
+default, `jobs/batch/<job_key>` for `--placement batch`) and contain `job.json`, `files/`, `run/`,
 `logs/stdio.out`, `logs/runlog.jsonl`, and `.httk-job/state.json`; `data/`
 exists when transactional data is enabled.
 `attempts/<id>/` exists only for a live attempt or failed/cancelled evidence;
@@ -215,7 +217,8 @@ per manager); each manager owns its allotment.
   (`./NAME` addresses a directory that a registered name shadows). `job eject
   JOB... DEST` / `job adopt DIR...` move a quiescent job out to a
   free-standing directory and back into any workspace, bypassing registration
-  entirely.
+  entirely. Ejecting to another filesystem copies out after an atomic local
+  ejection; `--resume` retries the copy.
 - `run --workspace kappa:runs` invokes a detached manager on the owning machine;
   that manager uses the target workspace's `manager.launch` setting
   (`manager run` is the advanced spelling; `run` locally serves until idle,
@@ -245,9 +248,9 @@ $ httk collect
 
 The reverse transfer offers finished jobs on the remote, pulls, imports, and
 retires the sources only after acknowledgement. Retirement is crash-safe and
-idempotent, then reclaims the acknowledged payload and unprotected source
-journal history by default; compact epoch-scoped sequence receipts retain replay
-protection. Set both `retention.trash_days` and `retention.journal_days` to
+idempotent: it moves the acknowledged bundle to `transfers/retired/<T>`, kept
+until `workspace gc` after `trash_days`; per-transfer receipts, kept for a 7-day freshness window,
+retain replay protection. Transfers take no file locks. Set both `retention.trash_days` and `retention.journal_days` to
 `keep` before retirement when recovery copies and journal history must remain.
 Fetched jobs are then ordinary local jobs. `collect` prints one summary per
 finished job; options: `--raw` (mechanical `JobRecord`s),
@@ -278,7 +281,8 @@ orphaned marker. Cancel a non-terminal job first. Managers perform always-safe
 collection at startup and exit, and the full retention policy at clean exit;
 `workspace gc` is the explicit maintenance path, while `workspace fsck`
 reports always-safe leftovers. The default retention is one day for journal
-history and transaction trash. Each workspace has one `managers.log`.
+history and transaction trash. Each manager writes `logs/managers/<manager-id>.log` in its workspace; postprocess
+output defaults to `postprocess/<placement>/<job_key>/<script>/`.
 
 ## 7. Scale out: campaigns (many workspaces)
 

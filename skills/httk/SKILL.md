@@ -73,7 +73,7 @@ From an empty directory containing a VASP-5 `POSCAR`:
 
 ```console
 $ httk project init --name myproject .
-$ httk workspace init --name default .
+$ httk workspace init --name default workspace
 $ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --input structure=POSCAR --tag silicon
 $ httk workspace settings set --key vasp.command --value "vasp_std" default
 $ httk workflow run
@@ -119,7 +119,7 @@ Monitor with `job list`, `job show JOB`, `job why JOB` (explains a stuck job),
 counts per state, job pages, details, cancel/pause/continue, transfer, removal;
 scales to 100k-job workspaces; `job list --json --limit N --after CURSOR` is the
 same paged data path for scripts). `JOB` may also be an in-workspace path or glob
-(`jobs/silicon*`). Remove finished or queued jobs cleanly with `httk job delete JOB…`
+(from the project root after the quickstart, `workspace/jobs/silicon*`). Remove finished or queued jobs cleanly with `httk job delete JOB…`
 (`--force` skips the confirmation and the join-parent guard); `rm -r` of a finished
 job's directory is also fine — the next manager run or `workspace gc` clears its
 marker. VASP workflow packages (`vasp.relax`, `vasp.relax-bash`, `vasp.static`,

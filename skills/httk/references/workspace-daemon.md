@@ -1,12 +1,17 @@
 # Confined workspace daemon
 
 Use `mount-daemon` when files are the only channel to an HPC destination. The
-destination operator runs `httk workspace daemon`, a foreground Slurm broker;
-the client mounts one **exchange directory** (never the workspace), sends job
-bundles, collects finished jobs, reads passive status, and sends signed typed
-health/start/status/cancel requests. Requests cannot carry commands, paths or
-Slurm arguments. This is an opt-in deployment feature with strict Linux,
-Bubblewrap (no unsandboxed fallback), Slurm and site requirements. Read
+workspace there has an **exchange** directory, `WORKSPACE/exchange/` (a
+workspace extension; `httk workspace exchange enable`, also done by `daemon
+init`), the one directory the client mounts (never the workspace). Every
+unrestricted confined manager of the workspace serves it: it adopts `inbox`
+bundles and returns finished exchange-origin jobs to `outbox`; jobs keep
+running whether or not a daemon exists. The operator also runs `httk workspace
+daemon`, a foreground Slurm broker that only starts, queries and cancels
+managers on signed typed requests (health, start, status, cancel). Requests
+cannot carry commands, paths or Slurm arguments. This is an opt-in deployment
+feature with strict Linux, Bubblewrap (no unsandboxed fallback), Slurm and site
+requirements. Read
 [`workspace_daemon.md`](docs/httk-workflow/details/workspace_daemon.md) (trust,
 layout, quotas, parallel launches, site acceptance) and
 [`remotes.md`](docs/httk-workflow/details/remotes.md) before deployment. Local
@@ -28,19 +33,23 @@ identity setup first.
 
 ## Destination operator
 
-Layout: the workspace and exchange are siblings in a dedicated parent that
-contains nothing else, on one filesystem and one mount (jobs move by plain
-rename). The exchange must not exist yet, or be empty.
+Layout: no special layout; the exchange is `WORKSPACE/exchange/`. State and
+snapshots must lie outside the workspace. The ledger (`<state>/ledger/`) is
+lock-free and works on any filesystem with POSIX rename/link semantics; any
+number of daemon instances may run.
 
 Trust model: the manager is trusted and runs unconfined in its Slurm batch
 job; each job attempt runs in its own Bubblewrap sandbox that can write only
-that job's directory (the workspace is readable). Approved manager
-configurations are ordinary global `slurm` launchers that set
+that job's directory (the workspace is readable). On a workspace with the exchange
+extension enabled, every manager must set `manager.confine=bwrap` (else it
+refuses to start, and stops claiming when the extension appears). Approved
+manager configurations are ordinary global `slurm` launchers that set
 `manager.confine=bwrap` (`confine.*` keys; `slurm.*`, `manager.workers|command`,
 `environment.prelude` as usual). The broker sees the host read-only (Slurm,
-MUNGE, user database just work); attempts see `confine.readonly_paths` (default:
-`/usr`, `/etc`, the Python installation, where httk is imported from), so add
-software trees jobs need with `--add-path`.
+MUNGE, user database just work) and writes only `WORKSPACE/exchange` and its
+state; attempts see `confine.readonly_paths` (default: `/usr`, `/etc`, the
+Python installation, where httk is imported from), so add software trees jobs
+need with `--add-path`.
 
 ```console
 httk workflow launcher add --template slurm --global small \
@@ -48,7 +57,7 @@ httk workflow launcher add --template slurm --global small \
   --set slurm.time_limit=01:00:00 --set manager.workers=2
 httk workflow launcher configure --add-path confine.readonly_paths=/software small
 httk workspace daemon init /proj/campaign/workspace \
-  --exchange /proj/campaign/exchange --add launchers=small \
+  --add launchers=small \
   --add authorized_keys=ed25519:CLIENT_PUBLIC_KEY
 httk workspace daemon check /proj/campaign/workspace
 httk workspace daemon run /proj/campaign/workspace
@@ -56,27 +65,28 @@ httk workspace daemon run /proj/campaign/workspace
 
 Repeat `--add` per item; `--set KEY=VALUE` sets other keys (`bwrap`, `python`,
 `sbatch`, `squeue`, `scancel`, `sacct`, `slurm_conf`, `max_submissions`,
-`force`; `cluster`/`scontrol` at `init` only). `init` saves
-`<state>/configuration.json`, writes `exchange/endpoint.json` (public trust
-anchors and digests) and ends with the `check`. `show WORKSPACE [--json]`
+`force`; `cluster`/`scontrol` at `init` only). There is no `--exchange` option.
+`init` saves `<state>/configuration.json`, writes `exchange/daemon.json` (public
+trust anchors and digests) and ends with the `check`; state of an earlier
+(SQLite) enrollment is refused, so re-initialize. `show WORKSPACE [--json]`
 prints the enrollment and configuration. `check` enters the real broker
 sandbox and checks the scheduler clients; it does not submit work or test
 compute-node execution. `run --once` does one bounded scan; `run` polls until
 SIGINT/SIGTERM (use a site supervisor). Repeat non-default `--state` on later
-calls; `--snapshots` is remembered. The SSHFS account must be restricted
-server-side to the exchange; a mount alone does not confine it. Mount without
-`follow_symlinks`.
+calls; `--snapshots` is remembered. The exchange writer must be the workspace
+owner's account (a separate transport UID is unsupported); restricting that
+account's SFTP access is a site matter. Mount without `follow_symlinks`.
 
 Changing the configuration: edit launchers with `httk workflow launcher
 configure`, or the daemon configuration with `httk workspace daemon configure
 WORKSPACE --set|--add|--remove KEY=VALUE` (lists `launchers`,
 `authorized_keys`), then restart `run`. There is no approval or reload step:
 every `check`/`run` re-reads the configuration and current launcher bundles and
-activates changes, rewriting `endpoint.json` (clients read it live). A
-change cannot be activated while a daemon is running, so stop it first; a
-restart also applies an httk upgrade. Queued and running jobs keep their frozen snapshot. A change of the
-fixed connection (workspace, exchange, state, snapshots, cluster) needs a new
-enrollment.
+activates changes, rewriting `daemon.json` (clients read it live). Activation
+is allowed while a daemon runs: running instances exit at their next admission
+and a supervisor restarts them; a restart also applies an httk upgrade. Queued
+and running jobs keep their frozen snapshot. A change of the fixed connection
+(workspace, state, snapshots, cluster) needs a new enrollment.
 
 ## Client
 
@@ -89,32 +99,36 @@ httk workflow remote check confined
 httk workflow remote daemon health confined
 ```
 
-`configure` pins the daemon identities from `endpoint.json` and publishes
-nothing; `check` sends a signed health request only.
+Remote settings: `exchange` and `daemon_workspace_id` are required;
+`daemon_enrollment_id` and `daemon_public_key` are optional, needed only for
+signed requests. `configure` pins the workspace from `exchange.json` and the
+daemon identities from `daemon.json` (when present) and publishes nothing;
+`check` reads `exchange.json` and, with the daemon pinned, `daemon.json` and a
+signed health request.
 
-Start a manager (fresh 32-hex request ID per operation), then send the job:
+Send a job, start a manager (fresh 32-hex request ID per operation), and fetch:
 
 ```console
+httk job eject JOB /mnt/cluster/exchange/inbox          # local atomic export, then copy-out; --resume
 python -c 'import secrets; print(secrets.token_hex(16))'
 httk workflow remote daemon start confined --configuration small --request-id REQUEST_ID
-httk job eject JOB /mnt/cluster/exchange/inbox
 httk workflow remote daemon status confined                       # passive: status.json, managers.json
 httk workflow remote daemon status confined --handle MANAGER_HANDLE   # signed, fresh ID
 httk workflow remote daemon cancel confined --handle MANAGER_HANDLE --request-id ANOTHER_ID
-httk job adopt /mnt/cluster/exchange/outbox/JOB_KEY
+httk job adopt /mnt/cluster/exchange/outbox/JOB_KEY      # copied, verified, source removed
 ```
 
-The daemon moves `inbox` bundles into the workspace and a daemon-started
-manager adopts them. A finished job (succeeded/failed/cancelled, no parent, no
-unfinished children) auto-ejects to `outbox/<job_key>` about 60 s later;
-`job adopt` takes it back. Refused bundles land in `outbox/rejected/`, with the
-reason in `status.json`. Failed jobs are never retried automatically: adopt,
-fix, eject again. Manager (Slurm job) outcomes: `managers.json` lists each manager's
-scheduler state, exit code and times plus bundles still waiting; a finished
-manager's Slurm output is at `outbox/managers/<handle>.log`
-(`httk workflow remote daemon log REMOTE --handle H`). If no manager can run,
-`httk workflow remote daemon withdraw REMOTE --request-id ID [--bundle NAME]`
-returns waiting bundles unchanged to `outbox/withdrawn/<name>` for `job adopt`.
+Any unrestricted confined manager (no `--placement-prefix` or pool restriction) adopts `inbox` bundles. A finished exchange-origin job
+(succeeded/failed/cancelled, no parent, no unfinished children) returns to
+`outbox/<job_key>` about 60 s later. Refused bundles land in
+`outbox/rejected/<unique>/{<name>, reason.json}`, with the reason in
+`reason.json` (`status.json` lists only job states). Failed jobs are never retried automatically: adopt, fix, eject
+again. `managers.json` lists each manager's scheduler state, exit code and
+times; a finished manager's Slurm output is at `managers/<handle>.log`
+(`httk workflow remote daemon log REMOTE --handle H`). To take back a bundle
+nobody has adopted, `httk workflow remote daemon take-back REMOTE NAME
+[DESTINATION]` (client-only: rename to a dot name, copy out, remove; if the
+name is gone a manager took it, so cancel the job).
 
 After a timeout, retry the same request ID with identical fields; the daemon
 never submits a duplicate. `uncertain` means the operator must reconcile with
