@@ -14,7 +14,12 @@ feature with strict Linux, Bubblewrap (no unsandboxed fallback), Slurm and site
 requirements. Read
 [`workspace_daemon.md`](docs/httk-workflow/details/workspace_daemon.md) (trust,
 layout, quotas, parallel launches, site acceptance) and
-[`remotes.md`](docs/httk-workflow/details/remotes.md) before deployment. Local
+[`remotes.md`](docs/httk-workflow/details/remotes.md) before deployment. The
+file-level rules of the exchange, the daemon request/response mailbox and the
+confined launch files (`launch/` requests, statuses, trusted launch records)
+are specified in
+[`workflow_filesystem_api.md`](docs/httk-workflow/details/workflow_filesystem_api.md)
+(sections "Exchange extension", "Daemon mailbox", "Confined launches"). Local
 tests do not establish HPC or site acceptance.
 
 ## Client identity
@@ -136,7 +141,9 @@ never submits a duplicate. `uncertain` means the operator must reconcile with
 Slurm; do not retry it with a new ID. Keep client and server clocks
 synchronized (130 minutes skew allowed). A cancel acknowledgement is not proof
 that the manager stopped. `status.json` and `managers.json` are informational
-only.
+only. The client removes a response once it has verified it; the daemon removes
+unconsumed responses after the request lifetime plus the skew allowance
+(3600 + 7800 s).
 
 Parallel launches: code commands name only the program (`vasp.command =
 "vasp_std"`); the attempt's launch prefix `HTTK_WORKFLOW_LAUNCH`

@@ -273,9 +273,9 @@ problem codes and what a repair will and will not touch.
 
 The maintenance fence is `.httk-workspace/maintenance.lock`, which holds the
 recording process identifier, hostname, and creation time. A lock whose
-same-host process is gone, whose content is unreadable, or that is older than
-twenty-four hours is reclaimed automatically; any other lock is reported with
-its holder. `workspace unlock` clears a lock explicitly; without `--force` it
+same-host process is gone, whose content is malformed or incomplete, or that is
+older than twenty-four hours is reclaimed automatically; any other lock,
+including one this account may not read, is reported with its holder. `workspace unlock` clears a lock explicitly; without `--force` it
 removes only a stale one:
 
 ```console
@@ -328,16 +328,16 @@ A `null` or `"keep"` retention member means keep. On a fresh workspace,
 | Category | Retention limit | What goes |
 | --- | --- | --- |
 | `attempt_control` | `attempt_control_days` | aged `attempts/*` directories; failed and cancelled jobs retain their newest one, while other quiescent leftovers (including succeeded) also wait one workspace `lease_seconds` grace |
-| `transaction_trash` | `trash_days` | trees a replayed transaction moved aside, once the job left `committing` |
+| `transaction_trash` | `trash_days` | leftovers in a replayed transaction's trash (what the replay could not delete, and its emptied trash directories), once the job left `committing` |
 | `retired_bundles` | `trash_days` | acknowledged transfer bundles below `transfers/retired/` |
 | `transfer_records` | `trash_days` | acknowledgements below `transfers/acks/` |
 | `transfer_receipts` | always safe | replay receipts below `transfers/received/` once no importer can accept the bundle any more (the freshness window plus the clock-skew bound after sealing) |
 | `manager_logs` | `trash_days` | `logs/managers/<id>.log` (and `.log.1`) of managers whose directory is gone; `logs/batch/` is never collected |
 | `removed_jobs` | always safe | state markers for jobs that are quiescent and unowned by any manager (`succeeded`, `failed`, `cancelled`, `submitted`, or `ready`) whose payload directories are absent, unless a non-terminal parent still references them as join children |
 | `journal_segments` | `journal_days` | segments outside every current non-terminal frame chain (and outside terminal current segments), written by a writer no live manager owns |
-| `manager_directories` | `journal_days` | directories of dead managers whose segments are gone |
+| `manager_directories` | `journal_days` | directories of dead managers whose segments are gone, after their trusted launch records that provably describe no live launch; a directory still holding a launch record is kept |
 | `placement_directories` | always safe | empty placement mirrors below `state/<kind>/` |
-| `tmp_entries` | always safe | staging entries older than 24 hours |
+| `tmp_entries` | always safe | staging entries older than 24 hours, except transfer transaction directories and the staged copies of an unfinished commit; a `trash.*` holding a job payload is quarantined |
 | `retired_requests` | always safe | requests claimed over 30 days ago by a manager now gone, and requests retired over 30 days ago with their `.retirement` records |
 
 ### Retired transfers

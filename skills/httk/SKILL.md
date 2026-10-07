@@ -165,7 +165,10 @@ identity keys and exchange-directory job eject/adopt, see
 - **Offline (this skill):** `references/docs/<repo>/` holds a snapshot of each
   module's narrative documentation (Markdown). Grep it freely — e.g. the
   complete CLI tree is `references/docs/httk-workflow/workflow_cli.md`, runner
-  authoring is `runtime_helpers.md`, storage is
+  authoring is `runtime_helpers.md`, the normative on-disk workspace protocol
+  (markers, journal, commits, operator requests, confined launch files,
+  transfers, the exchange and its daemon mailbox) is
+  `references/docs/httk-workflow/details/workflow_filesystem_api.md`, storage is
   `references/docs/httk-store/db.md`. The remote OPTIMADE client is documented
   under `references/docs/httk-store/details/db-optimade-client.md`; the
   `httk-serve` client page is only a relocation note because the client belongs
