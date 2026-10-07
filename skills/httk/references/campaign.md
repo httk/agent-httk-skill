@@ -237,7 +237,11 @@ per manager); each manager owns its allotment.
   --workspace WS JOB` (explains a job that is
   *not* progressing), `job log --workspace WS JOB`. While authoring a runner,
   `job debug --workspace WS JOB` drives one job in the foreground printing
-  transitions.
+  transitions. A `committing` job is finished only by the manager that
+  published its outcome; another manager takes it over once that owner is
+  provably gone (process dead on the same host, record absent, or heartbeat
+  silent for twice its lease), and operator requests from before the takeover
+  are retired as stale and must be re-issued.
 
 ## 6. Fetch results home and collect
 
@@ -250,7 +254,8 @@ The reverse transfer offers finished jobs on the remote, pulls, imports, and
 retires the sources only after acknowledgement. Retirement is crash-safe and
 idempotent: it moves the acknowledged bundle to `transfers/retired/<T>`, kept
 until `workspace gc` after `trash_days`; per-transfer receipts, kept for a 7-day freshness window,
-retain replay protection. Transfers take no file locks. Set both `retention.trash_days` and `retention.journal_days` to
+retain replay protection (every manager collects expired receipts and
+acknowledgements hourly). Transfers take no file locks. Set both `retention.trash_days` and `retention.journal_days` to
 `keep` before retirement when recovery copies and journal history must remain.
 Fetched jobs are then ordinary local jobs. `collect` prints one summary per
 finished job; options: `--raw` (mechanical `JobRecord`s),

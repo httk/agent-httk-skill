@@ -68,7 +68,8 @@ Repeat `--add` per item; `--set KEY=VALUE` sets other keys (`bwrap`, `python`,
 `force`; `cluster`/`scontrol` at `init` only). There is no `--exchange` option.
 `init` saves `<state>/configuration.json`, writes `exchange/daemon.json` (public
 trust anchors and digests) and ends with the `check`; state of an earlier
-(SQLite) enrollment is refused, so re-initialize. `show WORKSPACE [--json]`
+enrollment (the SQLite ledger, or ledger format 1 before the October 7 2026
+anchor envelope) is refused, so re-initialize. `show WORKSPACE [--json]`
 prints the enrollment and configuration. `check` enters the real broker
 sandbox and checks the scheduler clients; it does not submit work or test
 compute-node execution. `run --once` does one bounded scan; `run` polls until
@@ -143,7 +144,11 @@ Parallel launches: code commands name only the program (`vasp.command =
 start. Under confinement it is a launch client that asks the trusted manager to
 start rank sandboxes; use `$HTTK_WORKFLOW_LAUNCH ./program input.dat`. Each
 launch style needs its own site acceptance (multi-node communication, shared
-memory, isolation, spawn, cancellation).
+memory, isolation, spawn, cancellation). The manager starts the launch only
+after recording its process durably (a gate holds the prefix until then).
+`confine.shm_root` (default `/dev/shm`) must be a node-local tmpfs: it is
+checked at the start-time confinement probe (claims are held back) and at
+every launch.
 
 The built-in Slurm prefix is `env SLURM_HOSTFILE=<nodefile> srun [--mpi=M]
 --ntasks=T --distribution=arbitrary --exact --cpus-per-task=C ...` (no

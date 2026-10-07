@@ -50,7 +50,7 @@ Manager launch is a property of the workspace. On the cluster, install the
 packaged Slurm launcher and configure the workspace it owns:
 
 ```console
-httk workflow launcher add --template slurm --global cluster
+httk launcher add --template slurm --global cluster
 httk workspace init --name runs /scratch/rar/httk/runs
 httk workspace settings set --key manager.launch --value cluster runs
 httk workspace settings set --key slurm.partition --value batch runs
@@ -62,8 +62,8 @@ From a desk, configure an `ssh` remote to that machine and use the same
 workspace operations through `kappa:`:
 
 ```console
-httk workflow remote add --template ssh kappa
-httk workflow remote configure \
+httk remote add --template ssh kappa
+httk remote configure \
     --set host=kappa.example.org --set username=rar \
     --set check_connectivity=yes kappa
 httk workspace init kappa:/scratch/rar/httk/runs
@@ -74,7 +74,7 @@ httk workflow run --workspace kappa:runs --count 4
 
 The remote is only transport: it moves files and invokes commands on kappa.
 `run --workspace kappa:runs` invokes
-`httk workflow manager run --workspace runs --count 4 --detach` there, which
+the frozen peer vector `httk workflow manager run --workspace runs --count 4 --detach` there, which
 uses the owning workspace's launcher. The result is the same as running on the
 cluster, or addressing that machine through a configured `machine_names` alias.
 Transfer jobs to the workspace as needed, run `transfer kappa:runs default`
@@ -210,9 +210,9 @@ A partitioned campaign should publish its runner once into the workspace runner
 store instead of copying it into every payload:
 
 ```console
-httk workflow runner publish --workspace WORKSPACE --name relax.py ./relax.py
+httk runner publish --workspace WORKSPACE --name relax.py ./relax.py
 # A runner directory is published the same way and pinned by its tree digest.
-httk workflow runner publish --workspace WORKSPACE --name relax-runner ./relax-runner
+httk runner publish --workspace WORKSPACE --name relax-runner ./relax-runner
 ```
 
 The command prints the reference to embed in every `job.json` that uses it:
@@ -299,14 +299,14 @@ in strict mode.
 ### Starting a manager
 
 ```console
-httk workflow manager run --workspace WORKSPACE --workers 8
+httk manager run --workspace WORKSPACE --workers 8
 ```
 
 Without pool configuration, a manager advertises the reserved `default` pool.
 Additional routing and capability labels are explicit:
 
 ```console
-httk workflow manager run --workspace WORKSPACE \
+httk manager run --workspace WORKSPACE \
   --pool vasp \
   --capability gpu \
   --workers 4
@@ -525,6 +525,48 @@ the job as blocked, names the writer's host, and says to run a manager on that
 host or pass `--unsafe-persistent-takeover`, rather than claiming the expired
 lease will be recovered here.
 
+### Taking over another manager's commit
+
+A `committing` job is committed only by the manager its state frame names.
+Another manager serving the job's runner executor takes the commit over once
+that owner is evidently gone, by one of three kinds of evidence:
+
+| Evidence | Meaning |
+| --- | --- |
+| `manager_process_dead` | The owner's `managers/<id>/manager.json` names this host and its process is gone, so a restarted manager resumes its predecessor's commits at once. |
+| `manager_record_absent` | The owner has no manager directory or readable heartbeat. |
+| `lease_grace_expired` | The owner's heartbeat has been silent for its lease times `--takeover-grace-factor`. |
+
+Until then the commit is left alone and does not count as work for
+`run_until_idle`. The takeover is itself a marker transition, `committing` →
+`committing`, whose frame repeats the commit and records `previous_manager_id`
+and `takeover_evidence`, so of two would-be successors exactly one wins.
+Because it advances the state generation, an operator request issued against
+the earlier generation is retired as stale and must be re-issued.
+
+The owner of a commit first renames the published `outcome.ready` draft to
+`commit.<generation>` in the attempt-control directory, after the generation of
+the `committing` marker it holds, and reaches the draft by that name for every
+step. A takeover renames the draft again, so the previous owner, should it still
+be running, stops at its next step with nothing recorded; at most the one step
+it had already started can overlap, and the replay tolerates that by checking
+whether the step's result is already in place. A manager may therefore die or
+be replaced at any point of a commit, and the commit completes exactly once.
+One overlap is detected rather than prevented: a `replace-tree` step sets the
+old tree aside only after checking that its trash name is free, but Python
+offers no rename that refuses to replace, so in the gap between that check and
+the rename a stalled previous owner could move the successor's new tree onto an
+*empty* set-aside directory. The previous owner then finds a tree it never
+observed in its trash and reports an error anomaly (`commit_displaced_data`)
+naming both paths, so an operator can move the tree back.
+
+A lingering attempt process that publishes a second `outcome.ready` after its
+draft was renamed is ignored: the commit only ever reads its own draft, and the
+attempt-control directory is removed (or collected) with it. Cancelling a
+`committing` job moves it straight to `cancelled`; a commit already under way
+then loses its final transition and records nothing, while transaction
+operations it applied before that remain in `data/`.
+
 ### Unresolvable join children
 
 A job `waiting` on a child that cannot be resolved in this workspace fails with
@@ -544,7 +586,7 @@ Managers may advertise integer resource capacities, such as
 CPUs and 128000 MB:
 
 ```console
-httk workflow manager run --workspace WORKSPACE --workers 4 \
+httk manager run --workspace WORKSPACE --workers 4 \
   --worker-resource procs 32 --worker-resource mem 128000
 ```
 
@@ -850,7 +892,7 @@ process group (such as `srun`) is gone; remote tasks of a killed `srun` end
 when Slurm cleans up the step. The attempt keeps
 its placement until every launch is reaped. The client keeps its liveness lock
 in `<confine.shm_root>/httk-launch-<attempt_id>/`, a node-local tmpfs
-directory (`confine.shm_root` is assumed to be a tmpfs, not checked), so the workspace filesystem
+directory (`confine.shm_root` must be a tmpfs and is checked), so the workspace filesystem
 needs no lock support. ORCA,
 which starts its own MPI, is supported on one node only under confinement.
 Each launch style needs site acceptance, and stale shared-memory directories
@@ -986,7 +1028,7 @@ Like pools and capabilities restrict what a manager claims, placement prefixes
 restrict what it scans:
 
 ```console
-httk workflow manager run --workspace WORKSPACE \
+httk manager run --workspace WORKSPACE \
   --placement-prefix project-a \
   --placement-prefix project-b/2026
 ```
@@ -1075,8 +1117,9 @@ still shown.
 - `claimed` and `running`: the owning manager, its heartbeat age against the
   recorded lease, and whether an expired lease means recovery rather than a
   stuck job;
-- `committing`: that a published outcome is being committed, which any manager
-  serving the executor resumes. If a commit anomaly has repeated for the same
+- `committing`: that a published outcome is being committed, which its owning
+  manager resumes, or another manager serving the executor once the owner is
+  evidently gone (see the commit takeover above). If a commit anomaly has repeated for the same
   attempt, the recorded error is shown and the job is reported as a blocked,
   wedged commit rather than as needing no action;
 - `waiting`: the join condition, every child with its label and state, which
@@ -1142,6 +1185,19 @@ again, because the job has moved on, is moved to
 reread on every pass. A request for a runner executor this manager does not
 serve is left for a manager that does.
 
+A manager claims a request by moving it into
+`.httk-workspace/requests/claimed/<manager-id>/` while it applies it, and a
+restarted manager returns its own claims to `ready`. Claims of a manager that
+never comes back are recovered by the others: at most every 10 seconds a
+manager looks at the other managers' claim directories and, once a manager is
+evidently gone (the same evidence as a
+[commit takeover](#taking-over-another-managers-commit)), moves its claimed
+requests back to `ready`, logging `request_recovered`. They are then claimed
+and checked against their exact preconditions like any other request, so a
+request is never applied twice. If the former owner was only slow and had
+already applied the request, the recovered copy is retired as stale, and
+`--wait` and `job why` report that retirement although the request took effect.
+
 When the publishing installation has an operator identity from `httk init`, the
 request also carries a detached Ed25519 signature over its canonical JSON, and
 the manager records the verified `operator_key` in the journalled state frame
@@ -1199,12 +1255,15 @@ inherits a commit leaves the tree for GC.
 
 A manager is never required to run policy-gated cleanup, so it can disappear
 between any two instructions. It runs always-safe cleanup at startup and the
-full policy-gated collection at a clean exit. A clean manager removes its own
-metadata directory; a crash leaves it for `journal_days` collection
-(`manager_directories`). The trusted launch records of confined launches in
-it are removed first, once the manager has been silent for its lease times the
-takeover grace factor and each recorded process group is provably gone; a
-directory still holding a record is kept as takeover evidence.
+full policy-gated collection at a clean exit. Whatever its `gc_interval`, it
+also collects expired transfer receipts and acknowledgements older than
+`trash_days` (`transfer_receipts`, `transfer_records`) once an hour. A clean
+manager removes its own metadata directory; a crash leaves it for
+`journal_days` collection (`manager_directories`). The trusted launch records
+of confined launches in it are removed first, once the manager has been silent
+for its lease times the takeover grace factor and each recorded process group
+is provably gone; a directory still holding a record is kept as takeover
+evidence.
 
 On a quota'd HPC filesystem, what remains to manage is failed and cancelled
 attempt evidence, retained journal history, interrupted transaction trash and
@@ -1249,7 +1308,7 @@ A long-lived manager can collect too, which helps where no maintenance job
 exists:
 
 ```console
-httk workflow manager run --workspace WORKSPACE --gc-interval 3600
+httk manager run --workspace WORKSPACE --gc-interval 3600
 ```
 
 It then collects at most once per interval, at the end of a tick and never
@@ -1376,7 +1435,7 @@ exits without executing the runner.
 
 ### Executors and v1 packages
 
-`httk workflow manager run` executes the normal `path` runner executor.
+`httk manager run` executes the normal `path` runner executor.
 Converted `httk-v1` packages use the same path through their packaged v1 runner;
 select their `taskset` claim pool with the manager's `--pool` option. See
 [*httk* v1 task compatibility](v1_compatibility.md).

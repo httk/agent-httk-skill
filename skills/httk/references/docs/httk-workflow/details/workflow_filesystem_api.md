@@ -2107,10 +2107,10 @@ a job):
 .httk-workspace/
 ├── tmp/
 │   ├── birth.<rand>/                 a sealing transaction directory being built
-│   ├── eject.<T>/                    live sealing transaction T
+│   ├── eject.<T>/                    live sealing transaction T (an export: with export/copy-to.json)
 │   ├── abort.<T>/                    T decided aborted (renamed from eject.<T>)
-│   ├── import.<owner>.<ns>.<L>/      adoption lineage L
-│   ├── export.<owner>.<ns>.<T>/      copy-out of held export T
+│   ├── import.<owner>.<ns>.<L>/      adoption lineage L (with verified.json from V8 on)
+│   ├── export.<owner>.<ns>.<T>/      wrapper of held export T while its copy-out runs
 │   └── trash.<rand>/                 garbage, always collectable
 └── transfers/
     ├── adopting/<job_id>             per-job claim, a hard link of <lineage>/claims/<job_id>
@@ -2119,7 +2119,9 @@ a job):
     ├── incoming/<T>/                 addressed bundle delivered by the transfer CLI
     ├── outgoing/<T>/                 sealed addressed bundle waiting for its acknowledgement
     ├── retired/<T>/                  acknowledged addressed bundle
-    └── exports/<T>/<job_key>/        held ejected bundle waiting for copy-out
+    ├── exports/<T>/                  wrapper of a held ejected bundle: <job_key>/ and copy-to.json
+    └── in-doubt/<T>/                 wrapper a copy-out may have delivered: <job_key>/, copy-to.json,
+                                      publishing (never copied out again)
 ```
 
 `T` is a transfer ID (a fresh UUID), `L` a lineage ID (16 random hex digits),
@@ -2223,12 +2225,12 @@ is by job ID; envelope order is top-down. The steps are:
 | # | Step | Mechanism |
 | --- | --- | --- |
 | S0 | Pre-check | job kinds (ejection tree: terminal or paused; addressed: quiescent); no unresolved joins; tree boundary rules; no member `transferring` under another transfer; no `transfers/adopting/<job_id>` for any job of the tree; no non-empty `.httk-transfer` in the root payload; every payload on the same device as `tmp/`; target absent. For every job that arrived by an addressed transfer still inside its freshness window, create `received/<Tin>` from its carried provenance |
-| S1 | Birth | build `E` with an `envelope.partial` skeleton in a `tmp/birth.<rand>` directory and rename it to `E` |
+| S1 | Birth | build `E` with an `envelope.partial` skeleton (an export also with its wrapper `export/copy-to.json`) in a `tmp/birth.<rand>` directory and rename it to `E` |
 | S2 | Fence members | each member `Mi` in job-ID order: transition to `transferring`, recording `outgoing` (transfer ID, role `member`, root, owner, start time) and the prior kind and state |
 | S3 | Fence root | root transition to `transferring`, recording `outgoing` (role `root`, members, destination, target, owner, times, payload inode) and the prior kind and state |
 | S4 | Prepare | create the manifest and runners in `E/envelope.partial` with no-replace links (a content mismatch aborts); rename each member payload to `E/envelope.partial/tree/<p>/<k>`; rename `envelope.partial` to `envelope` once every member is inside |
 | S5 | Detach root | rename the root payload to `E/payload`, compare its inode with the recorded one (a mismatch stops and reports), and rename `E/envelope` to `E/payload/.httk-transfer` |
-| S6 | Commit | rename `E/payload` to its destination: the target path or exchange outbox (ejection), `transfers/exports/<T>/<job_key>` (export to another filesystem), or `transfers/outgoing/<T>` (addressed) |
+| S6 | Commit | rename `E/payload` to its destination: the target path or exchange outbox (ejection) or `transfers/outgoing/<T>` (addressed); an export to another filesystem takes two renames, `E/payload` to `E/export/<job_key>` (prepare), then the whole wrapper `E/export` to `transfers/exports/<T>` (commit) |
 | S7 | Clean up | ejection and export: remove member markers, then the root marker, then trash `E`; addressed: after acknowledgement or `retire` |
 
 Every rename whose source or destination lies inside `E` or `A` names that
@@ -2241,8 +2243,9 @@ commit (`EXDEV`, non-empty target) or an S4 mismatch makes the actor abort by
 renaming `E` to `A`. That rename is the single abort decision: after it, every
 forward move names a path inside `E` and fails without effect, and `E` never
 exists again. Anyone who finds `A` and a `transferring` marker under `T`, once
-the owner is gone, runs the **abort steps**: (1) for an addressed reclaim,
-rename `transfers/outgoing/<T>` to `A/payload`; (2) rename
+the owner is gone, runs the **abort steps**: (1) for an addressed reclaim
+authorized by `A/reclaim`, rename `transfers/outgoing/<T>` to `A/payload`, and
+rename an export's prepared `A/export/<key>` to `A/payload`; (2) rename
 `A/payload/.httk-transfer` to `A/envelope`; (3) move every member payload in
 `A/envelope.partial/tree` or `A/envelope/tree` back to its placement; (4)
 rename `A/payload` to the root's placement; (5) unfence each member and then
@@ -2253,14 +2256,19 @@ every actor after an error, locates the payloads by the existence of fixed
 names, never by guessing from a listing:
 
 1. `E` present: the **forward phase**. The root payload is, earliest first,
-   at its placement, in `E/payload`, or at a committed location
-   (`exports/<T>/<key>`, `outgoing/<T>`, `retired/<T>`); if none holds it and
-   `E` is still present the commit happened (an exchange ejection's bundle is
-   in client territory, which is never inspected). The envelope is, earliest
+   at its placement, in `E/payload`, in `E/export/<key>` (an export), or at a
+   committed location (`exports/<T>/<key>`, `outgoing/<T>`, `retired/<T>`). An
+   export is committed when `exports/<T>/<key>` holds a bundle whose manifest
+   names `T` (positive observation; another `T` there stops and reports). If
+   none holds it and `E` is still present the commit happened (an exchange
+   ejection's bundle is in client territory, which is never inspected; an
+   export's wrapper may have moved on into its copy-out, since `E/export`
+   leaves `E` only by the commit rename). The envelope is, earliest
    first, `E/envelope.partial`, `E/envelope`, `E/payload/.httk-transfer`.
 2. Else `A` present: the **abort phase**. The root payload is, earliest first,
-   in `outgoing/<T>` (addressed only), `A/payload`, its placement, or
-   `retired/<T>`. If it is in none of the first three, the commit or the
+   in `outgoing/<T>` (addressed only), `A/export/<key>` (an export),
+   `A/payload`, its placement, or `retired/<T>`. If it is in none of the first
+   four, the commit or the
    acknowledgement happened before the abort rename: run clean-up, never
    unfence.
 3. Else **neither**: no payload of `T` can move again. A marker transferring
@@ -2374,29 +2382,56 @@ each run.
 doubt: it may have been delivered, or may still be delivered until
 `sealed_at + W + S`. Two operator verbs decide it:
 
-- `httk workflow transfer retire JOB_ID` records that the destination holds the
+- `httk transfer retire JOB_ID` records that the destination holds the
   job: it behaves as an acknowledgement without a document;
-- `httk workflow transfer reclaim JOB_ID` takes the job back, and is allowed
-  only after `sealed_at + W + S`: it renames `E` to `A` and runs the abort
-  steps. A later transfer of the job mints a new transfer ID.
+- `httk transfer reclaim JOB_ID` takes the job back, and is allowed
+  only after `sealed_at + W + S`: it renames `E` to `A` (or, when neither
+  exists any more, creates an empty `A`), records the authorization
+  `abort.<T>/reclaim`, and runs the abort steps. A later transfer of the job
+  mints a new transfer ID.
+
+An in-doubt transfer is never resolved automatically. The end of the
+freshness window proves only that no destination may accept the bundle any
+more, not that none did, so the abort steps take a committed bundle back from
+`outgoing/<T>` only when the operator's authorization `abort.<T>/reclaim`
+exists; recovery continues such an authorized reclaim after a crash. An abort
+decided by anything else after the commit (the orphan sweep missing a marker,
+say) leaves `A`, the fenced root and `outgoing/<T>` in place: the bundle stays
+deliverable and retirable, and `httk transfer status` reports it once
+its window has passed. A copy-out is in doubt the same way when it may have
+published: before its publishing rename the owner links a `publishing` witness
+into the export wrapper in its staging directory (fenced by that directory's
+name; an owner whose link fails stops), and an actor that later finds the
+witness while the destination does not hold the transfer never copies again:
+it first renames the temporary the witness names (the original owner's, carried
+along by every takeover of the wrapper) to a unique name and removes it, so a
+stale owner can no longer publish it, and then renames the whole wrapper to
+`transfers/in-doubt/<T>`, a path that no copy-out ever claims. Its
+`copy-to.json` and `publishing` witness are the in-doubt record; the bundle is
+at `transfers/in-doubt/<T>/<key>`. `httk job eject --resume` and `httk workflow transfer
+status` report it (exit status 1), and the operator either removes the held
+copy or takes it back with `httk job adopt <held path>`.
 
 ### Ejection, export and adoption of free-standing directories
 
 An *ejected* job is a bundle addressed to no workspace (a null destination).
 `httk job eject` runs the sealing transaction and commits with one rename to
 the target path. When the target is on another filesystem the ejection never
-copies: it commits to `transfers/exports/<T>/<job_key>` on the workspace
-filesystem, which completes the ejection (the job has left the workspace), and
-a separate **copy-out** moves the held bundle:
+copies: it commits the wrapper `transfers/exports/<T>` (the bundle at
+`<job_key>` beside `copy-to.json`, which records where the copy goes) on the
+workspace filesystem, which completes the ejection (the job has left the
+workspace), and a separate **copy-out** carries that one wrapper by renames:
 
-1. create `tmp/export.<owner>.<ns>.<T>` with `copy-to` recorded;
-2. claim by renaming `exports/<T>/<key>` into it (a concurrent `job adopt` of
-   the held path or another resume loses cleanly);
-3. copy to `<dest dir>/.<name>.httk-export.<token>`;
+1. read `copy-to.json` of `exports/<T>`;
+2. claim the whole wrapper by renaming `exports/<T>` to
+   `tmp/export.<owner>.<ns>.<T>` (another resume loses cleanly; a wrapper a
+   concurrent `job adopt` already emptied is discarded);
+3. copy the bundle to `<dest dir>/.httk-export.<token>` (named independently of `<name>`);
 4. verify the copy's manifest `transfer_id` and digests;
-5. rename it to `<dest dir>/<name>`; when the target is non-empty, rename the
-   bundle back to `exports/<T>/<key>` and report;
-6. trash the staging directory only after step 5 succeeded.
+5. link the `publishing` witness into the wrapper, then rename the copy to
+   `<dest dir>/<name>`; when the target is taken, remove the copy, unlink the
+   witness, rename the wrapper back to `exports/<T>` and report;
+6. trash the wrapper only after step 5 succeeded.
 
 `httk job eject --resume` re-runs every pending copy-out (managers never do),
 and `httk job adopt` of a held export takes it back through the adoption
@@ -2456,8 +2491,9 @@ and attach carry its state tree, journals, and all placements together.
 ## Exchange extension
 
 The exchange extension lets a client that has no workspace access of its own
-(typically a different account behind a daemon, or a service writing jobs) hand
-jobs to a workspace and receive results through plain directories. It is
+(typically a service or a daemon's remote side) hand jobs to a workspace and
+receive results through plain directories. The writer of the exchange must be
+the workspace owner's account (see [Adoption from the inbox](#adoption-from-the-inbox)). It is
 declared by `"exchange"` in the `extensions` array of `format.json`; a
 workspace declaring an extension the implementation does not know refuses to
 attach.
@@ -2484,8 +2520,9 @@ WORKSPACE/exchange/
 ```
 
 `requests/`, `responses/` and `managers/` are created by `enable` and reserved
-for the workspace daemon; the daemon still uses its own sibling exchange
-directory until it moves here (see the daemon guide).
+for the workspace daemon, which serves its signed requests and responses in
+`WORKSPACE/exchange/requests` and `responses`; there is no sibling exchange
+directory (see the daemon guide).
 
 `exchange.json` is `{"format": "httk-workspace-exchange", "format_version": 1,
 "workspace_id": "<uuid>"}`. `status.json` is `{"format":
@@ -2536,6 +2573,23 @@ directory below `outbox/rejected`, which is opened without following links and
 checked for the owner and device of its parent (another is minted otherwise),
 together with a `reason.json` written by a no-replace link through the same
 descriptor; `reason.json` is written only once the bundle has arrived there.
+A claimed bundle is verified in private staging, but the verification is not a
+guarantee against a writer that held a file open before the claim: a write
+handle the client opened on a file before the rename (for example an open SFTP
+handle) can still change that file's bytes after verification. What such a
+write can still reach is limited to the job's own payload files: right after
+the verification and the presence checks, and before the envelope moves (V8),
+the adopter writes the validated plan (the canonical manifest, with the
+filtered `prior_state` of every job, the root's placement and the origin) into
+a fresh private `S/verified.json`, and every later step and every recovery after
+V8 uses only that snapshot, never the bundle's `manifest.json`; a lineage past
+V8 without it is reported and kept. A bundled runner is copied into a private
+directory, and that copy is checked against the snapshot's digest and is what
+is installed. A marker file's contents are never read (only its name), and a
+payload's `job.json` and other files are the job's own content. This is an
+accepted limitation for the client's own confined job, and it is why the
+exchange writer must be the workspace owner's account.
+
 The bundle's spawn records may not name a job of this workspace outside the
 bundle, nor its root a parent present here. An entry the workspace cannot read or
 search (a mode-0 file or directory) refuses the bundle rather than leaving it
@@ -2615,8 +2669,11 @@ outcome with `protocol_error` without registering any child of the set.
 
 While the parent is `committing`, the manager:
 
-1. moves each complete child bundle to its chosen
-   `<workspace>/jobs/<placement>/<job-key>` path;
+1. copies each complete child bundle out of the draft into its own staging,
+   verifies the copy against the digest recorded when the outcome was
+   accepted, and moves the copy to its chosen
+   `<workspace>/jobs/<placement>/<job-key>` path, so nothing the attempt still
+   holds open or linked in its draft is published;
 2. creates its one `g0.init` marker at the mirrored target-workspace path below
    `state/submitted`;
 3. treats an identical existing child plus marker as already registered;
@@ -3204,9 +3261,13 @@ collector MUST NOT prune a category whose limit is unlimited (by default
 `attempt_control_days`; see [Workspace policy](#workspace-policy)).
 
 These always-safe categories are collected regardless of `policy.retention`,
-because their entries carry no information (the last is the one conditional
-case). Every manager collects them after attaching, and runs the full
-policy-gated collection at clean exit; `workspace gc` also collects them.
+because their entries carry no information, or (transfer receipts) carry it
+only until an expiry that is a pure function of the receipt and the clock (the
+last is the one conditional case). Every manager collects them after
+attaching, collects transfer receipts and import acknowledgements
+(`transfer_receipts`, `transfer_records`) once an hour, and runs the full
+policy-gated collection at clean exit and every `--gc-interval` when one is
+configured; `workspace gc` also collects them.
 
 - An empty placement mirror below a state kind, pruned by `rmdir` alone.
 - An entry in `.httk-workspace/tmp/` or `.httk-workspace/requests/tmp/` more
@@ -3216,6 +3277,9 @@ policy-gated collection at clean exit; `workspace gc` also collects them.
   days old whose manager no longer heartbeats.
 - A request in `.httk-workspace/requests/retired/`, with its `.retirement`
   record, more than 30 days old.
+- A transfer receipt below `transfers/received/` once `now > sealed_at + W +
+  S`, when no importer can still accept a copy of the bundle. An unparsable
+  receipt is kept.
 - A removable marker (`succeeded`, `failed`, `cancelled`, `submitted`, or
   `ready`) whose complete payload directory is absent, removed as an
   operator-requested job removal. It is kept when a non-terminal parent's
@@ -3237,7 +3301,6 @@ The remaining categories are gated as follows:
 | Transaction trash | `trash_days` | The job's marker has reached a quiescent kind, so the destination transition has happened and no replay consults the trash again. |
 | Retired transfer bundle | `trash_days` | Below `transfers/retired/`; kept `trash_days` after its acknowledgement. |
 | Import acknowledgement | `trash_days` | Below `transfers/acks/`; the stale-copy check of an ejected bundle uses it until then. |
-| Transfer receipt | `sealed_at + W + S` | Below `transfers/received/`; removed once no importer can still accept a copy of the bundle. An unparsable receipt is kept. |
 | Journal segment | `journal_days` | No current terminal marker, nor `transferring` marker of a bundle awaiting handover, references it; no frame chain of a current non-terminal marker contains it; and its writer belongs to no manager heartbeating within its lease. |
 | Manager directory | `journal_days` | The manager's heartbeat is expired and none of its writer's segments were retained. |
 

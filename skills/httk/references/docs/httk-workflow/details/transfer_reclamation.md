@@ -7,7 +7,7 @@ after the destination has acknowledged the import. `httk job eject` and
 describes what those protocols leave on disk, when `httk workspace gc` collects
 it, and what an operator does with a transfer that never completed. Ordinary
 use needs none of this; it matters when a transfer was interrupted, when a
-filesystem quota counts files, or when `httk workflow transfer status [--workspace WS]` reports a
+filesystem quota counts files, or when `httk transfer status [--workspace WS]` reports a
 transfer waiting for an operator (`httk project repair --dry-run` reports the
 same for workspaces registered in a project). The normative protocol is in the
 {doc}`workflow_filesystem_api`.
@@ -22,13 +22,14 @@ transfer ID, and every one of them is removed by a rule stated here.
 | --- | --- | --- |
 | `tmp/eject.<T>`, `tmp/abort.<T>` | a sealing transaction in progress (or being undone) | while the transaction runs; removed by the protocol itself |
 | `tmp/import.<owner>.<ns>.<L>` | an adoption lineage and its claims | while an import runs; removed by the import or its takeover |
-| `tmp/export.<owner>.<ns>.<T>` | a copy-out of a held export | while the copy-out runs |
+| `tmp/export.<owner>.<ns>.<T>` | the wrapper of a held export while its copy-out runs | while the copy-out runs |
 | `transfers/adopting/<job_id>` | the per-job claim of a running import | while the import runs |
 | `transfers/outgoing/<T>/` | a sealed bundle waiting for its acknowledgement | until acknowledged, retired or reclaimed |
 | `transfers/retired/<T>/` | the acknowledged bundle, a full second copy of the payload | `trash_days` after retirement |
 | `transfers/acks/<T>.json` | the destination's signed acknowledgement | `trash_days` |
 | `transfers/received/<T>` | the replay receipt of an addressed import (a few lines of JSON) | until `sealed_at + W + S` |
-| `transfers/exports/<T>/<job_key>/` | an ejected bundle held for copy-out | until copied out or adopted |
+| `transfers/exports/<T>/` | the wrapper of an ejected bundle held for copy-out: `<job_key>/` and `copy-to.json` | until copied out or adopted |
+| `transfers/in-doubt/<T>/` | the wrapper of an export a copy-out may have delivered: `<job_key>/`, `copy-to.json` and the `publishing` witness | until the operator removes or adopts the bundle |
 
 `W` is the freshness window (7 days) and `S` the clock-skew bound (130
 minutes); a bundle is accepted only within `W` of its sealing time, so after
@@ -44,10 +45,21 @@ nobody names and older than a day is aborted, an unused `abort.<T>` and a
 `tmp/birth.*` older than a day are trashed). A completed transaction leaves
 nothing behind in `tmp/`.
 
+One recovery pass lists the `transferring` markers once and looks up each
+owner's liveness once: a transaction whose owner is alive is left after that
+lookup, while stale fences that no transaction directory names any more are
+undone in the same pass, whatever their owner. A manager serving the
+[exchange](workspace_daemon.md) recovers at most every 10 seconds and shares
+one marker listing per pass between recovery, its census of finished trees and
+`status.json`, which it does not render again while any manager installed it
+less than 10 seconds ago.
+
 ## What gc collects, and when
 
 `httk workspace gc` handles transfer state in these categories, all gated the
-same way as the rest of garbage collection:
+same way as the rest of garbage collection. A running manager also collects
+`transfer_receipts` and `transfer_records` once an hour, whatever its
+`--gc-interval`, and `transfer_receipts` at attach:
 
 - `retired_bundles`: `transfers/retired/<T>` older than `trash_days`. This is
   the largest item a busy transfer campaign accumulates, since it holds the
@@ -61,7 +73,7 @@ same way as the rest of garbage collection:
   like every other abandoned `tmp/` entry. A trash directory that still holds a
   job payload is moved to `quarantine/` instead of being removed. (The
   `transaction_trash` category is unrelated: it collects the aged
-  `outcome.ready/transaction/trash` of attempt outcomes.)
+  `commit.<g>/transaction/trash` of committed attempt outcomes.)
 
 gc never removes `tmp/import.*`, `eject.*`, `abort.*`, `export.*` or `birth.*`,
 nor `transfers/adopting`, `outgoing` or `exports`: only the protocol steps and
@@ -72,18 +84,36 @@ a collection that runs at the wrong moment.
 
 Ejecting to a directory on another filesystem commits the bundle to
 `transfers/exports/<T>/<job_key>` and finishes the ejection there (the job has
-left the workspace); the copy to its target is a separate, resumable step. If
-that step was interrupted or the target was not writable, the bundle stays
-held:
+left the workspace); the copy to its target is a separate, resumable step. The
+wrapper `transfers/exports/<T>/` is born complete inside the sealing transaction
+with its `copy-to.json` (where the copy goes), receives the bundle there, and
+is committed by one rename; from then on the copy-out carries the whole wrapper
+by renames (into its `tmp/export.*` staging, back to `exports/<T>`, or to
+`in-doubt/<T>`), so no second record is ever written. If the copy-out was
+interrupted or the target was taken or not writable, the bundle stays held:
 
 ```console
 $ httk job eject --resume
 ```
 
 finishes every pending copy-out (managers never do this). The held bundle can
-also be taken back with `httk job adopt` of its path under `exports/`. While a
-bundle is held the job is not in the workspace and not at the target:
-`httk workflow transfer status` reports it as an export waiting for copy-out.
+also be taken back with `httk job adopt transfers/exports/<T>/<job_key>`, which
+discards the emptied wrapper. While a bundle is held (or its interrupted
+copy-out waits in `tmp/`) the job is not in the workspace and not at the
+target: `httk transfer status` reports it as an export waiting for copy-out.
+
+A copy-out interrupted after its publication witness (the `publishing` link
+made into the wrapper just before the publishing rename; it records the copy's
+temporary, which every takeover discards by rename before deletion) may already
+have delivered the bundle. The whole wrapper is then held *in doubt* at
+`transfers/in-doubt/<T>/`; its `copy-to.json` and witness are the record, and
+the bundle at `transfers/in-doubt/<T>/<job_key>/` is never copied out again. A
+copy-out that finds its target taken removes its own temporary, unlinks its
+witness and returns the wrapper to `exports/<T>`: that export is held, not in
+doubt. `httk job eject --resume` and `httk transfer status`
+report it (details key `exports_in_doubt`, exit status 1). The operator either
+removes the held copy, once the target is known to hold the job, or takes it
+back with `httk job adopt transfers/in-doubt/<T>/<job_key>` (the full path).
 
 ## Transfers in doubt
 
@@ -94,16 +124,19 @@ lost simply repeats: the destination recognizes the replay and acknowledges
 again without creating a second job.
 
 A bundle still unacknowledged after `W` is *in doubt*: it may have been
-delivered, or it may still be delivered until `W + S` has passed. `httk workflow transfer status`
+delivered, or it may still be delivered until `W + S` has passed. An in-doubt
+transfer is never resolved automatically. `httk transfer status`
 reports it, and two operator verbs settle it:
 
-- `httk workflow transfer retire [--workspace WS] JOB_ID` when the destination
+- `httk transfer retire [--workspace WS] JOB_ID` when the destination
   holds the job (verify first). The source behaves as if it had received the
   acknowledgement: the bundle moves to `retired/<T>` and the job's marker is
   removed.
-- `httk workflow transfer reclaim [--workspace WS] JOB_ID` to take the job
+- `httk transfer reclaim [--workspace WS] JOB_ID` to take the job
   back. It is refused until `sealed_at + W + S`, because until then a
-  destination could still import the bundle. The job returns to its
+  destination could still import the bundle. It first records the operator's
+  authorization (`tmp/abort.<T>/reclaim`), and only then moves the bundle home;
+  recovery continues an authorized reclaim after a crash. The job returns to its
   placement and its previous state; a later transfer starts afresh with a new
   transfer ID.
 

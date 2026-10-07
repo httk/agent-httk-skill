@@ -12,20 +12,38 @@ Named launchers are resolved project-first, then globally. A project-local
 bundle lives at `httk_project/launchers/NAME`, a global one at
 `~/.config/httk/launchers/NAME`.
 
+## Inspecting and changing configuration
+
+```console
+httk launcher show cluster --json
+httk launcher configure cluster --set slurm.partition=gpu
+httk launcher configure cluster --unset slurm.partition
+httk launcher configure cluster --add confine.devices=/dev/example
+httk launcher configure cluster --remove confine.devices=/dev/example
+httk launcher remove cluster
+```
+
+`--set` replaces a whole value and `--unset` restores fallback behavior.
+`--add` and `--remove` edit the colon-separated `confine.devices`,
+`confine.pmix_roots` and `confine.readonly_paths` lists. Removing the last
+path leaves an explicit empty list; unsetting the key restores its default.
+`--add-path` and `--remove-path` are equivalent descriptive spellings.
+Removing a launcher removes its bundle, not workspaces or running managers.
+
 ## Setting one up
 
 The packaged template is `slurm`. Create a global launcher profile on a machine
 where `sbatch` is available:
 
 ```console
-$ httk workflow launcher add --template slurm --global cluster
-$ httk workflow launcher check cluster
+$ httk launcher add --template slurm --global cluster
+$ httk launcher check cluster
 ```
 
 Settings can also be given at creation:
 
 ```console
-$ httk workflow launcher add --template slurm --global --set slurm.partition=batch cluster
+$ httk launcher add --template slurm --global --set slurm.partition=batch cluster
 ```
 
 Launcher settings are non-secret configuration stored in `launcher.json` and
@@ -131,9 +149,9 @@ Create separate profiles when, for example, CPU and GPU managers need different
 queues or reservations:
 
 ```console
-$ httk workflow launcher add --template slurm --global --set slurm.partition=cpu cpu
-$ httk workflow launcher add --template slurm --global --set slurm.partition=gpu gpu
-$ httk workflow launcher configure --set slurm.reservation=gpu-a100 gpu
+$ httk launcher add --template slurm --global --set slurm.partition=cpu cpu
+$ httk launcher add --template slurm --global --set slurm.partition=gpu gpu
+$ httk launcher configure --set slurm.reservation=gpu-a100 gpu
 $ httk workflow run --workspace default --launcher cpu --count 4
 $ httk workflow run --workspace default --launcher gpu --count 2
 ```
@@ -161,7 +179,7 @@ launcher or as workspace settings:
 | `confine.bwrap` | `bwrap` on `PATH` | Absolute path of the Bubblewrap executable. |
 | `confine.devices` | none | Colon-separated device nodes below `/dev` bound into attempts and ranks, such as GPU or InfiniBand devices. |
 | `confine.pmix_roots` | none | Colon-separated approved parents of the per-step PMIx directory exposed to ranks. |
-| `confine.shm_root` | `/dev/shm` | Node-local parent of the per-launch shared-memory directories and of the launch client's liveness lock directory `httk-launch-<attempt_id>/`; it is assumed to be a tmpfs (not checked). |
+| `confine.shm_root` | `/dev/shm` | Node-local parent of the per-launch shared-memory directories and of the launch client's liveness lock directory `httk-launch-<attempt_id>/`; it must be a tmpfs, which the manager checks at start and each rank helper checks before joining. |
 | `confine.environment.<NAME>` | none | A variable set in rank sandboxes, such as site MPI tuning; `NAME` is a portable identifier outside `HTTK_*`, the value at most 4096 bytes. |
 
 Values are strings; an unknown `confine.*` key or a malformed value refuses the
@@ -187,7 +205,7 @@ option is not shown in `--help` and accepts only these keys). Job parameters
 and declared job environment never reach these keys.
 
 ```console
-$ httk workflow launcher add --template slurm --global --set manager.confine=bwrap confined
+$ httk launcher add --template slurm --global --set manager.confine=bwrap confined
 $ httk workflow run --workspace default --launcher confined --count 2
 ```
 
@@ -199,7 +217,7 @@ For the colon-separated path settings of a `slurm` launcher
 order without duplicates, after any `--set`, and prints the resulting value:
 
 ```console
-$ httk workflow launcher configure confined --add-path confine.readonly_paths=/software:/opt/modules
+$ httk launcher configure confined --add-path confine.readonly_paths=/software:/opt/modules
 ```
 
 When `confine.readonly_paths` is not set yet, the list starts from the default
@@ -259,7 +277,7 @@ print(result)
 `add_launcher` creates the bundle from the maintained template and
 `check_launcher` runs its environment check. Pass a `settings` mapping to
 `add_launcher`, or update an existing bundle with `configure_launcher` (the CLI
-equivalent is `httk workflow launcher configure --set KEY=VALUE NAME`).
+equivalent is `httk launcher configure --set KEY=VALUE NAME`).
 
 For local debugging, bypass launcher submission and run one manager
 in-process:
