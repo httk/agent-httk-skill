@@ -237,11 +237,16 @@ per manager); each manager owns its allotment.
   --workspace WS JOB` (explains a job that is
   *not* progressing), `job log --workspace WS JOB`. While authoring a runner,
   `job debug --workspace WS JOB` drives one job in the foreground printing
-  transitions. A `committing` job is finished only by the manager that
-  published its outcome; another manager takes it over once that owner is
-  provably gone (process dead on the same host, record absent, or heartbeat
-  silent for twice its lease), and operator requests from before the takeover
-  are retired as stale and must be re-issued.
+  transitions. A job's published outcome is committed only by the manager that
+  ran it; another manager begins or takes over that commit once the owner is
+  provably gone (process dead on the same host, record absent, closed, or
+  heartbeat silent for twice its lease) AND every recorded parallel launch of
+  the attempt provably ended (process group gone here, the scheduler confirms
+  the allocation ended, or the allocation's end time passed). `job why` names a
+  launch that blocks it; if it ran where nothing can prove it ended, the operator
+  may run `httk job confirm-launches-ended --workspace WS JOB` after making sure
+  it really has ended (they take that responsibility). Operator requests from
+  before a takeover are retired as stale and must be re-issued.
 
 ## 6. Fetch results home and collect
 

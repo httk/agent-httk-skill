@@ -152,7 +152,14 @@ start. Under confinement it is a launch client that asks the trusted manager to
 start rank sandboxes; use `$HTTK_WORKFLOW_LAUNCH ./program input.dat`. Each
 launch style needs its own site acceptance (multi-node communication, shared
 memory, isolation, spawn, cancellation). The manager starts the launch only
-after recording its process durably (a gate holds the prefix until then).
+after recording its process and allocation durably (a gate holds the prefix
+until then). Another manager commits, takes over or cancels the attempt only
+once every recorded launch provably ended; for Slurm it asks `squeue` (a
+running allocation blocks even past its recorded end time). A non-Slurm
+multi-node launch technology must provide an `exec:PATH` allocation probe that
+records an `identity` and answers `PATH ended` (see
+[`launcher_authoring.md`](docs/httk-workflow/details/launcher_authoring.md)),
+or such takeovers wait for `httk job confirm-launches-ended`.
 `confine.shm_root` (default `/dev/shm`) must be a node-local tmpfs: it is
 checked at the start-time confinement probe (claims are held back) and at
 every launch.
