@@ -168,8 +168,9 @@ launch technology must provide an `exec:PATH` allocation probe that records an
 `identity` and answers `PATH ended` (see
 [`launcher_authoring.md`](docs/httk-workflow/details/launcher_authoring.md));
 otherwise such jobs wait until the operator, having made sure the owner and
-its launches are gone, runs `httk workspace attest-dead OWNER WS --reason TEXT`
-(attesting a still-running owner can run work twice).
+its launches are gone, runs `httk workspace attest-dead OWNER WS --force --reason TEXT`
+(`--force` because no probe can decide; attesting a still-running owner can
+run work twice).
 `confine.shm_root` (default `/dev/shm`) must be a node-local tmpfs: it is
 checked at the start-time confinement probe (claims are held back) and at
 every launch.

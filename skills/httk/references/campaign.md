@@ -318,7 +318,15 @@ cancel`, and release a succeeded job with `httk job unseal` before deleting it.
 Never `rm -r` a job directory: a manager may hold it at that moment.
 `workspace gc [--dry-run] [--category C]` frees what the retention policy
 (`workspace policy show|set`, `retention.*`) allows and recovers dead owners;
-`workspace fsck [--repair]` checks the job tree. Each manager writes
+`workspace fsck [--repair] [--yes]` checks the job tree, and MUST run only
+while nothing else (manager, CLI operation, daemon, transfer) uses the
+workspace: findings from a busy workspace may be transient. `--repair` is
+refused until every owner is proven dead and recovered (stop the managers, run
+`workspace gc`), asks "Make sure no other operations are ongoing in this
+workspace. Continue? [y/N]" (`--yes` skips it, required without a terminal),
+quarantines unparsable entries and removes stale or recreates missing exchange
+index entries (`stale_exchange_index`, `unindexed_exchange_job`); every other
+finding is left to the operator. Each manager writes
 `logs/managers/<manager-id>.log` in its workspace; postprocess output defaults
 to `postprocess/<placement>/<job_key>/<script>/`.
 
