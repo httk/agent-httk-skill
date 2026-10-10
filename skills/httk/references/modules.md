@@ -106,22 +106,28 @@ was merged in and retired (August 18 2026). Registered into
 See `campaign.md` for the end-to-end playbook. Summary of the model:
 
 - **Project** (`httk project init`) anchors everything; **workspaces** hold
-  jobs and state (machine-owned names; `NAME` local, `REMOTE:NAME` remote).
+  installed workflows and jobs (machine-owned names; `NAME` local,
+  `REMOTE:NAME` remote). A job directory moves between `jobs/<state>/` trees by
+  atomic renames; an owner (manager or CLI process) holds a job, and a job
+  changes hands only when its owner is proven dead or attested dead
+  (`workspace owners`, `workspace attest-dead`) — no leases, no takeover.
 - Per-job and per-step resource requirements are enforced by resource-aware
   managers configured with `--worker-resource`.
 - **Workflows**: no VASP workflows are packaged in this module — the
   `vasp.relax`/`vasp.static`/`vasp.relax-static` packages live in the
-  `workflows-vasp` repository (referenced by git URI or installed; see
-  `references/workflows.md`); `httk.workflow.codes.vasp` still ships the Python
+  `workflows-vasp` repository (referenced by git URI and installed into each
+  workspace that runs them; see `references/workflows.md`); the VASP Python
   primitives (inputs, remedies, collection) and Bash VASP API those runners
-  build on, for authoring your own — `httk.workflow.codes` is the per-code
-  collection future codes join. A single runner file
-  (`--workflow ./my_runner.py`), or a **workflow package directory** with
+  build on are `httk.codes.vasp` from *httk-workflow-vasp*, built on the public
+  toolkit `httk.workflow.codes`. A single runner file
+  (`--from-runner ./my_runner.py`), or a **workflow package directory** with
   `httk_workflow.toml` (declared inputs/outputs/parameters/environment,
   instantiate/collect hooks as Python or any executable, any-language
   runner, `[workflow.build]` for compiled workflows — sources-only digests,
-  binaries built and registered per machine via `httk workflow build`) —
-  published content-addressed and digest-pinned per job.
+  binaries built and registered per platform via `httk workflow build`) —
+  installed into the workspace (`httk workflow install --workspace WS`, or
+  `job new --install`) and pinned per job. A job runs only a workflow
+  installed in its workspace.
 - Lifecycle: **instantiate → run → collect**, with `postprocess` the
   workflow-owned substep of collect. *Inputs* are declared staged objects;
   *parameters* are opaque knobs (`--parameter k=v`, `Attempt.parameter()`).
@@ -136,7 +142,7 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   Definition, jobflow/atomate2 Makers (DAG-parallel as child jobs), and
   converted httk v1 template packages run via a manifest `format =` key or
   `job new --format LANG` on a bare document. Finished v1 trees are harvested
-  with `httk workflow v1 collect` (the only supported v1 surface).
+  with `httk v1 collect` (the only supported v1 surface).
 - Provenance: `run_record(job_record)` → `httk.core.Run`; collect assembles
   provenance in the framework. A `Run`'s input/artifact/output edges are
   servable as semantic OPTIMADE relationships in both directions (see
@@ -144,13 +150,15 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
 - Sealing (`docs/httk-workflow/details/sealing.md`): signed manifests over a job's,
   workspace's, or project's contents, detecting later tampering —
   `httk job seal|unseal`, `httk workspace seal|unseal`, `httk project
-  seal|unseal` (core-owned), `httk workflow seal verify`. A job seal lives
+  seal|unseal` (core-owned), `httk seal verify`. A job seal lives
   inside the job directory at `<payload>/.httk-job/seal.json`, so it travels
   wherever the job directory goes (transfer, or `job eject`/`job adopt`).
-- `job eject JOB... DEST` / `job adopt DIR...` move a quiescent job (with any
-  bound children, as one directory) out of a workspace to a free-standing job
-  directory, and back into any workspace, without either side needing to be
-  registered.
+- `job transfer --job JOB [--tree] SRC DST` moves jobs between workspaces
+  (hold, copy, adopt, release; `--resume`, `transfer status`).
+  `job eject [--tree] [--wait] [--hold] JOB DEST` / `job adopt [--move] BUNDLE`
+  move a job (with `--tree`, its descendants, all paused or terminal) out of a
+  workspace to a plain bundle directory, and into any workspace, without either
+  side needing to be registered. Workflows never travel with jobs.
 
 ## httk-analyse (`httk.analyse`) — analysis
 

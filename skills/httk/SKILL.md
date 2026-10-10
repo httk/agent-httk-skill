@@ -63,8 +63,8 @@ elsewhere.
   numerics, registries).
 - **legacy httk v1**: out of scope except the v2 compatibility layer —
   converted v1 template packages run as `format = "httk-v1"` workflow
-  packages, `httk workflow v1 collect` harvests finished v1 trees, and
-  `httk project import-v1` / `httk workflow remote import-v1` migrate v1
+  packages, `httk v1 collect` harvests finished v1 trees, and
+  `httk project import-v1` / `httk remote import-v1` migrate v1
   projects and computer bundles. Do not recommend v1 APIs.
 
 ## The five-minute campaign (local)
@@ -74,7 +74,7 @@ From an empty directory containing a VASP-5 `POSCAR`:
 ```console
 $ httk project init --name myproject .
 $ httk workspace init --name default workspace
-$ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --input structure=POSCAR --tag silicon
+$ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --install --input structure=POSCAR --tag silicon
 $ httk workspace settings set --key vasp.command --value "vasp_std" default
 $ httk workflow run
 $ httk collect
@@ -82,8 +82,11 @@ $ httk collect
 
 `vasp.command` names only the program; the attempt's launch prefix (`HTTK_WORKFLOW_LAUNCH`) supplies the parallel start.
 
-`job new` publishes the packaged relaxation runner into the workspace and pins
-its digest (upgrading httk cannot change queued jobs); `run` drives every job
+A job runs only a workflow installed in its workspace: `job new --install`
+installs the relaxation workflow there first (`httk workflow install --workspace
+WS URI` does it on its own; without `--workspace` it only fetches into the
+machine cache), and the job pins the installed commit and digest (upgrading
+httk cannot change queued jobs); `run` drives every job
 until idle; `collect` prints one JSON `CollectedJob` summary per finished job
 (`--raw` emits mechanical `JobRecord` summaries). `httk collect DIR --into results.sqlite --id-base BASE` also
 collects a tree of finished calculations that were *not* run through httk:
@@ -91,13 +94,15 @@ collectors registered by *httk-workflow-vasp* (and the QE, ABINIT, CP2K and ORCA
 packages) recognize each calculation directory; `--dry-run` lists what would be
 collected. Packaged VASP workflows keep
 results in the persistent `run/` workdir by default; add
-`--data-mode transactional` to `job new` when a curated `data/` copy is also
+`--parameter publish_data=true` to `job new` when a curated `data/` copy is also
 required.
 
-`job new` takes exactly one of `--workflow NAME` (a registered or packaged
-workflow), `--workflow-dir DIR`, `--from-runner FILE` (a single-file Python or
-Bash runner), or `--from-command 'srun my_executable {n}'` (wrap one command
-line as a one-step workflow; `{n}` is filled from `--parameter n=…`). Inputs:
+`job new` takes exactly one of `--workflow NAME` (a workflow installed in the
+workspace, by id or short name; with `--install`, a git URI or known name is
+installed first), `--workflow-dir DIR --install`, `--from-runner FILE` (a
+single-file Python or Bash runner, installed ad hoc), or `--from-command 'srun
+my_executable {n}'` (wrap one command line as a one-step workflow, installed ad
+hoc; `{n}` is filled from `--parameter n=…`). Inputs:
 `--file NAME=PATH` stages one file and `--files DIR` every file of a directory
 (e.g. INCAR/KPOINTS/POSCAR/POTCAR); both land in the job's `files/` and are
 copied into the working directory before the command runs. For a
@@ -118,14 +123,19 @@ Monitor with `job list`, `job show JOB`, `job why JOB` (explains a stuck job),
 `httk workflow monitor` (a paged terminal UI over local and remote workspaces —
 counts per state, job pages, details, cancel/pause/continue, transfer, removal;
 scales to 100k-job workspaces; `job list --json --limit N --after CURSOR` is the
-same paged data path for scripts). `JOB` may also be an in-workspace path or glob
-(from the project root after the quickstart, `workspace/jobs/silicon*`). Remove finished or queued jobs cleanly with `httk job delete JOB…`
-(`--force` skips the confirmation and the join-parent guard); `rm -r` of a finished
-job's directory is also fine — the next manager run or `workspace gc` clears its
-marker. VASP workflow packages (`vasp.relax`, `vasp.relax-bash`, `vasp.static`,
-`vasp.relax-static`) are not built in — they live in the `workflows-vasp`
-repository, referenced by git URI (as above) or `httk workflow install`ed once;
-after that the short name resolves. See `references/workflows.md`.
+same paged data path for scripts). `JOB` is a job UUID, `tag--uuid` key or
+unique prefix of either, or an in-workspace path or glob; a job directory moves
+between `jobs/<state>/` trees with its state, so from the project root after the
+quickstart `workspace/jobs/succeeded/silicon*` names the finished job. Change a
+job's course with `httk job request pause|continue|cancel --reason TEXT JOB`.
+Remove terminal or paused jobs with `httk job delete JOB…` (`--force` skips only
+the confirmation; a succeeded job needs `httk job unseal` first). Never `rm -r` a
+job directory: a manager may hold it at that moment. VASP workflow packages
+(`vasp.relax`, `vasp.relax-bash`, `vasp.static`, `vasp.relax-static`) are not
+built in — they live in the `workflows-vasp` repository and are installed into
+each workspace that runs them, by `job new --install` (as above) or
+`httk workflow install --workspace WS URI`; after that the short name resolves.
+See `references/workflows.md`.
 
 For a cluster campaign, configure the workspace's manager launcher first; use
 a remote only when transport to another machine is needed. For the full
@@ -166,8 +176,9 @@ identity keys and exchange-directory job eject/adopt, see
   module's narrative documentation (Markdown). Grep it freely — e.g. the
   complete CLI tree is `references/docs/httk-workflow/workflow_cli.md`, runner
   authoring is `runtime_helpers.md`, the normative on-disk workspace protocol
-  (markers, journal, commits, operator requests, confined launch files,
-  transfers, the exchange and its daemon mailbox) is
+  (job directories as tokens, owners and the death proof, commits, operator
+  requests, confined launches, eject/adopt and transfer holds, the exchange and
+  its daemon mailbox) is
   `references/docs/httk-workflow/details/workflow_filesystem_api.md`, storage is
   `references/docs/httk-store/db.md`. The remote OPTIMADE client is documented
   under `references/docs/httk-store/details/db-optimade-client.md`; the

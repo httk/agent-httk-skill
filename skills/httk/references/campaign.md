@@ -15,7 +15,8 @@ $ httk workspace init --name default workspace
 ```
 
 A *project* is the directory a campaign lives in (identity, settings, the
-campaign map). A *workspace* is the state of the work: jobs, runners, markers.
+campaign map). A *workspace* is the state of the work: installed workflows and
+job directories that move between `jobs/<state>/` trees.
 Workspace names are machine-owned and resolve through the registry — `default`
 here, `kappa:runs` on the remote below.
 
@@ -24,21 +25,25 @@ here, `kappa:runs` on the remote below.
 One job from one structure:
 
 ```console
-$ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' \
+$ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --install \
       --input structure=POSCAR --parameter kpoint_density=30.0 --tag silicon
-silicon--0c4f…	/…/workspace/jobs/silicon--0c4f…
+silicon--0c4f…	/…/workspace/jobs/ready/silicon--0c4f…~p500~…
 ```
 
-- `--workflow` takes a workflow name, alias, or git URI — a git URI (e.g. the
-  `vasp.relax`/`vasp.static`/`vasp.relax-static` packages of
-  `workflows-vasp`, or `vasp.relax-<lang>` of `workflows-vasp-other-languages`)
-  fetches and installs on first reference, after which its short name also
-  resolves; see `references/workflows.md` — a runner file path
-  (`./my_runner.py`), or a workflow package directory (`--workflow-dir DIR`).
-  The runner is published into the workspace content-addressed and the job
-  **pins its digest** — upgrading httk under a queued campaign cannot change
-  what jobs execute. Inspect any workflow first with
-  `httk workflow describe TARGET`.
+- A job runs only a workflow **installed in its workspace**. `--workflow`
+  names an installed workflow by id or short name; with `--install`, a git URI
+  (e.g. the `vasp.relax`/`vasp.static`/`vasp.relax-static` packages of
+  `workflows-vasp`, or `vasp.relax-<lang>` of `workflows-vasp-other-languages`),
+  a package directory (`--workflow-dir DIR`) or a known name is installed first,
+  after which its short name also resolves; `httk workflow install --workspace
+  WS SOURCE` installs without creating a job (see `references/workflows.md`).
+  A runner file (`--from-runner ./my_runner.py`) is installed ad hoc. The job
+  **pins the installed workflow** (full commit for git) — upgrading httk or the
+  repository under a queued campaign cannot change what jobs execute. Inspect
+  any workflow first with `httk workflow describe TARGET`.
+- `job new` prints the job key and its current directory. A job directory
+  moves with its state (`jobs/ready/`, `jobs/owned/…`, `jobs/succeeded/`), so
+  name a job by its key, UUID or a unique prefix, not by its path.
 - `--input role=path` stages a **declared input**; `--parameter k=v` sets an
   opaque **parameter** knob. (These are distinct by design.)
 - Fan out over a directory: `--input-from structure structures/` makes one
@@ -71,7 +76,7 @@ ws = Workspace.default()
 items = ({"inputs": {"structure": p}, "tag": structure_tag(p)}
          for p in Path("structures").glob("POSCAR.*"))
 for job in new_jobs(ws, "git+https://github.com/httk/workflows-vasp#vasp-relax",
-                     items, parameters={"kpoint_density": 30.0}):
+                     items, parameters={"kpoint_density": 30.0}, install=True):
     print(job.job_key)
 ```
 
@@ -95,14 +100,15 @@ Except for `workspace forget` and `workspace delete`, workspace arguments are
 optional: the CLI walks up from the current directory to find
 `.httk-workspace/`, then uses the project default and registry default. The workspace anchor is
 `.httk-workspace/`; a workspace is a directory of its own (`workspace init` refuses a non-empty
-directory); payloads live at `jobs/<placement>/<job_key>` (empty placement by
-default, `jobs/batch/<job_key>` for `--placement batch`) and contain `job.json`, `files/`, `run/`,
-`logs/stdio.out`, `logs/runlog.jsonl`, and `.httk-job/state.json`; `data/`
-exists when transactional data is enabled.
-`attempts/<id>/` exists only for a live attempt or failed/cancelled evidence;
-successful jobs retain no attempt directory. Runners execute in the payload's
-`run/` directory in place, and `logs/stdio.out` records attempt start/end
-markers. The manager provides the attempt context as the JSON-valued
+directory); installed workflows live in `workflows/`, and a job directory is
+`jobs/<state>/<placement>/<job_key>~p<NNN>~<token>` (flat below
+`jobs/owned/<owner-id>/` while an owner holds it; empty placement by default,
+`jobs/ready/batch/…` for `--placement batch`). It contains `job.json`,
+`files/`, `run/`, `logs/stdio.out`, `logs/runlog.jsonl`, and
+`.httk-job/state.json`; `data/` exists only when the job committed data (the
+VASP workflows with `--parameter publish_data=true`). Runners execute in the
+job's `run/` directory in place, and `logs/stdio.out` records attempt start/end
+marker lines. The manager provides the attempt context as the JSON-valued
 `HTTK_WORKFLOW_CONTEXT` environment variable.
 
 ## 4. A remote (HPC) workspace
@@ -112,17 +118,17 @@ running jobs. The remote is only needed to reach that machine; it does not
 select or submit a scheduler job:
 
 ```console
-$ httk workflow launcher add --template slurm --global cluster
+$ httk launcher add --template slurm --global cluster
 $ httk workspace init --name runs /scratch/rar/httk/runs
 $ httk workspace settings set --key manager.launch --value cluster runs
 $ httk workspace settings set --key slurm.partition --value batch runs
 ```
 
 ```console
-$ httk workflow remote add --template ssh kappa
-$ httk workflow remote configure \
+$ httk remote add --template ssh kappa
+$ httk remote configure \
       --set host=kappa.example.org --set username=rar --set check_connectivity=yes kappa
-$ httk workflow remote check kappa                    # verifies httk answers there
+$ httk remote check kappa                    # verifies httk answers there
 $ httk workspace init kappa:/scratch/rar/httk/runs
 $ httk workspace settings set --key manager.launch --value cluster kappa:runs
 $ httk workspace settings set --key slurm.partition --value batch kappa:runs
@@ -150,17 +156,21 @@ VASP`, a `source activate`) belongs in a **prelude**, not in `vasp.command`:
 `taskmanager.md`.
 
 **Pitfall:** the adapters read JSON over the remote's stdout. A login banner or
-shell greeting printed on stdout on the remote breaks transfers ("remote offer
-did not return a transfer offer document") — put greetings on stderr or behind
-a non-interactive-shell test.
+shell greeting printed on stdout on the remote breaks transfers and remote
+commands — put greetings on stderr or behind a non-interactive-shell test.
 
 ## 5. Send, run, monitor
 
 ```console
+$ httk workflow install --workspace kappa:runs 'git+https://github.com/httk/workflows-vasp#vasp-relax'
 $ httk job transfer --job silicon--0c4f default kappa:runs
 $ httk workflow run --workspace kappa:runs --workers 8
 $ httk workspace status kappa:runs
 ```
+
+Workflows never travel with jobs: install the workflow in the destination
+workspace too (a transferred job whose workflow is missing waits there, and the
+transfer warns).
 
 ### Task sizing and worker resources
 
@@ -207,18 +217,26 @@ and `mem` unless given; the local adapter injects host `procs`/`mem`.
 `--count N` starts N managers (auto-detected capacities split, explicit pairs
 per manager); each manager owns its allotment.
 
-- `job transfer SRC DST` is the one verb for moving jobs either direction. Local →
-  remote detaches each named job, pushes its sealed bundle, imports it there.
-  Transfers are idempotent and resumable: rerunning the same command resumes.
-  The sealed digest pins every path, content, executable bit and symlink
-  target — corruption is detected, never silent. SRC/DST try a registered
-  workspace name first, then fall back to a workspace directory (one
-  containing `.httk-workspace/`), so unregistered workspaces work too
-  (`./NAME` addresses a directory that a registered name shadows). `job eject
-  JOB... DEST` / `job adopt DIR...` move a quiescent job out to a
-  free-standing directory and back into any workspace, bypassing registration
-  entirely. Ejecting to another filesystem copies out after an atomic local
-  ejection; `--resume` retries the copy.
+- `job transfer --job JOB [--tree] SRC DST` is the one verb for moving jobs
+  either direction. It **holds** each job on SRC (in
+  `.httk-workspace/transfers/outgoing/<transfer id>/`, out of both state
+  trees), **copies** the bundle to DST, **adopts** it there into the state and
+  priority it left, and only then **releases** the hold. Delivery is at least
+  once: rerunning the command, or `job transfer --resume [SRC] [DST]`, finishes
+  an interrupted transfer; `httk transfer status [WS]` and `job why JOB` show
+  holds; `job transfer --release T` discards a hold whose jobs DST already has.
+  A remote SRC needs canonical job UUIDs. `--tree` moves a job with its
+  descendants (all paused or terminal); a job whose descendants are present is
+  otherwise refused, and `job detach CHILD` makes a child independent. SRC/DST
+  try a registered workspace name first, then fall back to a workspace
+  directory, so unregistered workspaces work too (`./NAME` addresses a
+  directory that a registered name shadows). `job eject [--tree] [--wait]
+  [--hold] JOB DEST` / `job adopt [--move] BUNDLE` move a job out to a plain
+  bundle directory and into any workspace, bypassing registration entirely:
+  `--wait` pauses a running job first, a cross-filesystem eject copies under a
+  hidden partial name and renames when complete, and `adopt --move` removes a
+  bundle it had to copy. An interrupted eject or adopt is rolled forward or
+  back by recovery (no `--resume`).
 - `run --workspace kappa:runs` invokes a detached manager on the owning machine;
   that manager uses the target workspace's `manager.launch` setting
   (`manager run` is the advanced spelling; `run` locally serves until idle,
@@ -229,40 +247,49 @@ per manager); each manager owns its allotment.
   failures on CPU MPI, the bounded ladder sets `NPAR=1`, then adds two bands
   when `NBANDS` is explicit, then gives up; it does not reduce the allocation.
 - Before submitting a manager, `httk workflow precheck --workspace WS` reports readiness
-  read-only: declared-environment resolution, runner reachability, per-job
-  claimability against live managers, missing required inputs.
-- Monitor: `workspace status kappa:runs` (marker counts),
-  `workspace managers WS` (which managers serve it, live or stale),
-  `job list [--workspace WS]`, `job show --workspace WS JOB`, `job why
-  --workspace WS JOB` (explains a job that is
-  *not* progressing), `job log --workspace WS JOB`. While authoring a runner,
-  `job debug --workspace WS JOB` drives one job in the foreground printing
-  transitions. A job's published outcome is committed only by the manager that
-  ran it; another manager begins or takes over that commit once the owner is
-  provably gone (process dead on the same host, record absent, closed, or
-  heartbeat silent for twice its lease) AND every recorded parallel launch of
-  the attempt provably ended (process group gone here, the scheduler confirms
-  the allocation ended, or the allocation's end time passed). `job why` names a
-  launch that blocks it; if it ran where nothing can prove it ended, the operator
-  may run `httk job confirm-launches-ended --workspace WS JOB` after making sure
-  it really has ended (they take that responsibility). Operator requests from
-  before a takeover are retired as stale and must be re-issued.
+  read-only: declared-environment resolution, the workflow and its calls
+  installed and built, per-job claimability against live managers, missing
+  required inputs.
+- Monitor: `workspace status kappa:runs` (job counts by state, the seal, the
+  owners), `workspace owners WS` (alias `managers`: managers, CLI processes and
+  daemons with their liveness), `job list [--workspace WS]`, `job show
+  --workspace WS JOB`, `job why --workspace WS JOB` (explains a job that is
+  *not* progressing, including held jobs), `job log --workspace WS JOB`. While
+  authoring a runner, `job debug --workspace WS JOB` drives one job in the
+  foreground printing transitions.
+- Control: `job request ACTION --reason TEXT JOB…` with `pause`, `continue`,
+  `cancel`, `override_step`, `set_priority`, `detach`, `eject`, `delete`,
+  `seal`, `unseal`; the job's owner applies it once at its next boundary, and a
+  manager claims an unowned job to apply it (`--wait` for `pause`). `job
+  delete|seal|unseal|detach` apply at once to an unowned job, print `queued`
+  (exit 0) for an owned one, `refused` (exit 1) otherwise.
+- Recovery: a job changes hands only when its owner is **proven dead** — there
+  are no leases and no time-based takeover. The proof is the owner's process
+  gone on its recorded host, or its allocation provably ended, AND every
+  recorded launch ended (process group gone, or the scheduler or site
+  allocation probe confirms the allocation ended). The next manager tick or
+  `workspace gc` (on the host, for a killed CLI owner) then returns each job,
+  unchanged, to the state it was claimed from; an attempt running without a
+  published outcome fails with `owner_lost` under the retry policy, and a
+  published outcome is committed, not rerun. When no probe can decide (a host
+  that is gone), the operator runs `httk workspace attest-dead OWNER WS
+  --reason TEXT` after confirming the owner and every launch it started are
+  gone: it refuses a provably live owner, needs `--force` for an undecidable
+  one, and attesting a still-running owner can apply a request twice and run
+  work twice.
 
 ## 6. Fetch results home and collect
 
 ```console
-$ httk job transfer --state succeeded --state failed kappa:runs default
+$ httk job transfer --job JOB_UUID [--job JOB_UUID …] kappa:runs default
 $ httk collect
 ```
 
-The reverse transfer offers finished jobs on the remote, pulls, imports, and
-retires the sources only after acknowledgement. Retirement is crash-safe and
-idempotent: it moves the acknowledged bundle to `transfers/retired/<T>`, kept
-until `workspace gc` after `trash_days`; per-transfer receipts, kept for a 7-day freshness window,
-retain replay protection (every manager collects expired receipts and
-acknowledgements hourly). Transfers take no file locks. Set both `retention.trash_days` and `retention.journal_days` to
-`keep` before retirement when recovery copies and journal history must remain.
-Fetched jobs are then ordinary local jobs. `collect` prints one summary per
+The reverse transfer names each job by its canonical UUID (a remote SRC
+requires them; `--tree` brings a root home with its finished descendants). It
+holds the jobs on the remote, copies and adopts them locally, and only then
+releases the remote hold. Transfers take no file locks. Fetched jobs are then
+ordinary local jobs. `collect` prints one summary per
 finished job; options: `--raw` (mechanical `JobRecord`s),
 `--degraded` (show only jobs that degraded), `--allow-job-collector` (trust
 job-pinned collect hooks), `--into STORE` (store collected entries straight
@@ -285,14 +312,15 @@ for cj in collect(Workspace.default()):
 
 ## Removing and cleaning jobs
 
-To remove a finished job, get its payload path from `job show` and run
-`rm -r PAYLOAD`; a manager run or `httk workspace gc WORKSPACE` clears the
-orphaned marker. Cancel a non-terminal job first. Managers perform always-safe
-collection at startup and exit, and the full retention policy at clean exit;
-`workspace gc` is the explicit maintenance path, while `workspace fsck`
-reports always-safe leftovers. The default retention is one day for journal
-history and transaction trash. Each manager writes `logs/managers/<manager-id>.log` in its workspace; postprocess
-output defaults to `postprocess/<placement>/<job_key>/<script>/`.
+`httk job delete JOB…` removes terminal or paused jobs (`--force` skips only
+the confirmation); cancel a running or ready job first with `job request
+cancel`, and release a succeeded job with `httk job unseal` before deleting it.
+Never `rm -r` a job directory: a manager may hold it at that moment.
+`workspace gc [--dry-run] [--category C]` frees what the retention policy
+(`workspace policy show|set`, `retention.*`) allows and recovers dead owners;
+`workspace fsck [--repair]` checks the job tree. Each manager writes
+`logs/managers/<manager-id>.log` in its workspace; postprocess output defaults
+to `postprocess/<placement>/<job_key>/<script>/`.
 
 ## 7. Scale out: campaigns (many workspaces)
 
@@ -300,11 +328,11 @@ When one workspace should not hold the whole run, define a partition map over
 registered workspaces (stored in the project):
 
 ```console
-$ httk workflow campaign init --partition north=screening-a \
+$ httk campaign init --partition north=screening-a \
       --partition south=screening-b --assignment hash
-$ httk workflow campaign submit --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --key silicon \
+$ httk campaign submit --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --install --key silicon \
       --input structure=structures/Si.vasp --tag silicon
-$ httk workflow campaign collect --state succeeded
+$ httk campaign collect --state succeeded
 ```
 
 Start one manager for each selected partition with the campaign command in the
@@ -312,7 +340,9 @@ workflow CLI reference; each partition uses its workspace's launcher.
 
 Roots are assigned to partitions by policy (`hash` — deterministic by key,
 `round-robin`, `explicit`); spawned children always inherit their parent's
-workspace. `campaign collect` streams partition after partition. Partitions
+workspace. The workflow must be installed in the partition's workspace
+(`campaign submit --install` installs it there). `campaign collect` streams
+partition after partition. Partitions
 pointing at remote workspaces are submitted to locally and moved with
 `job transfer`. Use `--placement` recipes (hash-prefix, batch buckets, per-family
 subtrees) to bound directory fan-out inside each workspace.
@@ -335,33 +365,38 @@ serve them over OPTIMADE with httk-serve.
 
 - **Single-file runner**: author with the `Runner`/`Attempt` SDK
   (`docs/httk-workflow/runtime_helpers.md`) or plain Bash
-  (`sdks/bash_api.md`); `job new --workflow ./my_runner.py` publishes and
-  pins it like a packaged one.
+  (`sdks/bash_api.md`); `job new --from-runner ./my_runner.py` installs it ad
+  hoc and pins it like a packaged one.
 - **Workflow package directory**: a directory with `httk_workflow.toml`
   declaring `[workflow] name` (plus optional `requires`, minimum distribution
-  versions checked at submission and again at claim time by the claiming
+  versions recorded at installation and checked at claim time by the claiming
   manager), runner entry/steps, inputs (staged; `required` by default when
   typed), parameters (knobs), `[workflow.environment.*]` (typed
   workspace-setting consumption), outputs (with `product_of` provenance),
   optional `[workflow.instantiate]`/`[workflow.collect]` hooks (Python or any
   `+x` executable speaking the JSON envelope), and `[workflow.postprocess.NAME]`
-  curated scripts — the whole directory is published content-addressed
+  curated scripts — the whole directory is installed into the workspace's
+  `workflows/` store (`httk workflow install --workspace WS DIR`, or
+  `job new --workflow-dir DIR --install`) and pinned by its tree digest
   (`docs/httk-workflow/workflow_packages.md`).
 - **Compiled workflows** declare `[workflow.build]` (a one-liner `command`,
-  optional `platform` probe, `artifacts` globs): digests and transfers cover
-  SOURCES only, and the user runs `httk workflow build` once per machine (per
-  platform class on heterogeneous clusters) to build and register the
-  binaries — managers never compile; an unbuilt package fails jobs with an
-  actionable `runner_not_built` message and `precheck` warns first. After
-  transferring such a workflow to a remote, run `httk workflow build` there
-  before `run`.
-- **Composing workflows**: a runner calls another workflow as a child job —
-  `a.call("git+https://github.com/httk/workflows-vasp#vasp-relax", label="relax",
-  files={"POSCAR": path})` then
+  optional `platform` probe, `artifacts` globs): the installed tree digest
+  covers SOURCES only. `workflow install` builds for the installing machine's
+  platform, and the user runs `httk workflow build --workspace WS NAME` once on
+  each other platform (per platform class on heterogeneous clusters) to build
+  and register the binaries — managers never compile; a job whose workflow is
+  not built for a manager's platform stays `ready` and unclaimed there, and
+  `job why`/`precheck` name the build to run. Installing on a remote
+  (`--workspace kappa:runs`) builds there.
+- **Composing workflows**: a package declares what it calls in
+  `[workflow.calls]` (`relax = "vasp.relax"`, or a git URI pinned to a full
+  commit); installing the package installs its calls too, and a manager claims
+  a job only when the whole call graph is installed. A step calls by alias —
+  `a.call("relax", label="relax", files={"POSCAR": path})` then
   `a.gather("after_relax")`, reading the child's `a.children["relax"].data` /
-  `.workdir` in the gathered step (Bash: `httk_workflow_call LABEL WORKFLOW
-  --file NAME=PATH`). Callable: packaged ids/aliases, your own runner file,
-  a package directory, or a bare language document — resolved like `job new`.
+  `.workdir` in the gathered step (Bash: `httk_workflow_call LABEL ALIAS
+  --file NAME=PATH`). An undeclared or uninstalled workflow is refused at the
+  call, and an ad hoc runner file declares no calls.
   File plumbing between calls is explicit; declarations are provenance, not
   wiring (`docs/httk-workflow/details/composing_workflows.md`). `scaffold_job()` is
   `new_job()` stopped short of submission (a payload directory for `spawn`).
@@ -375,6 +410,6 @@ serve them over OPTIMADE with httk-serve.
   jobflow/atomate2 (`maker = "atomate2…:RelaxMaker"`, with real DAG
   parallelism as child jobs), or converted httk v1 template packages without
   rewriting (`docs/httk-workflow/workflow_compat.md`).
-- **Finished v1 trees**: `httk workflow v1 collect --workflow-dir PKG ROOT...`
+- **Finished v1 trees**: `httk v1 collect --workflow-dir PKG ROOT...`
   harvests already-computed v1 runs (`docs/httk-workflow/details/v1_compatibility.md`);
   this is the only v1 surface to recommend.

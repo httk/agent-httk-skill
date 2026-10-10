@@ -13,7 +13,7 @@ anything imported to **do** goes in a capability module (structures and file
 parsing in httk-atomistic, storage in httk-store, serving in httk-serve,
 execution in httk-workflow).
 Modules register their capabilities under reserved registry tiers
-(`httk.registry.{cli,entries,io,schemas}.<module>`), discovered automatically
+(`httk.registry.{cli,codes,entries,io,schemas}.<module>`), discovered automatically
 at `import httk.core`.
 
 ## Backend/View — the one data-representation pattern
