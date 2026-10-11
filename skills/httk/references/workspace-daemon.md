@@ -123,15 +123,14 @@ daemon identities from `daemon.json` (when present) and publishes nothing;
 `check` reads `exchange.json` and, with the daemon pinned, `daemon.json` and a
 signed health request.
 
-Send a job, start a manager (fresh 32-hex request ID per operation), and fetch:
+Send a job, start a manager (each call generates its request ID), and fetch:
 
 ```console
 httk job eject JOB /mnt/cluster/exchange/inbox          # hidden partial copy, renamed into inbox/ when complete
-python -c 'import secrets; print(secrets.token_hex(16))'
-httk remote daemon start confined --configuration small --request-id REQUEST_ID
+httk remote daemon start confined --configuration small
 httk remote daemon status confined                       # passive: status.json, managers.json
 httk remote daemon status confined --handle MANAGER_HANDLE   # signed, fresh ID
-httk remote daemon cancel confined --handle MANAGER_HANDLE --request-id ANOTHER_ID
+httk remote daemon cancel confined --handle MANAGER_HANDLE
 httk job adopt --move /mnt/cluster/exchange/outbox/CLIENT_JOB_UUID/JOB_KEY   # copied, verified, source removed
 ```
 
@@ -154,8 +153,9 @@ nobody has adopted, `httk remote daemon take-back REMOTE NAME
 [DESTINATION]` (client-only: rename to a dot name, copy out, remove; if the
 name is gone a manager took it, so cancel the job).
 
-After a timeout, retry the same request ID with identical fields; the daemon
-never submits a duplicate. `uncertain` means the operator must reconcile with
+A timed-out call may still be queued and applied later. To keep waiting, rerun
+with `--request-id ID` (printed on stderr) and identical fields; the daemon never
+submits a duplicate. Rerunning `start` without it may start a second manager. `uncertain` means the operator must reconcile with
 Slurm; do not retry it with a new ID. Keep client and server clocks
 synchronized (130 minutes skew allowed). A cancel acknowledgement is not proof
 that the manager stopped. `status.json` and `managers.json` are informational

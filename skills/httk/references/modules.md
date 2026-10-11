@@ -48,6 +48,10 @@ Public root names users touch most:
   (`export` packs a signed redistribution ZIP, `verify-export` checks the
   signer); `httk_project/` directory marks a project root (Ed25519
   identity/trust).
+- Operator identities (per-user, `HTTK_CONFIG_HOME`): `httk init` creates the
+  default; `httk identity add|list|show|key|default|remove` manages them.
+  `httk identity key [SHORT]` prints just the `ed25519:...` public key (the
+  default identity when omitted) — what a workspace daemon operator authorizes.
 
 ## httk-atomistic (`httk.atomistic`) — crystal structures
 
