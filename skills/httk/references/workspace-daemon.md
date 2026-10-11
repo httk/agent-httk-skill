@@ -29,12 +29,12 @@ client. Use the same user and `HTTK_CONFIG_HOME` for setup and signing.
 
 ```console
 httk init --name 'Your Name' --email you@example.org
-python -c 'from httk.core.identity import identity_public_key; print(identity_public_key())'
+httk identity key
 ```
 
-`httk identity list --json` shows identities; `httk identity default SHORT`
-selects one. `httk init` is idempotent. If the key prints `None`, finish
-identity setup first.
+`httk identity list` shows identities, `httk identity show [SHORT]` details one,
+and `httk identity default SHORT` selects one. `httk init` is idempotent. If
+`httk identity key` reports no identity or key, finish identity setup first.
 
 ## Destination operator
 

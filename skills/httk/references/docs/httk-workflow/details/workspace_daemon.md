@@ -50,7 +50,7 @@ adapter and an unconfined Slurm launcher lack these guarantees.
 | broker (`httk workspace daemon`) | in its own Bubblewrap sandbox on the login or service node, with the host filesystem read-only | `WORKSPACE/exchange` and `WORKSPACE/.httk-workspace/daemon/broker` |
 | manager | unconfined, as you, in the Slurm batch job: `httk workflow manager run --idle` | the workspace |
 | job attempt | in a Bubblewrap sandbox the manager builds, on the manager's node | its own job directory |
-| rank of a confined launch | in a Bubblewrap sandbox the trusted rank helper builds, on every node of the launch | its own job directory, the launch's shared-memory directory |
+| rank of a confined launch | in the launch's Bubblewrap keeper sandbox on its node, which the trusted rank helpers build | its own job directory, the launch's shared-memory directory |
 
 The manager is trusted and runs unconfined, so it may read
 `WORKSPACE/.httk-workspace/daemon/`. It runs only trusted code: the
@@ -107,7 +107,7 @@ The exchange is a directory of the workspace, `WORKSPACE/exchange/`:
 
 ```text
 WORKSPACE/
-  exchange/              the only client-mounted directory
+  exchange/              the only client-mounted directory; not visible to confined jobs
     exchange.json        workspace identity, written when the extension is enabled
     daemon.json          the daemon's public menu, written by the daemon
     status.json          exchange jobs, states and progress, written by the managers
@@ -117,7 +117,7 @@ WORKSPACE/
     outbox/              returned trees in outbox/<client job UUID>/;
                          outbox/rejected/<unique>/{<name>, reason.json}
     requests/ responses/ signed daemon actions and job actions
-  .httk-workspace/daemon/  mode 0700; hidden from confined jobs
+  .httk-workspace/daemon/  mode 0700; not visible to confined jobs
     configuration.json  operator configuration; broker read-only
     response.seed       private Ed25519 response-signing seed, mode 0600;
                          broker read-only
@@ -133,8 +133,10 @@ WORKSPACE/
   without following symlinks. It reads the rest of the host, including the
   configuration, key, pointer and snapshots, read-only, so exchange takeover
   cannot change them.
-- Confined jobs see the workspace read-only, but `.httk-workspace/daemon/` is
-  hidden beneath an empty tmpfs, so they cannot read the daemon key or ledger.
+- Confined jobs do not see `exchange/` or `.httk-workspace/daemon/`; the sandbox
+  exposes only `jobs/`, `workflows/` and a content copy of
+  `.httk-workspace/format.json` from the workspace. The rest of
+  `.httk-workspace/` is not visible.
 - Entries whose names start with `.` or that are not plain file names
   (`[A-Za-z0-9][A-Za-z0-9._-]{0,127}`) are ignored by the trusted side.
 
@@ -170,9 +172,10 @@ clients whose output the broker parses run in the C locale.
 A manager with `manager.confine=bwrap` runs each attempt in a Bubblewrap
 sandbox with:
 
-- the workspace **read-only** at its real path, so parent outputs,
-  `stage_input`, `Attempt.parent` and other cross-job reads keep working,
-  except `.httk-workspace/daemon/`, which is hidden under an empty tmpfs;
+- `jobs/` and `workflows/` **read-only** at their real paths, plus
+  `.httk-workspace/format.json` as a read-only content snapshot, so parent
+  outputs, `stage_input`, `Attempt.parent` and installed workflow reads keep
+  working; the rest of `.httk-workspace/` and `exchange/` are absent;
 - the attempt's **job directory writable** at its real path, so every
   `HTTK_WORKFLOW_*_DIR` path is valid unchanged;
 - the paths of `confine.readonly_paths` read-only, a private `/tmp` with
@@ -185,13 +188,16 @@ sandbox with:
   `SRUN_*`, `SBATCH_*`, `SALLOC_*`, `PMI_*` and `PMIX_*` variables, with
   `HTTK_WORKFLOW_CONFINED=1`.
 
-The attempt cannot write the workspace root, `.httk-workspace/`, or any other
-job. The workflow prelude runs inside the sandbox; the launcher's
+After all mounts the sandbox root is remounted read-only. The attempt cannot
+write the workspace root, create files in the read-only `jobs/` or `workflows/`
+parents, or write another job. The workflow prelude runs inside the sandbox; the launcher's
 `environment.prelude` runs before the manager, and its environment reaches the
 attempt through the filter above. Anything a prelude or a code needs at run
 time, such as a module tree, a conda or virtual-environment prefix or code
 binaries, must therefore be listed in
-`confine.readonly_paths`. The default covers `/usr` (with the `/bin`, `/lib`,
+`confine.readonly_paths`. Entries may not contain or lie inside the workspace;
+list a narrower directory such as `/software` rather than `/home`. The default
+covers `/usr` (with the `/bin`, `/lib`,
 `/lib64` and `/sbin` links of merged-`/usr` systems), `/etc`, the manager's
 Python installation and the directories *httk* itself is imported from.
 
@@ -209,8 +215,11 @@ every other restriction above. Ranks of a confined launch always use the host
 network.
 
 Job directories never nest and are never symlinks; placement directories may
-be operator symlinks, but a job reached through a placement symlink pointing
-outside the workspace cannot be confined, and its attempt fails. See
+be operator symlinks. A job reached through a placement symlink pointing
+outside the workspace cannot be confined, and its attempt fails. A job reached
+through a placement symlink pointing elsewhere inside the workspace runs with
+its job directory bound at its real path, but does not see the other jobs of
+that placement. See
 {doc}`taskmanager` for the general confinement settings.
 
 
@@ -291,7 +300,7 @@ key to the destination operator; the private key stays on the client:
 
 ```console
 httk init --name "Your Name" --email you@example.org
-python -c 'from httk.core.identity import identity_public_key; print(identity_public_key())'
+httk identity key
 ```
 
 ### Initializing and running
@@ -727,21 +736,34 @@ binding is refused. The generic `run` verb, `Attempt.run` and
 
 On every rank the trusted rank helper opens the workspace and the job
 directory without following symlinks, refusing the workspace root,
-`.httk-workspace` and nested placements, and only then enters Bubblewrap with:
+`.httk-workspace` and nested placements. The ranks of one launch on one node
+then run in one shared sandbox, the launch's *keeper* on that node: the first
+helper of the launch on the node starts a supervisor that starts it, and every
+helper, that one included, runs its rank in the keeper's namespaces. The keeper is a Bubblewrap
+sandbox with:
 
-- the workspace read-only and the job directory writable at their real paths,
-  and the paths of `confine.readonly_paths`;
+- `jobs/` and `workflows/` read-only at their real paths,
+  `.httk-workspace/format.json` as a read-only content snapshot, the job
+  directory writable at its real path, and the paths of
+  `confine.readonly_paths`; all other workspace paths, including the rest of
+  `.httk-workspace/` and `exchange/`, are absent, and the sandbox root is
+  remounted read-only;
 - the launch's shared-memory directory at `/dev/shm`, the Slurm step's PMIx
   directory (only when it lies below `confine.pmix_roots`), and the devices of
   `confine.devices`;
-- private user, PID, IPC and UTS namespaces, the **host network**, no
-  capabilities, and nested user namespaces blocked when Bubblewrap supports
-  it;
-- the rank's process-manager variables (`PMI_*`, `PMIX_*`, `OMPI_*`, `OPAL_*`
-  and the Slurm step identity), then `confine.environment.<NAME>` values, and
-  `HOME=/tmp/home`, `TMPDIR=/tmp`.
+- private user, PID, IPC and UTS namespaces with its own `/proc`, the **host
+  network**, no capabilities, and nested user namespaces blocked when
+  Bubblewrap supports it.
 
-Inside the sandbox it reads the request, changes to the client's working
+Each rank keeps its own environment: its process-manager variables (`PMI_*`,
+`PMIX_*`, `OMPI_*`, `OPAL_*` and the Slurm step identity), then
+`confine.environment.<NAME>` values, and `HOME=/tmp/home`, `TMPDIR=/tmp`.
+A rank stays a descendant of its own rank helper, so it keeps the CPU binding,
+cgroup and signals the launcher gave that task. It enters the keeper's
+namespaces as the keeper's unprivileged user, cannot gain privileges, has an
+empty capability bounding set, and dies with its helper.
+
+Inside the sandbox the rank reads the request, changes to the client's working
 directory and adds the attempt's environment, without names starting with
 `PMI_`, `PMIX_`, `OMPI_`, `OPAL_`, `SLURM_`, `SLURMD_`, `SRUN_`, `SBATCH_`,
 `SALLOC_` or `HTTK_`, and without names that are not portable identifiers,
@@ -749,24 +771,56 @@ such as exported Bash functions. Module-derived variables such as `PATH` and
 `LD_LIBRARY_PATH` therefore reach the ranks, but MPI tuning variables set in
 the attempt do not: set them as `confine.environment.<NAME>`.
 
+### Namespace scope
+
+The scope of the rank namespaces is **one launch on one node**:
+
+- Ranks of the same launch on the same node share their PID, IPC, UTS and
+  mount namespaces. They see distinct process IDs, so runtimes that register
+  themselves under their process ID in `/dev/shm` (Intel and LLVM OpenMP) do
+  not collide; they can create and attach each other's System V shared memory
+  (as VASP's `getshmem.c` does); and single-copy transports that address peer
+  processes, such as CMA, can work where the kernel's ptrace policy allows
+  them. Ranks of one launch on one node form one trust domain: besides sharing
+  the writable job directory and `/dev/shm`, any rank can signal, kill or
+  trace the others. Isolation holds between launches and jobs, not between
+  ranks of one launch on one node.
+- Separate launches, also of the same job, and other jobs never share them:
+  their ranks cannot see each other's processes, System V objects or
+  shared-memory directories.
+
+The first helper of a launch on a node starts a small supervisor process that
+starts and ends the keeper. Every helper exits as soon as its own rank is gone;
+the supervisor holds the read end of the ranks' membership FIFO and ends the
+keeper once every rank of the launch on the node is gone. Ending the keeper
+kills every process left in its PID namespace and frees every System V object
+of its IPC namespace, so nothing of a launch outlives it on a node. Only a
+keeper that cannot start refuses every later rank of that launch on the node;
+a rank whose helper cannot enter the keeper is refused alone. Killing the
+supervisor ends every rank of the launch on that node. A rank that starts after
+all earlier ranks of its launch on the node are gone gets a fresh keeper.
+When the keeper cannot start or does not start in time, each rank's refusal on
+the launch's standard error includes the tail of the node's keeper supervisor log.
+
+Bubblewrap must not be installed setuid: the keeper's namespaces must belong
+to the job's user, so that the rank helpers can enter them.
+
 ### Shared memory
 
 The ranks of one launch on a node share a private directory
-`<confine.shm_root>/httk-<token>` (default root `/dev/shm`, mode 0700,
+`<confine.shm_root>/httk-<token>/shm` (default root `/dev/shm`, mode 0700,
 owner checked; the token is a random name the manager chose for the launch),
 mounted at `/dev/shm`. This supports POSIX shared-memory files without exposing
-unrelated host shared-memory objects. The manager removes the directory on its
-own node once the launch is reaped, and every rank helper first removes the
-directories on its node that no launch record names any more, judged from two
-listings one visibility deadline apart. A node that runs no later launch keeps
-a stale directory after a failure; removing it is a site cleanup item. Do not
-use age-only deletion, which can remove a live launch's storage.
+unrelated host shared-memory objects. Next to it, `httk-<token>/ns/` holds the
+rank helpers' keeper coordination, which no rank sees. The manager removes
+`httk-<token>/` on its own node once the launch is reaped, and every rank
+helper first removes the directories on its node that no launch record names
+any more, judged from two listings one visibility deadline apart. A node that
+runs no later launch keeps a stale directory after a failure; removing it is a
+site cleanup item. Do not use age-only deletion, which can remove a live
+launch's storage.
 
-Each rank has its own PID namespace, which defeats single-copy transports such
-as CMA and XPMEM, and private IPC namespaces prevent cross-rank SysV IPC. Sites
-may need to select another mechanism, for example
-`confine.environment.OMPI_MCA_btl_vader_single_copy_mechanism=none` for Open
-MPI. Validate the transport your MPI installation actually uses: a shared-file
+Validate the transport your MPI installation actually uses: a shared-file
 test alone does not prove that MPI selected its shared-memory transport.
 
 ### PMIx and devices
@@ -778,9 +832,11 @@ layout must fit this contract.
 
 `confine.devices` exposes individually approved device nodes, such as RDMA or
 GPU devices, to attempts and ranks; it does not establish tested RDMA or GPU
-support. Host networking and the PMIx endpoint are service authorities: the
-site must verify that they do not let ranks launch unconfined processes or
-reach other protected services.
+support. Each node is opened without following symbolic links and mounted from
+that descriptor with device access, as `bwrap --dev-bind` would mount it. Host
+networking and the PMIx endpoint are service authorities: the site must verify
+that they do not let ranks launch unconfined processes or reach other protected
+services.
 
 ### PMI-2 launches (Intel MPI)
 
@@ -843,8 +899,9 @@ Each launch style needs its own site acceptance; none is claimed here:
 
 Before production use, test this exact mount and environment configuration
 for positive multi-node communication and the shared-memory transport on
-nodes with several ranks; an allocation-shared `/dev/shm` object and an
-unrelated host shared-memory canary that stays invisible to ranks; host
+nodes with several ranks; an allocation-shared `/dev/shm` object, System V
+shared memory and distinct process IDs among a node's ranks, and an unrelated
+host shared-memory canary that stays invisible to ranks; host
 filesystem and process canaries, dynamic MPI spawn, nested scheduler commands
 and exposed authentication or socket routes; and rank startup failure, client
 timeout, cancellation, manager death, and shared-memory cleanup after
@@ -857,7 +914,8 @@ and spawn checks. Build it on the cluster with
 executable in the job's payload and run it from a confined attempt with
 `$HTTK_WORKFLOW_LAUNCH ./probe FRESHALPHANUMERICTOKEN`.
 
-- At least two ranks must share a node.
+- At least two ranks must share a node. The probe also checks that a node's
+  ranks have distinct process IDs and share System V shared memory.
 - Add `--spawn` only for the separate spawn check, with independently
   established spare capacity.
 - Exit 77 means inconclusive. Spawn success is a failure.

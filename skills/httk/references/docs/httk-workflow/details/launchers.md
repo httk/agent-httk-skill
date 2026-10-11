@@ -174,13 +174,13 @@ launcher or as workspace settings:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `manager.confine` | `none` | `none` runs attempts unconfined; `bwrap` confines each attempt. |
-| `confine.readonly_paths` | existing of `/usr`, `/bin`, `/lib`, `/lib64`, `/etc`, the manager's resolved `sys.prefix` and `sys.base_prefix`, and the directories the `httk` packages are imported from, nested entries dropped | Colon-separated absolute paths bound read-only at their own paths into attempts and ranks. Must not cover `/`, `/tmp`, `/tmp/home`, `/proc` or `/dev`, nor lie inside the workspace. |
+| `confine.readonly_paths` | existing of `/usr`, `/bin`, `/lib`, `/lib64`, `/etc`, the manager's resolved `sys.prefix` and `sys.base_prefix`, and the directories the `httk` packages are imported from, nested entries dropped | Colon-separated absolute paths bound read-only at their own paths into attempts and ranks. Must not cover `/`, `/tmp`, `/tmp/home`, `/proc` or `/dev`, or contain or lie inside the workspace; list a narrower directory such as `/software` rather than `/home`. |
 | `confine.isolate_network` | `true` | `true` or `false` (also `1`, `0`): give attempts a private network namespace. Ranks of a confined launch always use the host network. |
 | `confine.bwrap` | `bwrap` on `PATH` | Absolute path of the Bubblewrap executable. |
 | `confine.devices` | none | Colon-separated device nodes below `/dev` bound into attempts and ranks, such as GPU or InfiniBand devices. |
 | `confine.pmix_roots` | none | Colon-separated approved parents of the per-step PMIx directory exposed to ranks. |
-| `confine.shm_root` | `/dev/shm` | Node-local parent of the per-launch shared-memory directories `httk-<token>/`; it must be a tmpfs, which the manager checks at start and each rank helper checks before joining. |
-| `confine.environment.<NAME>` | none | A variable set in rank sandboxes, such as site MPI tuning; `NAME` is a portable identifier outside `HTTK_*`, the value at most 4096 bytes. |
+| `confine.shm_root` | `/dev/shm` | Node-local parent of the per-launch directories `httk-<token>/`, whose `shm/` is the ranks' `/dev/shm`; it must be a tmpfs, which the manager checks at start and each rank helper checks before joining. |
+| `confine.environment.<NAME>` | none | A variable set in every rank's environment, such as site MPI tuning; `NAME` is a portable identifier outside `HTTK_*`, the value at most 4096 bytes. |
 
 Values are strings; an unknown `confine.*` key or a malformed value refuses the
 manager's start, and is refused already by `launcher add` and

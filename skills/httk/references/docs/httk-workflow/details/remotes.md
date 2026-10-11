@@ -38,6 +38,13 @@ private credential; use repeatable `--set KEY=VALUE` to add or replace it.
 printing credential values. `remote list`, `remote remove` and
 `remote import-v1` cover the other common management tasks.
 
+Each push or pull is one uncompressed `tar` stream over a single ssh
+connection, however many paths it carries. The local side needs only `ssh`;
+the remote needs a POSIX `tar` on the login shell's `PATH`. A push keeps file
+modes with `tar -p`, but a pull extracts through Python's safe `tarfile`
+filters: pulled files lose group/other write and setuid/setgid bits, and pulled
+directories take default permissions, so a setgid bit is not carried over.
+
 ### Making `httk` available over SSH
 
 `ssh` runs its command in a non-interactive shell. The environment your login
@@ -53,13 +60,70 @@ source ~/venv/bin/activate' kappa
 
 The prelude runs under `set -e`, so a failing line aborts before anything else.
 It runs ahead of every command the adapter sends over ssh, including the
-`httk workspace status` that `remote check` uses to find httk. If only the
+`httk workspace status` that `remote check` uses to find httk, except the
+`tar` that carries a push or pull: that stream must stay free of anything a
+prelude prints. If only the
 `httk` program is somewhere non-standard and the environment is otherwise
 ready, the narrower `httk_command=/path/to/httk` setting is enough.
 
 The adapter `prelude` is not the workspace's `environment.prelude`. The adapter
 prelude prepares the shell so `httk` can run at all; the manager applies
 `environment.prelude` later, once it is already running on the remote.
+
+### Passwords and second factors
+
+The `ssh` adapter runs ssh with `BatchMode=yes`: it logs in with keys only and
+never prompts. A site that asks for a password or a one-time code therefore
+answers `Permission denied (keyboard-interactive)`.
+
+The preferred remedy is OpenSSH connection sharing. Log in once and let later
+ssh calls, including httk's, reuse that connection without authenticating
+again. Add a block to `~/.ssh/config`:
+
+```text
+Host kappa kappa.example.org
+    HostName kappa.example.org
+    User me
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%C
+    ControlPersist 12h
+```
+
+Open the shared connection, answering the prompts, and close it when done:
+
+```console
+$ ssh -fN kappa
+$ ssh -O exit kappa
+```
+
+ssh matches `Host` blocks against the host name on its command line, not
+against `HostName`; httk passes the remote's `host=` setting (a `username@`
+prefix plays no part in the match). Either configure the remote with `host=`
+set to the alias, or list the full hostname on the `Host` line too, as above. The shared connection must be open whenever httk
+reaches the remote; a manager that runs unattended cannot reopen it.
+
+Where connection sharing is not an option, set `interactive_auth=yes`. ssh then
+prompts in your terminal for the password or code; httk never sees the secret.
+httk keeps its own shared connection open for 10 minutes after its last use
+(`ControlPersist=600`, with the socket under `$XDG_RUNTIME_DIR/httk` or
+`/tmp/httk-ssh-UID`), so a command such as `remote check` prompts once. That
+control socket replaces any `ControlPath` from `~/.ssh/config`: if you already
+share connections there, keep the default (or `per-call`), or you are prompted
+despite the open connection. Configuring checks connectivity,
+so the configure command itself already prompts:
+
+```console
+$ httk remote configure --set interactive_auth=yes kappa
+```
+
+For sites that forbid connection sharing, `interactive_auth=per-call` prompts on
+every ssh call instead. Either way, prompts happen only when the
+command runs in a foreground terminal. Anything without one (a detached
+manager, a cron job, a backgrounded shell job) keeps batch mode and fails with a
+hint instead of hanging. The adapter's `timeout_seconds` (300 s for the `ssh`
+template) still bounds each operation, including the time you spend typing.
+`httk monitor` never prompts; for a remote that needs a second factor, open the
+shared connection first, for example with `httk remote check NAME`.
 
 ## Working with remote workspaces
 
@@ -86,17 +150,21 @@ remote invocation asks the owning machine to run
 `httk workflow manager run --workspace runs --detach …`. The target workspace
 then applies its own `manager.launch`, `manager.workers`, scheduler settings and
 `environment.prelude`, as if the command had been run on the login node. Fetch
-finished jobs back with the reverse transfer, naming each job by its UUID:
+finished jobs back with the reverse transfer, selecting them by state (add
+`--placement PREFIX` for one campaign, or name single jobs with
+`--job JOB_UUID`):
 
 ```console
-$ httk job transfer --job JOB_UUID kappa:runs default
+$ httk job transfer --kind succeeded kappa:runs default
 ```
 
 A transfer holds the jobs on the source, copies them, adopts them at the
 destination and only then releases the hold, so an interrupted transfer is
 finished by running it again or with `httk job transfer --resume`;
-`httk transfer status` lists what a workspace holds. The steps and their
-recovery are in the `job transfer` section of {doc}`workflow_cli`.
+`httk transfer status` lists what a workspace holds. All jobs of one transfer
+travel together, so it opens the same few ssh connections whether it moves one
+job or a thousand, and it reports each step on stderr (`-q` silences that). The
+steps and their recovery are in the `job transfer` section of {doc}`workflow_cli`.
 
 ### Local names and second trees
 
@@ -122,7 +190,7 @@ first. A child that should leave alone is detached first, because a child may
 read its parent's files in place (see {doc}`composing_workflows`):
 
 ```console
-$ httk job transfer --tree --job ROOT_UUID kappa:runs default
+$ httk job transfer --kind succeeded --tree kappa:runs default
 $ httk job detach CHILD
 $ httk job transfer --job CHILD default kappa:runs
 ```
@@ -132,7 +200,7 @@ $ httk job transfer --job CHILD default kappa:runs
 Use the `mount` template when the remote filesystem is mounted locally (sshfs,
 NFS, any shared mount) but commands must run on the remote through a separate
 execution channel. An example is a login node reachable only through a
-tunnelled wrapper, with neither `ssh` nor `rsync` available for transfers.
+tunnelled wrapper, with no direct `ssh` login available for transfers.
 Files move as bytes over the mount, and every `httk` command about the
 workspace runs on the remote through the executor.
 

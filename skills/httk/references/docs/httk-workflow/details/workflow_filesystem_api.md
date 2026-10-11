@@ -858,7 +858,11 @@ starts the launch behind a gate, writes `process.json`, and answers in
 `ID.stop` or the attempt ending stops the launch. Ranks share a per-launch
 directory `httk-<token>/` below the node-local `confine.shm_root`; a rank helper
 removes every such directory whose token no launch record names, from two
-listings one visibility deadline apart. No lock is involved.
+listings one visibility deadline apart. In its `ns/`, the rank helpers of the
+launch on the node elect the one that starts the node's namespace keeper
+supervisor by renaming a prepared generation directory into place, and count
+the ranks still running through a FIFO whose read end the supervisor holds. No
+lock is involved.
 
 
 ### Outcomes
@@ -1240,7 +1244,8 @@ one sequence, run by an owner that has claimed the root in any unowned state:
    waits until the jobs are quiescent.
 3. **Bundle.** In a fresh `eject` scratch, write `bundle.json` first
    (recording each member's `from` state and priority), then append `ejected`
-   to each member's run log and extract each member (`move_owned` out of
+   to each member that already has a run log (a fresh job gets none and remains
+   adoptable as an untrusted bundle), then extract each member (`move_owned` out of
    `owned/`) into `bundle/jobs/<placement>/<key>`.
 4. **Record** `<scratch>/eject.json` (`{target, token, transfer_id,
    exchange}`: the target path, the `bundle.json` bytes, and for an exchange
