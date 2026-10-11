@@ -38,10 +38,12 @@ identity setup first.
 
 ## Destination operator
 
-Layout: no special layout; the exchange is `WORKSPACE/exchange/`. State and
-snapshots must lie outside the workspace. The ledger (`<state>/ledger/`) is
-lock-free and works on any filesystem with POSIX rename semantics (no hard
-links); any number of daemon instances may run.
+Layout: exchange `WORKSPACE/exchange/`; private files
+`WORKSPACE/.httk-workspace/daemon/` (mode `0700`), hidden from confined jobs.
+The broker's only writable binds are the exchange and
+`WORKSPACE/.httk-workspace/daemon/broker`; its ledger is under `broker/ledger/`.
+Plain unconfined workspace copies include this directory; exchange transfers
+and `job eject` carry job bundles only, and a new `init` creates a new key.
 
 Trust model: the manager is trusted and runs unconfined in its Slurm batch
 job; each job attempt runs in its own Bubblewrap sandbox that can write only
@@ -50,11 +52,14 @@ extension enabled, every manager must set `manager.confine=bwrap` (else it
 refuses to start, and stops claiming when the extension appears). Approved
 manager configurations are ordinary global `slurm` launchers that set
 `manager.confine=bwrap` (`confine.*` keys; `slurm.*`, `manager.workers|command`,
-`environment.prelude` as usual). The broker sees the host read-only (Slurm,
-MUNGE, user database just work) and writes only `WORKSPACE/exchange` and its
-state; attempts see `confine.readonly_paths` (default: `/usr`, `/etc`, the
+`environment.prelude` as usual). The broker reads the host read-only (Slurm,
+MUNGE, user database just work), except its writable exchange and
+`WORKSPACE/.httk-workspace/daemon/broker` binds; attempts see
+`confine.readonly_paths` (default: `/usr`, `/etc`, the
 Python installation, where httk is imported from), so add software trees jobs
-need with `--add-path`.
+need with `--add-path`. Keep the *httk* installation, launcher bundles, Python
+and Slurm clients outside the workspace under the existing ownership and
+world-writability rules; use the workspace's own `exchange/`.
 
 ```console
 httk launcher add --template slurm --global small \
@@ -71,18 +76,23 @@ httk workspace daemon run /proj/campaign/workspace
 Repeat `--add` per item; `--set KEY=VALUE` sets other keys (`bwrap`, `python`,
 `sbatch`, `squeue`, `scancel`, `sacct`, `slurm_conf`, `max_submissions`,
 `force`; `cluster`/`scontrol` at `init` only). There is no `--exchange` option.
-`init` saves `<state>/configuration.json`, writes `exchange/daemon.json` (public
-trust anchors and digests) and ends with the `check`; state of an earlier
-enrollment (an earlier protocol, snapshot format or ledger layout, or the
-SQLite ledger) is refused: reconcile it with the earlier software, then
-initialize a new enrollment with a fresh `--state`. `show WORKSPACE [--json]`
-prints the enrollment and configuration. `check` enters the real broker
+`init` saves `WORKSPACE/.httk-workspace/daemon/configuration.json`, writes
+`exchange/daemon.json` (public trust anchors and digests) and ends with the
+`check`. An enrollment from the earlier layout is not migrated. Reconcile its
+outstanding work first, then run `init`; clients must re-pin the new daemon key
+from the new `daemon.json` handoff. Remove old state and snapshot directories
+by hand (`workspace-daemons/<hash>` and `<hash>.snapshots` below the *httk* data
+directory by default). An existing `WORKSPACE/.httk-workspace/daemon/` makes
+`init` refuse; remove it to initialize again. A snapshot from an earlier policy
+format is refused at start.
+There is no migration. `show WORKSPACE [--json]` prints the enrollment and
+configuration. `check` enters the real broker
 sandbox and checks the scheduler clients; it does not submit work or test
 compute-node execution. `run --once` does one bounded scan; `run` polls until
-SIGINT/SIGTERM (use a site supervisor). Repeat non-default `--state` on later
-calls; `--snapshots` is remembered. The exchange writer must be the workspace
-owner's account (a separate transport UID is unsupported); restricting that
-account's SFTP access is a site matter. Mount without `follow_symlinks`.
+SIGINT/SIGTERM (use a site supervisor). The exchange writer must be the
+workspace owner's account (a separate transport UID is unsupported);
+restricting that account's SFTP access is a site matter. Mount without
+`follow_symlinks`.
 
 Changing the configuration: edit launchers with `httk launcher
 configure`, or the daemon configuration with `httk workspace daemon configure
@@ -93,7 +103,7 @@ activates changes, rewriting `daemon.json` (clients read it live). Activation
 is allowed while a daemon runs: running instances exit at their next admission
 and a supervisor restarts them; a restart also applies an httk upgrade. Queued
 and running jobs keep their frozen snapshot. A change of the fixed connection
-(workspace, state, snapshots, cluster) needs a new enrollment.
+(workspace, cluster) needs a new enrollment.
 
 ## Client
 
