@@ -167,7 +167,10 @@ Parallel launches: code commands name only the program (`vasp.command =
 "vasp_std"`); the attempt's launch prefix `HTTK_WORKFLOW_LAUNCH`
 (`manager.launch_template` or the built-in Slurm prefix) supplies the parallel
 start. Under confinement it is a launch client that asks the trusted manager to
-start rank sandboxes; use `$HTTK_WORKFLOW_LAUNCH ./program input.dat`. Each
+start the ranks; use `$HTTK_WORKFLOW_LAUNCH ./program input.dat`. The ranks of
+one launch on one node share one sandbox: a private `/dev/shm`, process IDs and
+System V shared memory (OpenMP runtimes and VASP need this), never shared with
+other launches or jobs. Each
 launch style needs its own site acceptance (multi-node communication, shared
 memory, isolation, spawn, cancellation). No process of a launch runs before its
 record is durable (a gate holds it until then). If the manager dies, its jobs
