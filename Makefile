@@ -6,6 +6,8 @@ SKILL_DIR = skills/httk
 
 # Refresh the skill's references/docs/ from per-repo narrative docs.
 # Copies top-level Markdown only (no generated AutoAPI output, no notebooks).
+# Each examples/ directory is concatenated into one examples.md because the
+# claude.ai skill upload rejects archives with more than 200 files.
 docs-snapshot:
 	@for r in $(REPOS); do \
 		test -d $(WORKSPACE)/$$r/docs || { echo "missing $(WORKSPACE)/$$r/docs — run from a workspace checkout or set WORKSPACE="; exit 1; }; \
@@ -18,6 +20,11 @@ docs-snapshot:
 			b=$$(basename $$d); \
 			case $$b in _*|reference|notebooks|__pycache__) continue;; esac; \
 			ls $$d*.md >/dev/null 2>&1 || continue; \
+			if [ $$b = examples ]; then \
+				for f in $$d*.md; do printf '<!-- examples/%s -->\n\n' $$(basename $$f); cat $$f; echo; done \
+					> $(SKILL_DIR)/references/docs/$$r/examples.md; \
+				continue; \
+			fi; \
 			mkdir -p $(SKILL_DIR)/references/docs/$$r/$$b; \
 			cp $$d*.md $(SKILL_DIR)/references/docs/$$r/$$b/; \
 		done; \

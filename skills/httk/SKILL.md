@@ -182,7 +182,8 @@ identity keys and exchange-directory job eject/adopt, see
   reference at the root, per-module subsites at `/httk-core/`,
   `/httk-atomistic/`, `/httk-workflow/`, etc.
 - **Offline (this skill):** `references/docs/<repo>/` holds a snapshot of each
-  module's narrative documentation (Markdown). Grep it freely — e.g. the
+  module's narrative documentation (Markdown), with each module's example
+  pages merged into one `examples.md`. Grep it freely — e.g. the
   complete CLI tree is `references/docs/httk-workflow/workflow_cli.md`, runner
   authoring is `runtime_helpers.md`, the normative on-disk workspace protocol
   (job directories as tokens, owners and the death proof, commits, operator

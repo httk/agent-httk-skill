@@ -1,0 +1,32 @@
+name: Attach packages to release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+
+      - name: Check that the tag matches the plugin version
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open(".codex-plugin/plugin.json"))["version"])')
+          test "$GITHUB_REF_NAME" = "v$version" || {
+            echo "release tag $GITHUB_REF_NAME does not match plugin version v$version"; exit 1; }
+
+      - name: Validate and build packages
+        run: make ci
+
+      - name: Upload packages to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum *.zip > SHA256SUMS
+          gh release upload "$GITHUB_REF_NAME" *.zip SHA256SUMS --clobber

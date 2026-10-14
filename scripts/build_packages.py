@@ -20,6 +20,7 @@ TERMS_FILE = ROOT / "TERMS.md"
 DIST_DIR = ROOT / "dist"
 FIXED_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 IGNORED_NAMES = {".DS_Store", "__pycache__"}
+MAX_SKILL_FILES = 200
 AGENT_PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 CLAUDE_PLUGIN_SCHEMA = "https://json.schemastore.org/claude-code-plugin-manifest.json"
 COMMON_MANIFEST_KEYS = (
@@ -253,6 +254,11 @@ def validate() -> None:
     skill_files = _files_under(SKILL_DIR)
     if not skill_files:
         raise ValueError("the httk skill has no package files")
+    if len(skill_files) > MAX_SKILL_FILES:
+        raise ValueError(
+            f"the httk skill has {len(skill_files)} files; the claude.ai skill "
+            f"upload rejects archives with more than {MAX_SKILL_FILES}"
+        )
     if not (SKILL_DIR / "agents" / "openai.yaml").is_file():
         raise ValueError("missing OpenAI skill UI metadata: agents/openai.yaml")
     for manifest_path in (OPENAI_MANIFEST, CLAUDE_MANIFEST, AGENT_MANIFEST):

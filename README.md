@@ -56,8 +56,8 @@ choice when only the `httk` skill is needed.
 
 ## Install the portable skill
 
-Download the workflow's `httk-skill.zip` GitHub Actions artifact, or build it
-locally with `make dist`. Upload that ZIP directly in either web product:
+Download `httk-skill.zip` from a GitHub release (or a workflow run's
+artifacts), or build it locally with `make dist`. Upload that ZIP directly in either web product:
 
 - **ChatGPT:** Plugins → Skills → Create → Upload from your computer.
 - **Claude:** Customize → Skills → Create skill → Upload a skill.
@@ -119,7 +119,16 @@ make ci      # validate and build every artifact
 
 The GitHub Actions workflow runs `make ci` and directly uploads all four ZIPs
 as separate, unwrapped artifacts. The archives are deterministic: identical
-source trees produce byte-identical ZIP files.
+source trees produce byte-identical ZIP files. The build fails if the skill
+exceeds 200 files, the most the claude.ai skill upload accepts.
+
+## Release
+
+Publish a GitHub release whose tag is `v` plus the plugin manifest version
+(e.g. `v2.1.0`), created in the GitHub UI with **New release**. The release
+workflow then checks the tag against the manifests, builds from the tagged
+commit, and attaches all four ZIPs and a `SHA256SUMS` file to the release.
+Re-running the workflow replaces the attached files.
 
 ## Refresh the documentation snapshot
 
