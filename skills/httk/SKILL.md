@@ -127,7 +127,16 @@ same paged data path for scripts). `JOB` is a job UUID, `tag--uuid` key or
 unique prefix of either, or an in-workspace path or glob; a job directory moves
 between `jobs/<state>/` trees with its state, so from the project root after the
 quickstart `workspace/jobs/succeeded/silicon*` names the finished job. Change a
-job's course with `httk job request pause|continue|cancel --reason TEXT JOB`.
+job's course with `httk job request ACTION --reason TEXT JOB`, `ACTION` being
+`pause`, `continue`, `restart`, `override_step --step STEP`, `set_budget`
+(`--max-attempts-per-activation|--max-total-attempts|--max-activations N|unlimited`
+to raise a retry budget) or `cancel`. A failed or paused job keeps its files
+(edit all but `job.json` first; `job why JOB` names the remedy): `continue`
+puts a `dependency_failure` parent back to waiting on its children (no new
+attempt, no budget used) and otherwise reruns the step as a new attempt;
+`restart` always reruns the step as a new attempt (a fresh set of children for
+a parent); a revived step reruns from its top, so edit the file it reads from.
+See `references/docs/httk-workflow/restarting_jobs.md`.
 Remove terminal or paused jobs with `httk job delete JOB…` (`--force` skips only
 the confirmation; a succeeded job needs `httk job unseal` first). Never `rm -r` a
 job directory: a manager may hold it at that moment. VASP workflow packages

@@ -30,7 +30,7 @@ httk workflow precheck  [--workspace WORKSPACE] [--placement P] [--json]
 httk workflow run       [--workspace WORKSPACE]  (the recommended spelling of `manager run`)
 httk manager            run
 httk launcher           list | add | configure | show | check | remove
-httk workflow monitor   [--workspace NAME …] [--refresh SECONDS]
+httk workflow monitor   [--workspace WORKSPACE …] [--refresh SECONDS]
 httk workflow postprocess
 httk v1                 collect
 httk remote             list | add | configure | check | import-v1 | show | remove | daemon
@@ -76,11 +76,16 @@ be settled first.
 
 ### Workspace selection
 
-A `WORKSPACE` is an optional registered local name. When it is omitted,
-commands resolve the workspace in this order: the closest enclosing workspace
-containing `.httk-workspace/format.json`, the project's recorded default, the
-registry's default, then an auto-created per-user default. Remote names are
-written `REMOTE:NAME` at use time.
+A `WORKSPACE`, positional or given with `--workspace`, is a registered name,
+`REMOTE:NAME` for a workspace on a remote, or else the path of a local
+workspace directory (one holding `.httk-workspace/`, relative to the current
+directory; no upward search). A registered name wins over a same-named
+directory, so `./NAME` addresses the directory. The registry verbs
+`workspace forget`, `delete`, `move` and `default` take registered names only.
+When the workspace is omitted, commands resolve it in this order: the closest
+enclosing workspace containing `.httk-workspace/format.json`, the project's
+recorded default, the registry's default, then an auto-created per-user
+default.
 
 The registry is machine-owned and stores only absolute local paths, in
 `$XDG_CONFIG_HOME/httk/workspaces.json`. When a command reaches a remote
@@ -269,12 +274,12 @@ manager's platform stays `ready` and unclaimed there.
 | --- | --- | --- |
 | `job new [OPTIONS]` | scaffold and submit jobs of an installed workflow | `--workspace`, exactly one of `--workflow`, `--workflow-dir`, `--from-runner`, `--from-command`; `--install`, `--parameter`, `--environment`, `--format`, `--input`, `--input-from`, `--file`, `--files`, `--tag`, `--name`, `--placement`, `--priority`, `--step`, `--json` |
 | `job submit SOURCE...` | submit prepared payload directories | `--workspace`, `--move`, `--json` |
-| `job request ACTION JOB_ID...` | post one operator request per job (remote: over the adapter) | `--workspace`, `--operator`, required `--reason`, `--priority`, `--step`, `--destination`, `--force`, `--wait`, `--timeout`, `--adapter-timeout` |
+| `job request ACTION JOB_ID...` | post one operator request per job (remote: signed envelope or typed daemon command) | `--workspace`, `--operator`, required `--reason`, `--priority`, `--step`, `--destination`, `--max-attempts-per-activation`, `--max-total-attempts`, `--max-activations`, `--force`, `--wait`, `--timeout`, `--adapter-timeout`, daemon-only `--request-id` |
 | `job delete JOB...` | delete terminal or paused jobs (remote: over the adapter) | `--workspace`, `--force`, `--adapter-timeout` |
 | `job seal JOB...` | seal succeeded jobs that carry no seal | `--workspace` |
 | `job unseal JOB...` | release succeeded jobs from their seal, so they may be deleted | `--workspace`, `--force` skips the confirmation |
 | `job detach JOB...` | make spawned jobs independent of their parents, permanently | `--workspace` |
-| `job eject JOB [DEST]` | move a quiescent job out into the bundle `DEST/<job-key>` | `--workspace`, `--tree`, `--wait`, `--timeout`, `--hold`, `--destination-id`, `--json` |
+| `job eject JOB [DEST]` | move a quiescent job out into the bundle `DEST/<job-key>` | `--workspace`, `--tree`, `--wait`, `--timeout`, `--hold`, `--destination-id`, `--operator`, `--json` |
 | `job adopt BUNDLE...` | move ejected bundles into the workspace, in turn | `--workspace`, `--move`, `--json` |
 | `job list` | list jobs a page at a time (remote: over the adapter) | `--workspace`, `--kind`, `--placement`, `--limit`, `--after`, `--tag-contains`, `--counts`, `--json` |
 | `job show JOB...` | describe jobs from their documents (remote: over the adapter) | `--workspace`, `--no-children`, `--json` |
@@ -388,33 +393,64 @@ inputs. See {doc}`/details/workflow_compat`.
 ### Requests
 
 `job request ACTION JOB_ID...` posts one request per job and requires
-`--reason`. The actions are `cancel`, `pause`, `continue`, `override_step`
-(with `--step`), `set_priority` (with `--priority`), `detach`, `eject` (with
+`--reason`. The actions are `cancel`, `pause`, `continue`, `restart`,
+`override_step` (with `--step`), `set_priority` (with `--priority`),
+`set_budget` (with at least one of `--max-attempts-per-activation N|unlimited`,
+`--max-total-attempts N|unlimited` and `--max-activations N|unlimited`; the
+options are valid only with `set_budget`), `detach`, `eject` (with
 `--destination`), `delete`, `seal` and `unseal`. The job's owner applies each
 once, at its next boundary; a manager claims an unowned job to apply it. What
 each action does is tabulated in
 [the task-manager guide](taskmanager.md#requests). `--force` accepts reviving a
-child a decided join already consumed (`continue`, `override_step`) and
-publishes an `override_step` outside the runner's recorded steps.
+child a parent's observations name (`continue`, `restart`, `override_step`) and
+publishes an `override_step` outside the runner's recorded steps. The revival
+guard does not apply to a child that its parent's join still names (the parent
+failed at its wait, or waits on it again). `--tree` (only with `continue`, and only for a local workspace)
+also resumes the failed descendants of the job reachable through retained
+joins, deepest first, before the job itself; see {doc}`/restarting_jobs`.
 
-The command exits `0` once the requests are posted and warns when no live
-manager serves the job. `--wait` is valid only for `pause` and exits `0` only
-when each requested job was observed `paused`; a superseded, dropped or
-timed-out pause exits `1`. `--timeout SECONDS` requires `--wait`.
+After publication, the CLI immediately serves the pending requests of each
+unowned job, from a snapshot taken then, oldest first by `created_at` instant
+and request id, up to and including the published one. Each request prints its
+job id, request id, outcome (`applied`, `queued`, `refused` or `uncertain`) and
+an explanation. A job held by another owner, or one needing a manager's
+reconciliation, keeps its request queued for that owner or manager, and so
+does a job with more than 256 pending requests; when an earlier request of the
+job cannot be served, the published one reports the same outcome and reason.
+Exit status is `0` for applied or queued requests and `1` for a refusal or
+uncertain result. `--wait` is valid only for `pause`; it waits for
+queued pauses and exits `0` only when each reaches `paused`. A superseded,
+dropped or timed-out pause exits `1`. `--timeout SECONDS` requires `--wait`.
 
-`job delete`, `job seal`, `job unseal` and `job detach` post the request and,
-as a short-lived CLI owner, apply it at once to an unowned job. Each job prints
-`<job> <done>` when applied (`removed`, `sealed`, `unsealed`, `detached`),
-`<job> queued <reason>` when an owner holds the job and will apply it at its
-next boundary, or `<job> refused <reason>` when it cannot apply. Queued requests
-exit `0`; any refusal exits `1`.
+`job delete`, `job seal`, `job unseal` and `job detach` use the same immediate
+serving path and print one concise line per job: done, or the `queued`,
+`refused` or `uncertain` outcome with its explanation.
 
-For a remote workspace, `job request ACTION --workspace REMOTE:NAME JOB_ID ...`
-asks the owning machine for unsigned request documents, signs them with the
-identity selected by `--operator`, and sends the signed documents back for
-verbatim publication. Make `--adapter-timeout` longer than `--timeout` when
-both are given. An adapter timeout during publication leaves the outcome
-indeterminate: requests may already be posted.
+For an ordinary remote workspace, `job request ACTION --workspace REMOTE:NAME
+JOB_ID ...` keeps the signed two-leg request-envelope exchange: the client
+signs the request documents with the identity selected by `--operator`, then
+sends them back for verbatim publication. A mounted-daemon remote instead
+sends one signed typed command for each selector. Daemon batches are
+non-atomic: earlier commands may have been accepted if a later command fails.
+A mounted daemon executes a command only for an exchange root submitted with
+the signing key; other targets are refused with `not_owner`.
+The daemon accepts canonical job UUIDs and UUID prefixes; glob and tag
+selectors are refused before publication. Daemon `--force` is unsupported.
+
+Use `--request-id` with exactly one daemon-mediated job command to retry the
+same command after an uncertain transport result. An exact retry must retain
+the selector, action, reason, options and configuration pin. It reuses the
+original command ID and cached signature; changing any command field is
+rejected. The option is not available for local jobs or ordinary remote
+workspaces.
+
+For `pause --wait`, the client sends the pause command once and then polls
+with fresh signed observations until the daemon reports `paused`, refusal,
+terminal supersession or timeout. Passive `status.json` is not evidence that
+a command completed. Run `httk remote daemon status REMOTE --request-id ID` to
+inspect a previously sent daemon job command; each inspection uses a fresh
+signed observation request. Without `--handle` or `--request-id`, status
+remains passive and informational.
 
 ### Inspecting and debugging jobs
 
@@ -475,7 +511,13 @@ payloads. DEST is an absolute directory, or a missing name in one. A root whose
 descendants are present is refused unless `--tree` is given; with `--tree` every
 descendant must be terminal or paused, and they travel in the same bundle.
 `--wait` first posts `pause` requests and waits (up to `--timeout`, default
-600 s) until the jobs can move, so a running job leaves paused. Across
+600 s) until the jobs can move, so a running job leaves paused. `job eject`
+records the selected identity's public key as the optional, unsigned
+`owner_key` in `bundle.json`; `--operator IDENTITY` selects that identity and
+eject fails without moving the job if it has no key. Without `--operator`, the
+configured default identity is used when keyed, and the member is omitted when
+not. `--hold` and `--operator` cannot be combined. Only untrusted (exchange)
+adoption uses `owner_key`. Across
 filesystems the bundle is copied to a hidden partial name in DEST and renamed
 into place when complete. The command prints `ejected N job(s) to PATH`. A
 failed delivery returns every job to the state it left.
@@ -648,7 +690,7 @@ See {doc}`launchers` and {doc}`launcher_authoring`.
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `workflow monitor` | open the curses workspace monitor | `--workspace NAME` (repeatable), `--refresh SECONDS`, `--adapter-timeout SECONDS`, `--non-interactive` |
+| `workflow monitor` | open the curses workspace monitor | `--workspace WORKSPACE` (repeatable), `--refresh SECONDS`, `--adapter-timeout SECONDS`, `--non-interactive` |
 
 See {doc}`monitor` for the panes, keys, and read budget.
 
@@ -736,7 +778,7 @@ remote meaning "this machine", so `remote add local` is refused.
 | `remote daemon configure REMOTE` | pin the identities in the mounted `exchange.json` and `daemon.json` | required `--exchange` |
 | `remote daemon health REMOTE` | check the confined daemon | `--request-id`, `--wait-seconds` |
 | `remote daemon start REMOTE` | start one approved manager configuration | required `--configuration`; `--request-id`, `--wait-seconds` |
-| `remote daemon status REMOTE` | print the passive `status.json` and `managers.json`, or with `--handle` inspect a manager by signed request | `--handle`, `--request-id`, `--wait-seconds` |
+| `remote daemon status REMOTE` | print passive status, inspect a manager with `--handle`, or inspect an original job command with `--request-id` | mutually exclusive `--handle` / `--request-id`; `--wait-seconds` |
 | `remote daemon cancel REMOTE` | request manager cancellation | required `--handle`; `--request-id`, `--wait-seconds` |
 | `remote daemon log REMOTE` | print a manager's published log | required `--handle` |
 | `remote daemon take-back REMOTE NAME [DESTINATION]` | take your bundle back from `inbox` before a manager takes it | `DESTINATION` defaults to `./NAME` |
@@ -907,9 +949,9 @@ domain-separated from every other *httk* signature. They are optional: a
 request without one is applied, but one whose signature does not verify is
 malformed and quarantined by `gc`. A signature means attribution, not
 authorization: anyone who can write the workspace's request directory can still
-post an unsigned request. The exchange's signed job control is the exception:
-there a signature by a key in `exchange.authorized_keys` is required (see
-{doc}`workspace_daemon`).
+post an unsigned request. Job control through the workspace daemon is the
+exception: the daemon accepts only commands signed by a key in its own
+`authorized_keys` policy (see {doc}`workspace_daemon`).
 
 ## Campaigns
 
@@ -951,7 +993,7 @@ httk job transfer --hold --json [--tree] [--destination-id ID] [--job JOB …] [
 httk job adopt --json --by-path --workspace ROOT TRANSFER_ID [TRANSFER_ID …]   (in the batch landing)
 httk job transfer --release TRANSFER_ID [--release TRANSFER_ID …] WS
 httk transfer status --json WS
-httk job request-envelopes ACTION --workspace WS --operator LABEL --reason TEXT [--priority N] [--step S] [--destination D] [--force] JOB_ID …
+httk job request-envelopes ACTION --workspace WS --operator LABEL --reason TEXT [--priority N] [--step S] [--destination D] [--max-attempts-per-activation N|unlimited] [--max-total-attempts N|unlimited] [--max-activations N|unlimited] [--force] JOB_ID …
 httk job publish-requests --workspace WS --document JSON [--document JSON …] [--wait] [--timeout S]
 httk workspace status --by-path --json PATH
 httk workflow manager run --by-path --workspace PATH

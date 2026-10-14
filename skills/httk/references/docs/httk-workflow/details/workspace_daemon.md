@@ -4,10 +4,11 @@ A workspace on an HPC system can serve a client that only has file access. The
 workspace carries the **exchange** extension, the one directory
 `WORKSPACE/exchange/` that the client mounts (never the workspace). Through it
 the client sends jobs, collects finished jobs and reads passive status. The
-exchange is served by the workspace's own managers, not by the daemon.
+workspace's managers adopt inbox bundles and return finished trees; the daemon
+authenticates and dispatches job commands.
 
 `httk workspace daemon` is the small, opt-in, foreground Slurm broker next to
-it. It starts, queries and cancels managers on signed requests: from
+it. It controls jobs and starts, queries and cancels managers on signed requests: from
 operator-approved launchers, by opaque manager handle, with no commands, shell
 fragments, environment variables, paths or Slurm arguments from the client.
 Requests need an authorized *httk* identity signature. Jobs keep running, and
@@ -32,7 +33,10 @@ adapter and an unconfined Slurm launcher lack these guarantees.
   configuration.
 - The client controls the exchange and the content of the jobs it sends,
   including everything the trusted side later moves (status documents, ejected
-  bundles). Uploaded job content may be arbitrary.
+  bundles). Uploaded job content may be arbitrary. Every exchange client uses
+  the same transport account, so a client can still replace or delete an inbox
+  bundle, including its `owner_key`, before adoption; recorded ownership
+  protects it after adoption.
 - The managers are trusted. They adopt exchange bundles by first copying them,
   descriptor-anchored, into their own scratch, then verify that copy, filter
   untrusted content, and execute no bundle code outside an attempt sandbox.
@@ -47,7 +51,7 @@ adapter and an unconfined Slurm launcher lack these guarantees.
 
 | Component | Runs | Can write |
 | --- | --- | --- |
-| broker (`httk workspace daemon`) | in its own Bubblewrap sandbox on the login or service node, with the host filesystem read-only | `WORKSPACE/exchange` and `WORKSPACE/.httk-workspace/daemon/broker` |
+| broker (`httk workspace daemon`) | in its own Bubblewrap sandbox on the login or service node, with the host filesystem read-only | `jobs/`, `exchange/`, `.httk-workspace/{owners,requests,tmp,quarantine,exchange-jobs}` and `.httk-workspace/daemon/broker/` |
 | manager | unconfined, as you, in the Slurm batch job: `httk workflow manager run --idle` | the workspace |
 | job attempt | in a Bubblewrap sandbox the manager builds, on the manager's node | its own job directory |
 | rank of a confined launch | in the launch's Bubblewrap keeper sandbox on its node, which the trusted rank helpers build | its own job directory, the launch's shared-memory directory |
@@ -79,8 +83,8 @@ workspace setting.
 ### Host requirements
 
 - Linux with a Bubblewrap that supports `--bind-fd`, `--ro-bind-fd`,
-  `--ro-bind-data`, `--new-session` and `--clearenv`, on the broker host and
-  on every compute node. With Bubblewrap 0.8.0 or later the sandboxes also
+  `--ro-bind-data`, `--new-session`, `--clearenv` and `--info-fd`, on the broker
+  host and on every compute node. With Bubblewrap 0.8.0 or later the sandboxes also
   block nested user namespaces (`--disable-userns`); where that option is
   absent or refused, the broker's startup and the manager log a warning and
   run without that block. It reduces kernel attack surface; confinement does
@@ -128,11 +132,17 @@ WORKSPACE/
     broker/ledger/       the ledger; broker/ is writable for the broker
 ```
 
-- The broker's sandbox binds writable only `WORKSPACE/exchange` and
-  `WORKSPACE/.httk-workspace/daemon/broker`, each opened from a descriptor
-  without following symlinks. It reads the rest of the host, including the
-  configuration, key, pointer and snapshots, read-only, so exchange takeover
-  cannot change them.
+- The daemon runs in one Bubblewrap sandbox. The workspace is read-only at
+  its real path, including beneath `/tmp`. Descriptor-anchored writable overlays
+  expose only `jobs/`, `exchange/`, `.httk-workspace/{owners,requests,tmp,quarantine,exchange-jobs}`
+  and `.httk-workspace/daemon/broker/`. Workflows, settings, configuration,
+  response seed, active pointer and snapshots stay read-only. Existing operator
+  configuration and enclosing project metadata are available read-only for seals.
+- The daemon reserves `/tmp/control`, `/tmp/daemon`, `/tmp/daemon-exchange`,
+  `/tmp/daemon-policy.json` and `/tmp/home` inside its private temporary
+  filesystem. Startup refuses a workspace or `HTTK_CONFIG_HOME` that is equal
+  to, inside or an ancestor of one of these paths, so mount aliases cannot hide
+  workspace data or operator configuration.
 - Confined jobs do not see `exchange/` or `.httk-workspace/daemon/`; the sandbox
   exposes only `jobs/`, `workflows/` and a content copy of
   `.httk-workspace/format.json` from the workspace. The rest of
@@ -156,10 +166,30 @@ The broker enters Bubblewrap before it listens for command requests. It runs
 only *httk* code and the fixed Slurm clients, never client code, so it sees the
 whole host filesystem read-only: Slurm clients and site wrappers, `slurm.conf`,
 munge, the user database (`/etc/passwd`, SSSD) and DNS work without
-configuration. It can write only `WORKSPACE/exchange` and
-`WORKSPACE/.httk-workspace/daemon/broker`,
-and has the host network that Slurm needs. It publishes `daemon.json`,
-`managers.json` and manager logs there and never reads job content.
+configuration. Its writable paths are the overlays listed above, and it has
+host networking for Slurm. Authentication, scheduler handling and workspace
+operations share this service process; there is no execution helper or nested
+sandbox. One `kind="daemon"` workspace owner lives for the service lifetime.
+The owner is Bubblewrap's init, the sandbox's PID 1, under which the service
+runs. `--info-fd` supplies the init's host PID, its start time comes from the
+namespace-local `/proc/1/stat`, and the bootstrap supplies hostname and boot ID.
+A probe on the daemon's host can then prove the owner alive or dead. When
+namespace PID 1 exits, the kernel kills and reaps every other process in the
+namespace first, so a proven-dead owner means no sandbox process, including one
+blocked in a filesystem call, is still running. Once started, the init dies with
+the Bubblewrap monitor (`--die-with-parent`), so stopping the monitor normally
+ends the sandbox, but only the init's death proves that it has ended: a process
+blocked in a filesystem call can outlive the monitor until the call returns, and
+a monitor that dies while Bubblewrap is still setting up can leave the init
+running. The daemon never probes
+peer owners through its private process table.
+Instead, before it enters the sandbox (not for `check`), the bootstrap recovers
+on the host the workspace's daemon owners recorded on this host that are
+proven dead, returning the jobs they held to the states they left. A daemon
+owner on another host, or one whose death cannot be proven, stays until a
+manager on its host recovers it; `httk workspace attest-dead` records its death
+so that the next daemon start on its host or any manager recovers it. A failed
+recovery is reported and does not stop the daemon.
 The broker and its Slurm clients inherit the environment the daemon was
 started in, so site wrappers find their module and site variables; only
 `SBATCH_*`, `SALLOC_*`, `SRUN_*` and `SLURM_*` (except `SLURM_CONF`),
@@ -436,7 +466,11 @@ work first, then re-enroll as described in
 [Earlier enrollments](#earlier-enrollments). A snapshot from an earlier policy
 format is refused at start; there is no migration. Update the client before or
 together with the remote host: the current client reads `exchange.json`,
-`daemon.json` and version 3 of `managers.json`.
+`daemon.json` and version 3 of `managers.json`. A bundle carrying `owner_key`
+is refused by an older *httk-workflow* because its manifest members differ;
+the remote host must run this version before a client sends bundles that carry
+`owner_key` (both are then updated together). Exchange jobs adopted before
+this change have no recorded key and cannot be controlled through the daemon.
 
 ## Job flow
 
@@ -448,7 +482,9 @@ httk job eject JOB /mnt/cluster/exchange/inbox
 
 The bundle is copied into the mount under a hidden partial name and renamed
 into `inbox/` when complete; a failed delivery returns the job to the state it
-left. Every unrestricted confined manager of the workspace adopts bundles from
+left. `job eject` records the submitting identity's public key as the
+optional, unsigned `owner_key` in `bundle.json`; untrusted inbox adoption uses
+it to establish ownership. Every unrestricted confined manager of the workspace adopts bundles from
 `inbox` itself: it takes the entry, copies it anchored at directory descriptors
 into its own scratch, and validates, rekeys and publishes only that copy. An
 inbox bundle is untrusted input: it must hold only fresh jobs (never run, no
@@ -480,18 +516,31 @@ fetched, the return waits. Fetch it, removing it from the outbox:
 httk job adopt --move /mnt/cluster/exchange/outbox/CLIENT_JOB_UUID/JOB_KEY
 ```
 
-Managers also handle signed job control: the actions `stop_job` (a pause),
-`cancel_job` and `eject_job` (an early return of the tree to the outbox) in
-`requests/`, signed by a key of the workspace setting
-`exchange.authorized_keys` (comma- or space-separated) and naming the job by
-its client UUID. Each is translated into an ordinary workspace request, applied
-once by the job's owner, and answered with an unsigned `responses/<id>.json`
-(`accepted`, or `refused` with `request_unauthorized`, `request_expired`,
-`wrong_workspace`, `unknown_job` or `request_replayed` for a request replayed
-after its job was returned). The daemon leaves job actions to the managers.
-Signed job control is protocol-level for now: there is no client command that
-publishes it yet; the document format is in
-[the filesystem protocol](workflow_filesystem_api.md#job-control).
+The daemon executes a `job_request` only for an indexed exchange root adopted
+from the inbox whose recorded `owner_key` matches the command-signing key,
+which must also remain in `authorized_keys`. Local jobs, keyless submissions,
+children, transferred or adopted jobs, and roots with an index entry recreated
+by `fsck --repair` are refused with `not_owner`. A mounted-daemon `job request`
+with `--operator` must use the identity that ejected the job. `detach` never
+applies through the daemon because only roots are controllable and roots have
+no parent; children move and stop with their root, daemon ejects include the
+whole tree, and children are absent from `status.json`. A
+`job_request_status` observation answers `unknown_command` unless signed by the
+same key as the original command. Selectors are internal job UUIDs or unique
+UUID prefixes from `status.json`; paths, globs and tags are refused. `--force`
+is refused. Eject destinations are relative to the mounted exchange outbox,
+resolved by the server, and ejects include the whole tree. State, parent/join,
+runner-step and seal guards still apply. `set_budget` is accepted for such a
+root: the typed command carries the action `set_budget` and the field `budget`
+(the `--max-*` options of the CLI). Managers need no client keys; existing
+`exchange.authorized_keys` settings are left stored but unused.
+
+An idle job that the daemon safely claims changes immediately. A held job,
+lost claim race or unfinished execution, commit or release stays queued for
+its owner or reconciliation. Results report `applied`, `queued`, `refused` or
+`uncertain`, with resolved job/request IDs and observed state when available.
+A failed seal or rolled-back eject is a refusal. Missing directories alone
+never establish successful deletion or ejection.
 
 `job adopt --move` copies the tree across filesystems, verifies it and then
 removes the source; without `--move` the copy in the outbox stays, and the next
@@ -526,7 +575,7 @@ failed on its node before it ever adopted a job.
 
 ### Request signatures
 
-The internal version-4 format requires identity signatures. The maintained
+The daemon protocol version-5 format requires identity signatures. The maintained
 client builds and signs documents with its configured *httk* operator
 identity; an unsigned request is never executed. The configured
 `authorized_keys` are the allowed Ed25519 public keys, and removing a key
@@ -550,7 +599,7 @@ submitted can stay queued past that deadline.
 ### Ledger and replay
 
 The protected ledger keeps the exact signed requests. A duplicate never
-submits again, even after a restart. A currently authorized key can still
+submits or republishes an internal job request again, even after a restart. A currently authorized key can still
 retrieve recorded results after expiry. A stale request that has not acted
 is durably refused, subject to ledger capacity. A request recovered before
 submission must still meet the time window before it can act.
@@ -569,16 +618,27 @@ jobs. A plain unconfined workspace copy (for example, your own `rsync` or
 `tar`) includes this private directory; a new `init` creates a new key, while
 exchange transfers and `job eject` move job bundles only and never include it.
 
-### Earlier enrollments
+### Upgrading an enrollment
 
-An enrollment from the earlier layout is not migrated. Reconcile its
-outstanding work first, then run `init`; clients must re-pin the new daemon key
-from the new `daemon.json` handoff. Remove the old state and snapshot
-directories by hand (`workspace-daemons/<hash>` and `<hash>.snapshots` below
-the *httk* data directory by default). An existing
-`WORKSPACE/.httk-workspace/daemon/` makes `init` refuse; remove it to initialize
-again. A snapshot from an earlier policy format is refused at start; there is
-no migration.
+Clients and daemons must upgrade together: protocol 5, ledger 4 and
+`daemon.json` 2 are required. Workspace format 3, internal request format 3
+and configuration schemas are unchanged. Old enrollments are refused;
+there is no automatic migration, history reset or old-protocol adapter.
+
+1. Stop every daemon instance serving the enrollment.
+2. Settle all tracked Slurm submissions using their recorded scheduler IDs and
+   `squeue`, `sacct` and `scancel` as appropriate; settle held workspace jobs
+   through ordinary owner recovery.
+3. Archive `.httk-workspace/daemon/` outside its fixed path, preserving the
+   ledger and private configuration for reconciliation.
+4. Upgrade the protected installation and clients, then initialize a fresh
+   enrollment with the intended launchers and authorized keys using
+   `httk workspace daemon init WORKSPACE`.
+5. Deliver the new `daemon.json` identities through the trusted operator
+   handoff and repin each client with `httk remote daemon configure REMOTE
+   --exchange PATH`.
+
+Do not reuse old request IDs or caches across enrollments.
 
 ### Publishing requests
 
@@ -593,9 +653,26 @@ operation fields are rejected. The operations are `health`, and:
 | `start_manager` | `configuration` and `configuration_digest`: the approved launcher name and its SHA256 digest |
 | `manager_status` | `handle`: the returned manager handle |
 | `cancel_manager` | `handle`: the returned manager handle |
+| `job_request` | `selector`, `action`, `reason`, `configuration_digest`; `priority`, `step` or outbox-relative `destination` only for the corresponding action |
+| `job_request_status` | `command_id`: the original daemon command ID |
 
-There is no operation that moves bundles: the daemon never touches `inbox` or
-`outbox`.
+Job target resolution is frozen in the protected ledger with the exact internal
+request document and digest. An exchange-origin target also pins its observed
+adoption nonce. A frozen target carries no authority of its own: before a new
+execution decision and again before publication, the daemon rechecks that the
+pinned adoption is still indexed and still records the signing key, and
+otherwise refuses the command (`adoption_changed` or `not_owner`). Managers
+apply the same pin before acting on a delayed `cancel`, so a cancel authorized
+for one adoption never stops an attempt of a later one. One newly won
+execution decision names the winning instance and daemon owner; only that
+winner may publish the internal request. Retries never resolve a different
+target or repost after a crash. When the winner closed, was recovered or was
+declared dead with its exact request still pending, a retry by a later daemon
+serves that published request once, as any manager would, under its adoption
+pin. Stored definitive results replay; an exact pending request reports queued; matching request
+state history can establish a later result. Without such evidence the outcome
+is uncertain and grants no permission to take over or re-execute. Fresh signed
+status observations may later supersede uncertainty.
 
 ### Responses
 
@@ -625,7 +702,8 @@ allowance. The filesystem rules of the mailbox are specified in
   for removal and checks again for a response before republishing.
 - A repeated request ID with unchanged content replays its recorded response.
   Changed content under the same ID is refused.
-- Use a new request ID for each status refresh.
+- Use a new request ID for each signed status observation; `job_request_status`
+  bypasses permanent ledger admission and consumes no cumulative command quota.
 
 ### Outcomes
 
@@ -657,7 +735,7 @@ operator to inspect and clean up. The manager's own log is
 
 ### Quotas
 
-The record limit (4096) limits all durable request records. `max_submissions`
+The record limit (4096) limits all durable command records; fresh job-status observations consume none. `max_submissions`
 limits manager starts admitted over the enrollment's lifetime, including
 refused or uncertain starts. Both are cumulative quotas, not active-job counts.
 Exhaustion returns a nonpersisted `busy` response, retryable with the same
@@ -935,3 +1013,11 @@ executable. Local protocol tests and scheduler stand-ins do not establish real
 cluster containment, and real Slurm, PMIx and multi-node acceptance remain a
 deployment check. Run those checks before relying on this daemon for
 production jobs.
+
+Job control has two site cases of its own. With no manager running, a
+`continue` and then a `cancel` of a paused job through
+`httk job request --workspace REMOTE:NAME` must return signed `applied`
+results, which fresh signed `httk remote daemon status REMOTE --request-id
+COMMAND_ID` observations confirm. With a manager holding a running job, a
+cancellation must return `queued` with one internal request, which the manager
+consumes once before it returns the finished tree through the outbox.

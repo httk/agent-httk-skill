@@ -258,11 +258,31 @@ per manager); each manager owns its allotment.
   authoring a runner, `job debug --workspace WS JOB` drives one job in the
   foreground printing transitions.
 - Control: `job request ACTION --reason TEXT JOB…` with `pause`, `continue`,
-  `cancel`, `override_step`, `set_priority`, `detach`, `eject`, `delete`,
-  `seal`, `unseal`; the job's owner applies it once at its next boundary, and a
-  manager claims an unowned job to apply it (`--wait` for `pause`). `job
-  delete|seal|unseal|detach` apply at once to an unowned job, print `queued`
-  (exit 0) for an owned one, `refused` (exit 1) otherwise.
+  `restart`, `cancel`, `override_step`, `set_budget`, `set_priority`, `detach`,
+  `eject`, `delete`, `seal`, `unseal`; the job's owner applies it once at its
+  next boundary, and a manager claims an unowned job to apply it (`--wait` for
+  `pause`). `job delete|seal|unseal|detach` apply at once to an unowned job,
+  print `queued` (exit 0) for an owned one, `refused` (exit 1) otherwise.
+  - Revive a failed job (it stays in `jobs/failed/…`; `job why` names the
+    remedy). Edit anything but `job.json` first, in the file the step reads
+    (a step that regenerates a file overwrites a hand edit). `continue` on a
+    `dependency_failure` parent returns it to waiting on its children (no
+    attempt, no budget); on any other failed or paused job it reruns the step
+    as a new attempt. `restart` always reruns the step as a new attempt (a
+    parent spawns fresh children). `override_step --step STEP` activates at a
+    named step. Cancelled jobs cannot be revived.
+  - Fix-the-child flow: `job why PARENT`; fix the child; `job request continue
+    --reason TEXT CHILD` (no `--force` while the parent still waits on it);
+    watch `job show`/`job log`; `job request continue --reason TEXT PARENT`.
+    `job request continue --tree --reason TEXT PARENT` resumes failed
+    descendants deepest first, then the parent (local workspaces only).
+  - Raise a retry budget after the fact: `job request set_budget
+    --max-attempts-per-activation N|unlimited --max-total-attempts N|unlimited
+    --max-activations N|unlimited --reason TEXT JOB` (at least one option). The
+    override lives in `state.json`; `job.json` is untouched and `job
+    why`/`job show` print `used/limit (declared N)`. Typical: `retry_exhausted`
+    -> `set_budget --max-attempts-per-activation 3` -> `restart`. See
+    `docs/httk-workflow/restarting_jobs.md`.
 - Recovery: a job changes hands only when its owner is **proven dead** — there
   are no leases and no time-based takeover. The proof is the owner's process
   gone on its recorded host, or its allocation provably ended, AND every

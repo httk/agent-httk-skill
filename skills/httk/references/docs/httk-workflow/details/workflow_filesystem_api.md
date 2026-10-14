@@ -85,7 +85,6 @@ WORKSPACE/
 │   ├── tmp/push.<hex>/                     a remote install's pushed package
 │   ├── quarantine/<epoch>-<token>/         {entry, reason.json}
 │   ├── exchange-jobs/<exchange-name>/      the exchange index
-│   ├── exchange-requests/<id>              translation records of exchange requests (replay guard)
 │   ├── transfers/outgoing/<transfer-id>/   held bundles
 │   ├── transfers/incoming/<transfer-id>.<token>/   pushed bundles awaiting adoption
 │   └── seal.json                           the workspace seal, when sealed
@@ -138,7 +137,7 @@ re-reading it and redone (a bounded number of times) when a concurrent writer
 replaced it in between; writers are not serialized, so last writer wins. Managers read the policy
 at attach and re-read settings and extensions while they run. `settings` maps
 dotted names to JSON scalars; the protocol reads `seal.succeeded`, `seal.keys`,
-`exchange.authorized_keys`, `manager.confine`, `confine.*` and
+`manager.confine`, `confine.*` and
 `postprocess.directory`.
 
 ### Job states
@@ -148,8 +147,8 @@ dotted names to JSON scalars; the protocol reads `seal.succeeded`, `seal.keys`,
 | `ready` | Waiting to be claimed by an eligible manager. |
 | `owned` | Held by exactly one owner; what it is doing is `state.json` `phase`. |
 | `waiting` | A parent waiting for its join to be decided. |
-| `paused` | Stopped until an operator request (`continue`, `override_step`, `delete`, ...). |
-| `failed` | Ended with a failure; `continue` and `override_step` revive it. |
+| `paused` | Stopped until an operator request (`continue`, `restart`, `override_step`, `delete`, ...). |
+| `failed` | Ended with a failure; `continue`, `restart` and `override_step` revive it; a parent failed at its wait keeps `join` and `continue` reopens it. |
 | `succeeded` | Ended successfully; never changed by the protocol until `job unseal`. |
 | `cancelled` | Cancelled by a request. |
 
@@ -654,8 +653,8 @@ read. The first reconcile of a job (its first activation) pins it in
 `state.json` (format `httk-workflow-state`, version 1) is written only by the
 job's owner, through `write_file`, and is absent until an owner first writes it
 (a published child and an adopted exchange job carry one without an
-activation). It is strict except that an absent `job_digest` reads as `null`,
-and at most 1 MiB.
+activation). It is strict except that an absent `job_digest` or `budget_override` reads as
+`null`, and at most 1 MiB.
 
 | Member | Value | Meaning |
 | --- | --- | --- |
@@ -671,7 +670,7 @@ and at most 1 MiB.
 | `runner_steps` | list or `null` | Steps an outcome declared; evidence only. |
 | `failure` | failure object or `null` | The current failure (§Outcomes). |
 | `failure_history` | list, at most 16 | The last failures. |
-| `join` | object or `null` | The pending join (§Waiting and joins). |
+| `join` | object or `null` | The pending join (§Waiting and joins). Kept when the parent fails at its wait with `dependency_failure` (impossible without `on_impossible`, or an unresolvable child) or `budget_exhausted` (the advance would pass the effective `maximum_activations`), so the wait can be reopened. |
 | `observations` | list | The children as the decided join saw them. |
 | `children` | list | Published children: `{job_id, job_key, label, placement, spawn_id, attempt_id}`; for an adopted exchange tree `{job_id, job_key, placement}`. |
 | `commit` | object or `null` | The commit intent (§The commit). |
@@ -684,6 +683,7 @@ and at most 1 MiB.
 | `workflow_pin` | `{id, tree_sha256}` or `null` | The installation the last launch used. |
 | `history_tail` | list, at most 32 | `{at, event, ...}` entries: `released`, `request_applied`, `request_dropped`, `join_decided`, `paused`, `unsealed`. |
 | `job_digest` | 64 hex digits or `null` | The pinned job digest. |
+| `budget_override` | object or `null` | Optional. Set by `set_budget`: keys are a non-empty subset of `maximum_attempts_per_activation`, `maximum_total_attempts` and `maximum_activations`, each an integer of at least 1 or `null` (that limit lifted). Absent keys fall back to `job.json`. The effective policy is the `retry_policy` of `job.json` with these keys replaced. |
 
 An unowned job's `state.json` is stable, because nobody owns the job; readers
 read it non-blocking and bounded and tell an absent file from a damaged one.
@@ -805,8 +805,9 @@ anything else:
 A launch runs only on an owned, reconciled, eligible job, in this order:
 
 1. Choose the attempt: reuse `state.attempt` while its `started_at` is `null`,
-   otherwise record the next attempt. A budget already exceeded fails the job
-   with `budget_exhausted`.
+   otherwise record the next attempt. A budget already exceeded (the effective
+   budgets: `retry_policy` with `budget_override`) fails the job with
+   `budget_exhausted`.
 2. Write `state.json` with `workflow_pin` and `phase: launching(A)`, which
    stamps `started_at`.
 3. Create `attempts/A/` (and `run/`) anchored below the job, refusing a
@@ -885,11 +886,11 @@ the commit makes), `runner_steps`, `resources` (only on `advance` and `wait`),
 
 | Action | Required | Committed target |
 | --- | --- | --- |
-| `advance` | `next_step` | `ready`, new activation (`failed`/`budget_exhausted` past `maximum_activations`) |
+| `advance` | `next_step` | `ready`, new activation (`failed`/`budget_exhausted` past the effective `maximum_activations`) |
 | `wait` | `next_step`, `join` | `waiting` (§Waiting and joins) |
 | `succeed` | none | `succeeded` |
 | `fail` | `failure` | `failed`; `ready` (retry) when `retryable` and the budget allows |
-| `retry` | `retry.reason` | `ready`, next attempt; `failed`/`retry_exhausted` past the budget |
+| `retry` | `retry.reason` | `ready`, next attempt; `failed`/`retry_exhausted` past the effective budget |
 | `pause` | `pause.reason` | `paused` |
 
 **Failure object:** `{code, message, details?, retryable?}`, nothing else.
@@ -903,8 +904,8 @@ failure fails the job with `protocol_error`. Manager failures carry
 An attempt that ends without a valid outcome fails with a reserved code below.
 A cancelled attempt commits as `cancelled` whatever it published. An attempt
 that changed or broke `job.json` has its outcome voided. Manager-detected
-failures are retried only when their code is in `retry_on` and the budgets
-allow.
+failures are retried only when their code is in `retry_on` and the effective
+budgets (`retry_policy` with `budget_override`) allow.
 
 | Code | Meaning |
 | --- | --- |
@@ -912,8 +913,8 @@ allow.
 | `process_failure` | A runner that could not be started, or exited nonzero without an outcome. |
 | `owner_lost` | Unclean: the attempt's owner died, or drained it, before it published. |
 | `timeout` | The manager stopped the attempt at its `maxtime`. |
-| `retry_exhausted` | A retry past the attempt budgets. |
-| `budget_exhausted` | An attempt or activation budget exceeded. |
+| `retry_exhausted` | A retry past the effective attempt budgets. |
+| `budget_exhausted` | An effective attempt or activation budget exceeded. |
 | `dependency_failure` | A join became impossible or a child vanished. |
 | `data_conflict` | A committed transaction met the wrong kind of entry. |
 | `runner_unavailable`, `runner_build_failed`, `runner_not_built` | The installed workflow vanished between eligibility and launch, declares no usable runner, or its platform probe failed. |
@@ -1038,10 +1039,21 @@ releases it: satisfied → `ready` with an activation of `next_step` (reason
 `join`); impossible → the `on_impossible` step when it is
 `{"action": "advance", "next_step": ...}`, else `failed`; unresolvable →
 `failed` (`dependency_failure`). The decision records `observations` (`{label,
-job_id, job_key, placement, state, token, failure}`) and clears `join`.
+job_id, job_key, placement, state, token, failure}`) in every case. It clears
+`join` on every outcome except one: `join` is kept when the parent fails at its
+wait so the wait can be reopened (`continue`): with `dependency_failure`
+because the condition became impossible without an `on_impossible` advance, or
+because a child is unresolvable; and with `budget_exhausted` because a
+satisfied join, or an `on_impossible` rescue, would advance past the effective
+`maximum_activations`. After `set_budget` raises that limit, `continue`
+re-decides the join and advances. A successful advance and a join naming an
+invalid step clear it.
 
-**The revival guard:** `continue` or `override_step` of a child is refused,
-unless forced, while its parent's current `state.json` observations name it.
+**The revival guard:** `continue`, `restart` or `override_step` of a child is
+refused, unless forced, while its parent's current `state.json` observations
+name it. The exception is a child that the parent's `join` still names (the
+parent is `failed` with a retained `join`, or `waiting` on it again): reviving
+the child is then the intended flow and needs no `force`.
 
 ### Damage handling
 
@@ -1074,12 +1086,13 @@ version 3, strict, at most 64 KiB:
 | `format`, `format_version` | yes | `"httk-workflow-request"`, `3` |
 | `request_id`, `job_id` | yes | UUIDs; the file name MUST be `<job_id>.<request_id>.json`. |
 | `placement` | yes | The job's placement, a hint for locating it. |
-| `action` | yes | `cancel`, `pause`, `continue`, `override_step`, `set_priority`, `detach`, `eject`, `delete`, `seal` or `unseal`. |
+| `action` | yes | `cancel`, `pause`, `continue`, `restart`, `override_step`, `set_priority`, `set_budget`, `detach`, `eject`, `delete`, `seal` or `unseal`. |
 | `operator`, `reason`, `created_at` | yes | Attribution and ordering. |
 | `priority` | `set_priority` only, required | 0–999. |
+| `budget` | `set_budget` only, required | An object with the shape of `budget_override`: a non-empty subset of `maximum_attempts_per_activation`, `maximum_total_attempts` and `maximum_activations`, each an integer of at least 1 or `null` (lifted). |
 | `step` | `override_step` only, required | The step to restart at. |
 | `destination` | `eject` only, required | An absolute directory, or a missing name in one. |
-| `force` | `continue`, `override_step`; only `true` | Accept the revival hazard. |
+| `force` | `continue`, `restart`, `override_step`; only `true` | Accept the revival hazard. |
 | `tree` | `eject` only; only `true` | Eject the job's descendants with it. |
 | `operator_key`, `signature` | both or neither | An *httk* identity signature, for attribution. An unsigned request applies; one whose signature does not verify is malformed. |
 
@@ -1094,10 +1107,12 @@ runs, only a `cancel` acts at once: the attempt and its launches are stopped
 (`SIGTERM`, then `SIGKILL` after the cancel grace) and the job commits as
 `cancelled`; other requests wait for the boundary. An unowned job, located at
 the request's placement, is claimed, reconciled (which applies the requests)
-and released. `job delete`, `job seal` and `job unseal` apply their request at
-once, as a CLI owner, when the job is unowned.
+and released. `job request`, `job delete`, `job seal`, `job unseal` and
+`job detach` apply their requests at once, as a CLI owner, when the job is
+unowned.
 
-Requests apply in `created_at` order, then by request id. Each request is
+Requests apply in the order of their `created_at` instants (a time without a
+zone counts as UTC), then by request id. Each request is
 decided by a pure function of `job.json`, `state.json`, the state the job is
 at and the request, giving the new document and one effect:
 
@@ -1105,9 +1120,11 @@ at and the request, giving the new document and one effect:
 | --- | --- | --- |
 | `cancel` | not terminal | `Release(cancelled)` |
 | `pause` | not terminal, not `paused`, not `waiting` | `Release(paused)` |
-| `continue` | `failed` or `paused`, revival guard | `Release(ready)`: failure cleared, next attempt `manual_continue` if the last one started; `failed`/`budget_exhausted` past a budget |
-| `override_step` | `failed` or `paused`, revival guard | `Release(ready)` with a new activation of `step`; budgets as `continue` |
+| `continue` | `failed` or `paused`, revival guard | `Release(waiting)` with the retained `join` when the job failed at its wait, no new attempt; else `Release(ready)`: failure cleared, next attempt `manual_continue` if the last one started; `failed`/`retry_exhausted` past an effective attempt budget, `budget_exhausted` past `maximum_activations` |
+| `restart` | `failed` or `paused`, revival guard | `Release(ready)`: failure cleared, `join` dropped, next attempt `manual_continue` if the last one started; `failed`/`retry_exhausted` past an effective attempt budget, `budget_exhausted` past `maximum_activations` |
+| `override_step` | `failed` or `paused`, revival guard | `Release(ready)` with a new activation of `step`, dropping a retained `join`; `failed`/`retry_exhausted` or `budget_exhausted` past an effective budget, as `restart` |
 | `set_priority` | always | `Release(<current state>, priority)` |
+| `set_budget` | not `succeeded` or `cancelled` | `Release(<current state>, priority)` with `budget` merged into `budget_override` (a later value for a key wins); no new attempt, no revival guard |
 | `detach` | the job has a parent link not yet detached | `Release(<current state>)` with `detached: {at, operator}` |
 | `eject` | the destination is usable | `Eject(destination, tree)` (§Eject) |
 | `delete` | terminal or `paused`; a succeeded job only after `unseal`; no non-terminal parent waits on it | `Discard`: the job directory, its request files and (for an exchange root) its index entry are removed |
@@ -1116,7 +1133,7 @@ at and the request, giving the new document and one effect:
 
 A request that does not apply is a `Drop`: its id is recorded, a
 `request_dropped` entry with the reason goes to `history_tail`, and the job is
-released back where it was. A `continue` or `override_step` refused by the
+released back where it was. A `continue`, `restart` or `override_step` refused by the
 revival guard applies when it carries `force`. A request that applies while an
 attempt is live is a `Defer` and waits. At a commit boundary an `eject` is
 skipped; the requests pass ejects the job after its release. An `eject`
@@ -1133,13 +1150,6 @@ deletion leaves a file whose id is in `applied_requests`: any later owner
 deletes it on sight, unapplied, so a stale `continue` cannot re-apply after the
 job failed again. An id whose file is gone needs no skipping and is dropped
 from `applied_requests` at the next write.
-
-**Exchange guard.** For a job with `origin: exchange`, a request posted by the
-exchange translator (`operator: "exchange"`) is also checked against the
-index's `exchange-jobs/<name>/translated/<request-id>`: present means applied,
-and the file is deleted unapplied. The owner records the id there after
-applying the effect, so once `applied_requests` has shrunk, a lagging
-translator's re-post still cannot apply twice.
 
 ## The workflow store
 
@@ -1221,7 +1231,14 @@ other member's parent is listed before it, ids and (placement, key) pairs are
 unique, and `state`/`priority` are where each member was taken from and where
 adoption publishes it. A member's `job.json` MUST agree with its entry (id,
 key, placement, parent). Seals travel inside the payloads. A hold records the
-destination workspace in `destination.workspace_id`.
+destination workspace in `destination.workspace_id`. The optional `owner_key`
+is the submitting operator's canonical `ed25519:<base64>` public key written
+by `job eject`; it is unsigned. Only untrusted (exchange) adoption uses it. With `--operator IDENTITY`, eject uses
+that identity and fails without moving the job if it has no key. Otherwise it
+uses the configured default identity when keyed, and omits the member when it
+is not. Holds, `job transfer`, manager ejects and exchange returns never write
+it; `--operator` with `--hold` is refused. When omitted, `bundle.json` retains
+exactly its previous bytes. Untrusted adoption refuses a non-canonical key.
 
 ### Eject
 
@@ -1317,9 +1334,11 @@ never empty while a delivery is in doubt, so it always runs.
    `tmp/`. An operator's own bundle is refused as already adopted and left in
    place.
 5. **Claim the exchange name** (untrusted only): `publish_dir` of
-   `exchange-jobs/<client root id>/` with the adoption's nonce, before
-   anything is published. A name claimed by another adoption is refused, unless
-   the indexed job is the rekeyed root and present, which is "already adopted".
+   `exchange-jobs/<client root id>/` with the adoption's nonce and the
+   manifest's `owner_key` (absent when none), before anything is published. A
+   name claimed by another adoption is refused, unless the indexed job is the
+   rekeyed root and present, which is "already adopted". A rerun of the same
+   adoption recognizes its own claim only when the key matches.
 6. **Plan.** Write `<scratch>/plan.json` (the validated manifest). From here
    only publication remains, and validation never reruns.
 7. **Publish** bottom-up: for an untrusted member, write its `state.json`
@@ -1398,7 +1417,7 @@ WORKSPACE/exchange/
 ├── outbox/<exchange-name>/            workspace → client: a returned tree
 ├── outbox/rejected/<unique>/          {<name>/, reason.json}
 ├── requests/<id>.json                 client: signed daemon and job actions
-├── responses/<id>.json                daemon-signed for daemon actions, unsigned for job actions
+├── responses/<id>.json                daemon-signed command results
 └── daemon.json, managers.json, managers/<handle>.log    the workspace daemon's documents
 ```
 
@@ -1413,8 +1432,13 @@ workspace MUST confine its attempts; only managers without placement prefixes
 that take the `default` pool serve the exchange.
 
 The **exchange index** `.httk-workspace/exchange-jobs/<exchange-name>/` is
-trusted: `.nonce`, `index.json` (`{job_id, placement, adoption_nonce}`) and
-`translated/<request-id>` markers. It is created once per exchange root before
+trusted: `.nonce` and `index.json` (`{job_id, placement, adoption_nonce, owner_key}`, with
+`owner_key` absent when the bundle had none). This trusted entry is the
+authority for ownership: it binds the exchange name, job id, adoption nonce
+and key. Job-writable files never grant ownership. A rerun of the same
+adoption recognizes the entry only when the key matches.
+Readers ignore anything else in an entry, such as the `translated/` markers of
+earlier versions. It is created once per exchange root before
 the root is published (§Adopt step 5) and removed only by the root's owner when
 the root is deleted or returned, and only while it indexes that job under the
 adoption nonce the remover read (an eject records it in `eject.json`).
@@ -1446,45 +1470,32 @@ hour.
 
 ### Job control
 
-Signed `stop_job`, `cancel_job` and `eject_job` requests in
-`exchange/requests/<32 hex>.json` (format `httk-workspace-command`, naming the
-job by its exchange name in `job`) are handled by managers; the daemon ignores
-them. There is no claim step, and several managers may handle one request at
-once. A manager:
+Authenticated job commands use daemon protocol 5, not the internal request
+format. The confined daemon verifies authorized keys, workspace/enrollment,
+freshness and active configuration. `job_request` names one internal UUID or
+unique UUID prefix and one of all ten internal request actions. It refuses
+force, path/glob/tag selectors and destinations outside the exchange outbox;
+eject includes the whole tree. All existing operation guards apply.
 
-1. reads the request (anchored, bounded, non-blocking) and skips it when a
-   response already exists;
-2. verifies the signature against the workspace setting
-   `exchange.authorized_keys`, the time window (`created_at` to `expires_at`,
-   at most one hour, with clock skew), the workspace id, and that the index
-   knows the exchange name;
-3. translates it into the workspace request
-   `requests/<job-uuid>.<request-uuid>.json` with the deterministic request id
-   (the exchange request id as a UUID), `created_at` from the signed request
-   and operator `exchange`: `pause` for a stop, `cancel`, or `eject` of the
-   tree to `outbox/<exchange-name>/`;
-4. before posting, creates the translation record
-   `.httk-workspace/exchange-requests/<id>` holding `{exchange_name, job_id,
-   adoption_nonce}`. A record whose nonce matches the current index entry is a
-   crash rerun, and posting continues; a different nonce or a missing index
-   entry is a replay, refused with `request_replayed`. gc prunes records once
-   the request could no longer verify (the maximum request lifetime plus twice
-   the clock skew), with a margin of one more clock skew and a day;
-5. writes the unsigned `responses/<id>.json` (`accepted`, or `refused` with
-   `request_unauthorized`, `request_expired`, `wrong_workspace` or
-   `unknown_job`), the same bytes from every manager;
-6. deletes the exchange request.
-
-Every step writes the same name with the same content, so a pass that dies
-midway is repeated harmlessly; the owner's exchange guard (§Exactly once)
-keeps a re-posted action from applying twice.
+The quota-bounded protected ledger (version 4) stores the exact signed command,
+a once-written resolved target (job/request IDs, document digest, exchange
+adoption nonce where applicable), one execution decision identifying the
+winning instance and daemon owner, and the execution result. Only a new
+execution winner publishes the deterministic internal request. A restart or
+concurrent loser never reposts it or re-resolves its selector. Definitive
+stored results replay; an exact pending request reports queued; matching
+request-specific state history may establish a result; missing evidence
+reports uncertain. Uncertainty authorizes no takeover or re-execution.
 
 ### Daemon mailbox
 
-`health`, `start_manager`, `manager_status` and `cancel_manager` requests in
-the same mailbox are the workspace daemon's; managers ignore them. The daemon
-answers with signed responses and keeps its ledger outside the workspace, on
-`publish_dir` and `write_file`; see {doc}`workspace_daemon`.
+`health`, `start_manager`, `manager_status`, `cancel_manager`, `job_request`
+and `job_request_status` share `exchange/requests/`; managers leave all these
+commands alone. The daemon signs every result and keeps its protected ledger
+in `.httk-workspace/daemon/broker/ledger/`. `daemon.json` version 2 declares
+protocol version 5 and the active configuration digest. Fresh signed
+`job_request_status` observations bypass permanent admission and cumulative
+quota. See {doc}`workspace_daemon` for confinement and enrollment upgrades.
 
 ### Status and progress
 
@@ -1580,7 +1591,7 @@ CLI owner of its own. The check walks `jobs/` and reports:
 | `unreadable_state` | A `state.json` that exists but does not decode. |
 | `foreign_owner` | A job directory another uid owns. |
 | `stale_exchange_index` | An exchange index entry whose job one settled lookup does not find (the settle covers the visibility of writes that finished before fsck started). A held job is not looked for: a delivered hold has left the index already. With `--repair` it is removed under the nonce it was read with. |
-| `unindexed_exchange_job` | An unowned job with `origin: exchange`, no parent, and the job id this workspace rekeys its `exchange_name` to (an exchange root), without `exchange-jobs/<exchange_name>/`. Children, whose `exchange_name` is their own client id or their root's, and exchange jobs adopted from another workspace are not roots here. With `--repair` the entry is recreated by `claim_exchange_name` under a fresh adoption nonce. |
+| `unindexed_exchange_job` | An unowned job with `origin: exchange`, no parent, and the job id this workspace rekeys its `exchange_name` to (an exchange root), without `exchange-jobs/<exchange_name>/`. Children, whose `exchange_name` is their own client id or their root's, and exchange jobs adopted from another workspace are not roots here. With `--repair` the entry is recreated by `claim_exchange_name` under a fresh adoption nonce, without `owner_key`; the root is then no longer daemon-controllable. |
 
 Everything but unparsable entries and stale or missing exchange index entries
 is left to the operator.
