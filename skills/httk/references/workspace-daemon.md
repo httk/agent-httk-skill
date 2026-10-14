@@ -131,7 +131,7 @@ httk remote daemon start confined --configuration small
 httk remote daemon status confined                       # passive: status.json, managers.json
 httk remote daemon status confined --handle MANAGER_HANDLE   # signed, fresh ID
 httk remote daemon cancel confined --handle MANAGER_HANDLE
-httk job adopt --move /mnt/cluster/exchange/outbox/CLIENT_JOB_UUID/JOB_KEY   # copied, verified, source removed
+httk job adopt --move /mnt/cluster/exchange/outbox/CLIENT_JOB_KEY   # copied, verified, source removed
 ```
 
 An inbox job must be fresh (never run, state `ready`) with no parent; a failed
@@ -142,12 +142,13 @@ job's workflow must be installed in the destination workspace (an operator
 task: `httk workflow install --workspace WS …`); until then the adopted job
 waits. Once an exchange-origin root and every job of its tree are finished
 (succeeded/failed/cancelled), a manager returns the tree to
-`outbox/<client job UUID>/<job key>`; without `--move`, `job adopt` leaves the
+`outbox/<tag>--<client job UUID>` (`CLIENT_JOB_KEY`, the client's own job key and
+its `inbox/` name); without `--move`, `job adopt` leaves the
 outbox copy, and the next return of that job waits until it is gone. Refused bundles land in
 `outbox/rejected/<unique>/{<name>, reason.json}`, with the reason in
 `reason.json` (`status.json` lists only job states). Failed jobs are never retried automatically: adopt, fix, eject
 again. `managers.json` lists each manager's scheduler state, exit code and
-times; a finished manager's Slurm output is at `managers/<handle>.log`
+times; a finished manager's Slurm output is at `launchers/<handle>.log`
 (`httk remote daemon log REMOTE --handle H`). To take back a bundle
 nobody has adopted, `httk remote daemon take-back REMOTE NAME
 [DESTINATION]` (client-only: rename to a dot name, copy out, remove; if the
