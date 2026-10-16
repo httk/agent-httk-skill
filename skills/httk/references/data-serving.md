@@ -149,6 +149,36 @@ serve(adapter, port=8080)                       # development server …
 app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
 ```
 
+To deploy an existing *httk-store* SQLite or DuckDB file without writing an
+application module, `httk serve optimade serve STORE` is a production ASGI
+runner meant as the single `ExecStart` of a `systemd` unit behind Apache or
+Nginx:
+
+```console
+httk serve optimade serve /srv/optimade/materials.sqlite \
+    --config optimade.toml --baseurl https://example.org/optimade \
+    --port 8001 --workers 4          # or --uds /run/httk-optimade/optimade.sock
+httk serve optimade check /srv/optimade/materials.sqlite   # self-test, no serving
+```
+
+- The file format is sniffed from its header; a missing file is refused, never
+  created. DuckDB opens read-only (workers share it; writers are blocked while
+  serving); SQLite is live and works from read-only file permissions.
+- A store saved with application record classes (`records=[Result]`) needs
+  them named: `--records result_record:Result` (repeatable), imported with the
+  working directory first on the import path (set `WorkingDirectory=` in the
+  unit). Distribution-registered records (`httk collect --into`) need none.
+- `--config` TOML keys are `OptimadeConfig` fields (`[provider]` with
+  name/description/prefix, `license`, `page_limit_max`, `cors_origins`, ...);
+  unknown keys and malformed values are refused.
+- Before binding, it requests `/info`, `/links` and every entry endpoint
+  in-process and exits 2 on failure. Each worker handles one request at a time,
+  so `--workers` sets concurrency; use `Restart=always` in the unit.
+- Prefer `--baseurl` behind a proxy; `--root-path` serves a prefix-stripping
+  sub-path proxy. Server URLs (PostgreSQL/ClickHouse/Mongo) are not accepted;
+  compose those with `create_asgi_app` in your own module.
+- Full guide: [deployment](docs/httk-serve/optimade/deployment.md).
+
 - Providers describe themselves with `EntryTypeDefinition`s; custom prefixed
   properties (`_myprefix_*`) are validated against extended definitions;
   register your prefix with `httk.core.register_definition_prefix`.
