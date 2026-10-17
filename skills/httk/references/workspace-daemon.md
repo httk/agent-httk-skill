@@ -97,12 +97,16 @@ restricting that account's SFTP access is a site matter. Mount without
 Changing the configuration: edit launchers with `httk launcher
 configure`, or the daemon configuration with `httk workspace daemon configure
 WORKSPACE --set|--add|--remove KEY=VALUE` (lists `launchers`,
-`authorized_keys`), then restart `run`. There is no approval or reload step:
-every `check`/`run` re-reads the configuration and current launcher bundles and
-activates changes, rewriting `daemon.json` (clients read it live). Activation
-is allowed while a daemon runs: running instances exit at their next admission
-and a supervisor restarts them; a restart also applies an httk upgrade. Queued
-and running jobs keep their frozen snapshot. A change of the fixed connection
+`authorized_keys`), then `httk workspace daemon reload WORKSPACE`. There is no
+approval step: every `reload`/`check`/`run` re-reads the configuration and
+current launcher bundles and activates changes, rewriting `daemon.json` (clients
+read it live). A running daemon notices the activation at its next poll, stops,
+and `daemon run` (a supervisor around the sandboxed service) starts it again on
+the new snapshot; queued and running managers are Slurm jobs in the ledger and
+are followed after the restart. Restarting `run` applies an httk upgrade. Queued
+and running jobs keep their frozen snapshot. The daemon's stdout shows a
+`daemon_managers starting= queued= running= unknown= completed= failed=
+cancelled=` line whenever the counts change. A change of the fixed connection
 (workspace, cluster) needs a new enrollment.
 
 ## Client
@@ -201,7 +205,7 @@ The built-in Slurm prefix is `env SLURM_HOSTFILE=<nodefile> srun [--mpi=M]
 `--distribution=arbitrary` must not pass them either). `manager.launch_mpi=<plugin>`
 adds `--mpi=<plugin>` (ignored with a template); Intel MPI needs `pmi2`:
 `httk launcher configure --set manager.launch_mpi=pmi2 small`, then
-restart the daemon.
+`httk workspace daemon reload WS` (a running `daemon run` restarts on it).
 
 `manager.confine.block_mpi_spawn` (under `manager.confine=bwrap`) is `on`
 (default), `auto` or `off`. With `on`, the rank helper keeps Slurm's `PMI_FD`,
