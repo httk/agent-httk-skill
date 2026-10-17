@@ -134,6 +134,12 @@ httk remote daemon cancel confined --handle MANAGER_HANDLE
 httk job adopt --move /mnt/cluster/exchange/outbox/CLIENT_JOB_KEY   # copied, verified, source removed
 ```
 
+`start --time-limit DURATION` changes only this manager's Slurm `--time`, up to
+the launcher's `slurm.time_limit_max` (default: its `slurm.time_limit`, so only
+shorter); longer is refused as `time_limit_exceeded`. The response and the
+`managers.json` row carry the effective `time_limit`. Nodes and ranks always
+come from the approved launcher.
+
 An inbox job must be fresh (never run, state `ready`) with no parent; a failed
 delivery returns it to the state it left. Any unrestricted confined manager (no
 `--placement-prefix` or pool restriction) adopts `inbox` bundles, giving the
