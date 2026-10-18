@@ -167,8 +167,9 @@ To modify a deamon configuration, do e.g.,:
 ```bash
 httk workspace daemon configure main --add launchers=large
 httk workspace daemon configure main --add "authorized_keys=<ANOTHER KEY>"
+httk workspace daemon reload main
 ```
-Restart the daemon after configuration changes. As a saftey feature, a deamon has a default quota of running 128 "managers".
+`reload` activates the changed configuration (also after `httk launcher configure`); a running `httk workspace daemon run` restarts on it by itself, and queued and running managers keep running. As a saftey feature, a deamon has a default quota of running 128 "managers".
 
 ## 6 Mount the exchange on the client
 
@@ -229,6 +230,12 @@ To change an allocation's time limit, for example:
 ```bash
 # Sigma
 httk launcher configure large --set slurm.time_limit=02:00:00
+```
+
+A single start can instead ask for a shorter allocation, or a longer one up to the launcher's `slurm.time_limit_max`:
+
+```bash
+httk remote daemon start sigma --configuration large --time-limit 00:30:00
 ```
 
 ## Reference

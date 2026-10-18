@@ -64,6 +64,21 @@ credentials, queries, and ssh forms are refused. Git runs without global or
 system configuration and without credential helpers, so private repositories
 are not supported.
 
+A URI without `#subdir` whose repository root carries an `httk_plugin.toml`
+(see [below](#the-same-repository-as-a-plugin)) installs every workflow that
+file lists ({py:func}`~httk.workflow.git_workflows.fetch_workflows`), each
+under its pinned member URI. A call from one listed workflow to another, by
+name or alias, binds to the member at the same commit, and the plugin's
+`requires` apply to every member:
+
+```console
+httk workflow install --workspace WS 'git+https://github.com/httk/workflows-vasp-atomate2@wf-v0.2.0'
+```
+
+A root `httk_workflow.toml` is still a single package. A `REMOTE:WS` workspace
+gets the pinned repository URI and expands it there. `httk job new
+--workflow` and `httk workflow describe` still need `#subdir`.
+
 `httk workflow describe URI` fetches and describes without installing.
 `httk workflow uninstall --workspace WS SELECTOR` removes an installation by
 id or short name; jobs are not checked unless `--check` is given.
@@ -95,9 +110,70 @@ its short name, so `httk workflow install --workspace WS vasp.relax` installs
 it. With several commits of one repository and subdirectory fetched, the
 short name selects the most recently referenced one; when different
 repositories or subdirectories claim the same name, it is refused and the URI
-must be used. In-process registrations and installed plugins take precedence;
-a fetched workflow they shadow logs a warning and stays reachable by its URI.
-`httk workflow list` without `--workspace` lists them.
+must be used. In-process registrations, installed plugins and
+[pip-installed workflow repositories](#install-a-workflow-repository-with-pip)
+take precedence, in that order; a fetched workflow they shadow logs a warning
+and stays reachable by its URI. `httk workflow list` without `--workspace`
+lists them.
+
+## Install a workflow repository with pip
+
+A workflow repository that carries the *httk-workflow* repository build
+backend can be installed into a Python environment, which installs its
+workflows' Python dependencies and makes all its workflow packages known in
+that environment:
+
+```console
+git clone https://github.com/httk/workflows-vasp
+pip install ./workflows-vasp        # or: pip install -e ./workflows-vasp
+httk workflow install --workspace WS vasp.relax
+```
+
+The backend is one stdlib-only file, `tools/workflow_repository_build.py`,
+whose reference copy is in
+[workflows-examples](https://github.com/httk/workflows-examples). The
+repository's `pyproject.toml` names it and declares the canonical repository
+URI, which is never derived from a git remote:
+
+```toml
+[build-system]
+requires = []
+build-backend = "workflow_repository_build"
+backend-path = ["tools"]
+
+[project]
+name = "workflows-vasp"
+dynamic = ["version"]
+requires-python = ">=3.12"
+dependencies = ["httk-workflow>=2.1.1"]
+
+[tool.httk.workflow-repository]
+repository = "git+https://github.com/httk/workflows-vasp"
+```
+
+The installed version is the HEAD commit. Its packages (the top-level
+directories holding `httk_workflow.toml`) are known by short name and by
+pinned URI, and the packages of every `wf-v*` tag by pinned URI and by a
+`@wf-vX.Y.Z` ref, all without the network. Each workflow's id is exactly the
+canonical URI a GitHub install of that commit gives, for example
+`git+https://github.com/httk/workflows-vasp@<commit>#vasp-relax`, so jobs and
+workspaces move freely between a machine that installed it with pip and one
+that fetched it from GitHub.
+
+Only committed content is installed; the tree is always taken from git
+objects, never from the working tree, so install a package path (or use
+`--workflow-dir`) to run a working copy. An editable install follows the
+clone's current HEAD and tags; a wheel offers the HEAD and tags of the time it
+was built, so after adding a tag at an unchanged HEAD reinstall with
+`pip install --force-reinstall --no-deps .`. A running process keeps the pip
+state of its first lookup; restart it after `pip install`, `git checkout` or
+`git tag`, as for plugins.
+
+Nothing is written to this machine's installed entries
+(`data_home()/workflows/installed`), so `pip uninstall` removes the workflows
+entirely; only checkout trees stay in the cache. `httk workflow uninstall`
+without `--workspace` points to `pip uninstall` for them. Plugin names take
+precedence over pip names, and pip names over fetched short names.
 
 ## Definition and declaration
 
@@ -115,7 +191,9 @@ A repository may also carry an `httk_plugin.toml` listing its workflow
 directories, so that `httk plugin install git+https://github.com/httk/workflows-vasp`
 makes them known on this machine as a plugin. Both routes can coexist, and
 plugin names take precedence over fetched short names; either way a workspace
-runs a workflow only once it is installed there.
+runs a workflow only once it is installed there. `httk workflow install` of the
+repository URI without `#subdir` installs every listed workflow into a
+workspace ([Install it](#install-it)).
 
 ## Cache and trust
 
@@ -123,7 +201,10 @@ Checkouts live under `data_home()/git` (`HTTK_DATA_HOME`, or
 `~/.local/share/httk`), one per repository and commit, shared with other git
 consumers such as project templates; fetched workflow entries live under
 `data_home()/workflows/installed`. A pinned URI with a cached checkout is
-reused without running git. A package that could never be installed (for
+reused without running git. Lookups of pip-installed workflow repositories
+may run local git against the installed clone or bundle to fill the cache,
+never the network; those sources are fixed by what the operator installed,
+never by a job payload. A package that could never be installed (for
 example one containing a symlink) is refused when it is fetched.
 
 Installing a URI is consent to run its code with the trust of an installed
@@ -133,7 +214,7 @@ postprocess scripts run from the cache tree, like those of plugin and
 registered-directory packages, or from the verified installed copy with
 `--allow-job-collector` (see {doc}`/details/collecting`). Nothing named in a
 job payload causes a download: managers and collection only look up what is
-already installed or fetched.
+already installed, fetched or pip-installed.
 
 The full manifest reference is in {doc}`/details/workflow_packages`. The API
 is {py:mod}`httk.workflow.git_workflows`, built on the shared

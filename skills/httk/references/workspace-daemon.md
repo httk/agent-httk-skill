@@ -131,6 +131,7 @@ Send a job, start a manager (each call generates its request ID), and fetch:
 
 ```console
 httk job eject JOB /mnt/cluster/exchange/inbox          # hidden partial copy, renamed into inbox/ when complete
+httk remote daemon show confined                         # daemon.json: configurations + published resources
 httk remote daemon start confined --configuration small
 httk remote daemon status confined                       # passive: status.json, managers.json
 httk remote daemon status confined --handle MANAGER_HANDLE   # signed, fresh ID
@@ -143,6 +144,15 @@ the launcher's `slurm.time_limit_max` (default: its `slurm.time_limit`, so only
 shorter); longer is refused as `time_limit_exceeded`. The response and the
 `managers.json` row carry the effective `time_limit`. Nodes and ranks always
 come from the approved launcher.
+
+`daemon.json` (format 3) lists each approved configuration as `{digest,
+settings}`; `settings` publishes only `manager.workers`, `slurm.partition`,
+`slurm.nodes`, `slurm.ntasks`, `slurm.ntasks_per_node`, `slurm.cpus_per_task`,
+`slurm.mem`, `slurm.gres`, `slurm.time_limit` and `slurm.time_limit_max`
+(durations canonical `[D-]HH:MM:SS`, max resolved to its default). Prelude,
+launch template/MPI, command, confinement, account, reservation and export stay
+private; approval refuses a published value with control characters or over
+256 characters.
 
 An inbox job must be fresh (never run, state `ready`) with no parent; a failed
 delivery returns it to the state it left. Any unrestricted confined manager (no

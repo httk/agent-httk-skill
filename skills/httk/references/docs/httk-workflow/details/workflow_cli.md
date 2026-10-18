@@ -105,10 +105,11 @@ Remote-capable commands (workspace status, settings, `gc`, `fsck`, `job list`,
 | `workspace init [OPTIONS] PATH...` | create a workspace in a new or empty directory of its own, or adopt an existing one, registering each name (basename or `--name`) and recording it in the project's `members.json` | `--name` (one path only), `--setting KEY=VALUE`, `--no-durable` |
 | `workspace exchange enable [WORKSPACE]` | enable the `exchange/` extension of a workspace (idempotent) | |
 | `workspace daemon init WORKSPACE` | approve global `slurm` launchers, enable the exchange when needed and enroll the workspace, then check the sandbox | `--set KEY=VALUE`, `--add KEY=VALUE` |
-| `workspace daemon configure WORKSPACE` | change the daemon configuration, activated when the daemon next starts | `--set`, `--add`, `--unset`, `--remove` |
+| `workspace daemon configure WORKSPACE` | change the daemon configuration, activated by `reload` or when the daemon next starts | `--set`, `--add`, `--unset`, `--remove` |
 | `workspace daemon show WORKSPACE` | describe the enrollment and its daemon configuration | `--json` |
 | `workspace daemon check WORKSPACE` | activate the configuration and check the real sandbox and scheduler clients | |
 | `workspace daemon run WORKSPACE` | activate the configuration and run the confined Slurm broker | `--once` |
+| `workspace daemon reload WORKSPACE` | activate the changed configuration and launcher bundles; a running daemon restarts on it | |
 | `workspace list [--json] [REMOTE:]` | list local or owning-machine workspaces | |
 | `workspace default [--unset] [NAME]` | read or record this project's default name | |
 | `workspace adopt [PATH...]` | register copied workspaces on this machine under the names their project's `members.json` records | `--name` (one path only), `--json` |
@@ -220,11 +221,12 @@ in `workflows/<slug>--<h16>/` and are selected by id or short name.
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `workflow install SOURCE...` | install into a workspace: a package directory, a git URI, a runner file or workflow document (installed ad hoc), or a workflow name known here; declared calls are installed too and a `[workflow.build]` package is built | `--workspace`, `--no-calls`, `--no-build`, `--format`, `--json`, `--adapter-timeout` |
+| `workflow install SOURCE...` | install into a workspace: a package directory, a git URI, a runner file or workflow document (installed ad hoc), or a workflow name known here; a git URI without `#SUBDIR` whose repository root carries `httk_plugin.toml` installs every workflow that plugin lists; declared calls are installed too and a `[workflow.build]` package is built | `--workspace`, `--no-calls`, `--no-build`, `--format`, `--json`, `--adapter-timeout` |
 | `workflow uninstall SELECTOR...` | remove installed workflows by id or short name | `--workspace`, `--check` (warn about unfinished jobs using it), `--json` |
 
 ```console
 httk workflow install --workspace WORKSPACE 'git+https://github.com/httk/workflows-vasp#vasp-relax'
+httk workflow install --workspace WORKSPACE 'git+https://github.com/httk/workflows-vasp-atomate2@wf-v0.2.0'
 httk workflow install --workspace kappa:runs ./my-workflow
 ```
 
@@ -240,7 +242,7 @@ whole lineage). See {doc}`/details/workflow_uris`.
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `workflow list` | without `--workspace`, the workflows a name selects on this machine (registered, plugin, fetched git workflows); with it, the workflows installed in that workspace | `--workspace`, `--json` |
+| `workflow list` | without `--workspace`, the workflows a name selects on this machine (registered, plugin, pip-installed workflow repositories, fetched git workflows); with it, the workflows installed in that workspace | `--workspace`, `--json` |
 | `workflow describe TARGET...` | describe a registered id or alias, git URI, runner file or package directory; with `--workspace`, an installation there | `--workspace`, `--format`, `--json` |
 
 As a report, `describe` runs a directory package's runner entry with
@@ -652,6 +654,11 @@ the launch site), `--workers` (attempts per manager) and the manager command
 used after `environment.prelude`. `--inline` forces one in-process manager, and
 `--detach` returns after starting the managers. See {doc}`launchers`.
 
+Through a Slurm launcher whose effective settings (workspace settings
+overridden by the launcher's) set `slurm.time_limit` or `slurm.time_limit_max`,
+`--time-limit` sets the jobs' Slurm `--time` instead of being passed to the
+managers, bounded by `slurm.time_limit_max` (default `slurm.time_limit`);
+otherwise it stays the managers' own deadline; see {doc}`launchers`.
 `--time-limit`, `--deadline-margin`, `--worker-resource` and `--allocation`
 are explained in {doc}`taskmanager` under resources, time requirements and
 allocations; the startup banner, idle summary and logs under running managers.
@@ -776,8 +783,9 @@ remote meaning "this machine", so `remote add local` is refused.
 | `remote show NAME...` | describe remotes and their settings | `--json` |
 | `remote remove NAME...` | remove remote bundles; refused while a registered workspace holds a transfer bound for the remote | `--force` skips only the confirmation |
 | `remote daemon configure REMOTE` | pin the identities in the mounted `exchange.json` and `daemon.json` | required `--exchange` |
+| `remote daemon show REMOTE` | print the pinned daemon's `daemon.json`: approved configurations, digests and published resource settings | |
 | `remote daemon health REMOTE` | check the confined daemon | `--request-id`, `--wait-seconds` |
-| `remote daemon start REMOTE` | start one approved manager configuration | required `--configuration`; `--request-id`, `--wait-seconds` |
+| `remote daemon start REMOTE` | start one approved manager configuration | required `--configuration`; `--time-limit` (the job's Slurm `--time`, above 120 s and up to the configuration's `slurm.time_limit_max`), `--request-id`, `--wait-seconds` |
 | `remote daemon status REMOTE` | print passive status, inspect a manager with `--handle`, or inspect an original job command with `--request-id` | mutually exclusive `--handle` / `--request-id`; `--wait-seconds` |
 | `remote daemon cancel REMOTE` | request manager cancellation | required `--handle`; `--request-id`, `--wait-seconds` |
 | `remote daemon log REMOTE` | print a manager's published log | required `--handle` |

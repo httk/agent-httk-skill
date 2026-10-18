@@ -179,6 +179,42 @@ assert sorted(series.value) == [
 ]
 ```
 
+## Band structures, phonons and response tensors
+
+These definitions have typed record kinds but no binding of an *httk-analyse*
+result; collect hooks build their records with `from_value` from the output of a
+calculation (each refers to the structure it is a `product_of`):
+
+| Definition | Kind | Value |
+| --- | --- | --- |
+| `electronic_band_structure` | `ElectronicBandStructureRecord` | Band energies (eV, absolute scale) along a line-mode k-point path: `kpoints` (fractional reciprocal coordinates), `kpoint_label_indices` and `kpoint_labels`, `energies` [band][k-point], optional `energies_spin_down` (collinear spin-polarized only), `fermi_energy` |
+| `phonon_band_structure` | `PhononBandStructureRecord` | Phonon frequencies (THz, imaginary modes negative) along a q-point path: `qpoints`, `qpoint_label_indices`, `qpoint_labels`, `frequencies` [mode][q-point], 3 modes per site |
+| `phonon_density_of_states` | `PhononDensityOfStatesRecord` | `frequencies` (THz) and `density` (THz⁻¹ per cell, integrating to 3 × the number of sites) |
+| `born_effective_charges` | `BornEffectiveChargesRecord` | One 3×3 Cartesian tensor per site, Z*αβ = (Ω/e) ∂Pα/∂uβ, in units of the elementary charge |
+| `piezoelectric_tensor` | `PiezoelectricTensorRecord` | 3×6 relaxed-ion (electronic + ionic) piezoelectric stress tensor in C/m², Voigt order xx yy zz yz xz xy |
+
+Only band structures along a path are stored; eigenvalues on a uniform mesh
+belong in a density of states. Each list element is one stored row, so a 60-band
+path of 200 k-points stores 12 000 rows per spin channel.
+
+```python
+from httk.analyse.property_records import ElectronicBandStructureRecord
+
+bands = ElectronicBandStructureRecord.from_value({
+    "kpoints": [[0.0, 0.0, 0.0], [0.25, 0.0, 0.25], [0.5, 0.0, 0.5]],
+    "kpoint_label_indices": [0, 2],
+    "kpoint_labels": ["GAMMA", "X"],
+    "energies": [[-5.1, -4.2, -3.0], [1.2, 2.3, 3.4]],
+    "fermi_energy": 0.4,
+})
+assert bands.value["energies"][1] == [1.2, 2.3, 3.4] and "energies_spin_down" not in bands.value
+```
+
+A store created before these kinds existed does not declare them. Reopening it
+with the longer declaration needs the additive upgrade: `upgrade=True` when
+opening the store, or `httk collect --into STORE --upgrade` (keep a backup
+first).
+
 ## Explicit plateau selection
 
 Running Green–Kubo integrals have no inferred plateau. A `TransportResult`

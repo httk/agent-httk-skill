@@ -113,7 +113,8 @@ The exchange is a directory of the workspace, `WORKSPACE/exchange/`:
 WORKSPACE/
   exchange/              the only client-mounted directory; not visible to confined jobs
     exchange.json        workspace identity, written when the extension is enabled
-    daemon.json          the daemon's public menu, written by the daemon
+    daemon.json          the daemon's public menu: identities and the approved
+                         configurations with their published resource settings
     status.json          exchange jobs, states and progress, written by the managers
     managers.json        manager rows, written by the daemon
     launchers/<handle>.log  published launcher logs, written by the daemon
@@ -265,7 +266,8 @@ counts (see {doc}`launchers`):
 ```console
 httk launcher add --template slurm --global small \
   --set manager.confine=bwrap --set slurm.cpus_per_task=2 --set slurm.mem=4G \
-  --set slurm.time_limit=01:00:00 --set manager.workers=2
+  --set slurm.time_limit=01:00:00 --set slurm.time_limit_max=12:00:00 \
+  --set manager.workers=2
 httk launcher configure --add-path confine.readonly_paths=/software small
 ```
 
@@ -363,12 +365,15 @@ for one JSON document). Relative paths are taken from the current directory.
   snapshot directories by hand (`workspace-daemons/<hash>` and
   `<hash>.snapshots` below the *httk* data directory by default). A snapshot
   from an earlier policy format is refused at start; there is no migration.
-- `check` and `run` first activate the configuration (see
+- `check`, `run` and `reload` first activate the configuration (see
   [Configuration changes](#configuration-changes)).
 - `check` enters the real broker sandbox and checks the scheduler clients,
   without submitting work or validating compute-node execution.
 - `run --once` processes one bounded scan. `run` polls until SIGINT or
-  SIGTERM; a site service supervisor can restart the foreground daemon.
+  SIGTERM; a site service supervisor can restart the foreground daemon. `run`
+  starts the sandboxed daemon as a child process and forwards SIGTERM, SIGINT
+  and SIGHUP to it; it exits with the daemon's status (128 plus the signal
+  number after a signal) and restarts it only after a configuration change.
 - The layout is fixed by the workspace path; nothing is written under the
   *httk* data directory (`~/.local/share/httk/...`). Slurm
   writes manager output to `WORKSPACE/logs/launchers/<handle>.out`, reachable
@@ -398,16 +403,18 @@ remove them to clear an uncertain submission.
 ### Resources
 
 Optionally set CPU count, memory and time in a launcher as
-`slurm.cpus_per_task`, `slurm.mem` and `slurm.time_limit`, and the geometry as
+`slurm.cpus_per_task`, `slurm.mem` and `slurm.time_limit`, the longest time a
+start may request as `slurm.time_limit_max` (default `slurm.time_limit`), and
+the geometry as
 `slurm.nodes`, `slurm.ntasks` and `slurm.ntasks_per_node`, exactly as for any
 `slurm` launcher. A setting left unset adds no corresponding `sbatch` flag, so
 Slurm's partition and site defaults apply:
 
 - Memory accepts positive integer MiB or K/M/G/T suffixes; KiB rounds up to
   MiB.
-- Time accepts the standard
+- Time (`slurm.time_limit` and `slurm.time_limit_max`) accepts the standard
   [Slurm time forms](https://slurm.schedmd.com/sbatch.html); seconds round up
-  to minutes.
+  to minutes. `slurm.time_limit` must not exceed `slurm.time_limit_max`.
 - Zero or unlimited requests are rejected.
 - Values above 1024 CPUs per task, 1,048,576 MiB per node or 10,080 minutes
   are refused unless the daemon configuration sets `force=true`.
@@ -428,6 +435,17 @@ the login shell and the prelude, not from the daemon; `NIL` was observed to
 break the login-shell Lmod environment on one site, so `NONE` is the default.
 The workspace's own `environment.prelude` does not apply to daemon submissions.
 
+A start may ask for another `--time` with
+`httk remote daemon start REMOTE --configuration NAME --time-limit DURATION`,
+which the client requires to exceed the manager's 120 s deadline margin. The
+daemon refuses it with `time_limit_exceeded` when it exceeds the frozen
+launcher's `slurm.time_limit_max` (by default its `slurm.time_limit`), or when
+the launcher sets neither. The submitted and uncertain responses carry the
+effective `time_limit` as `[D-]HH:MM:SS` (omitted when no limit applies), and
+`managers.json` and the `daemon_submitted` log line show it. A start that
+recovery answers `uncertain` after its daemon crashed carries only a requested
+`time_limit`; without a request it stays null.
+
 The manager is `httk workflow manager run --by-path --workspace WORKSPACE
 --idle` with the launcher's `--workers` (from `manager.workers`),
 `--allocation` (from `manager.allocation`, default `slurm`) and its pinned
@@ -439,27 +457,36 @@ until Slurm's time limit drains it; see {doc}`taskmanager`.
 ### Configuration changes
 
 Edit a launcher bundle with `httk launcher configure`, or the daemon
-configuration with `httk workspace daemon configure`, then restart the daemon:
+configuration with `httk workspace daemon configure`, then reload it:
 
 ```console
 httk workspace daemon configure /proj/campaign/workspace --add launchers=large \
   --remove authorized_keys=ed25519:REPLACE_WITH_REVOKED_KEY
-httk workspace daemon run /proj/campaign/workspace
+httk workspace daemon reload /proj/campaign/workspace
 ```
 
 `configure` approves the result exactly as a start would and saves it only
 when it is accepted; it publishes nothing and works while a daemon runs. Every
-`check` and `run` compiles the saved configuration with the current launcher
-bundles. When the result differs from the active runtime snapshot, it publishes
-a new snapshot, rewrites `daemon.json` and prints the launchers whose approval
-changed; otherwise it publishes nothing. Activation is not refused while a
-daemon runs: running instances notice the new configuration at their next
-admission or decision and exit, so a supervisor restarts them on it. Clients
-read configuration digests live from `daemon.json` and need no reconfiguration.
+`reload`, `check` and `run` compiles the saved configuration with the current
+launcher bundles. When the result differs from the active runtime snapshot, it
+publishes a new snapshot, rewrites `daemon.json` and prints the launchers whose
+approval changed; otherwise it publishes nothing (`reload` prints that the
+configuration is unchanged). A refused configuration activates nothing, and
+`reload` exits with status 2 and the reason, as `run` does. `reload` works
+whether or not a daemon runs. A running daemon, idle or not, notices the new
+snapshot at its next mailbox poll or request, once any scheduler check in
+progress has finished, logs `daemon_retired`, and stops; a daemon still
+starting stops the same way. `httk workspace daemon run` then prints `daemon
+restarting on the changed configuration` and starts it again on the snapshot
+active at that moment, without compiling the configuration again, while
+`run --once` just stops with status 0. Clients read configuration digests live
+from `daemon.json` and need no reconfiguration.
 
-Queued and running managers keep the settings they were submitted with. New
-starts must name a currently approved launcher and its exact digest; a
-retained old snapshot does not authorize them. Activation preserves the
+The daemon never cancels managers when it stops or restarts: queued and
+running managers keep running, and the restarted daemon follows them by their
+Slurm job IDs from the ledger. They keep the sbatch settings they were
+submitted with. New starts must name a currently approved launcher and its
+exact digest; a retained old snapshot does not authorize them. Activation preserves the
 enrollment, ledger, response key and old snapshots. Installed binaries and
 site configuration file contents remain operator-maintained external
 dependencies.
@@ -472,7 +499,7 @@ work first, then re-enroll as described in
 [Earlier enrollments](#earlier-enrollments). A snapshot from an earlier policy
 format is refused at start; there is no migration. Update the client before or
 together with the remote host: the current client reads `exchange.json`,
-`daemon.json` and version 3 of `managers.json`. A bundle carrying `owner_key`
+`daemon.json` and version 4 of `managers.json`. A bundle carrying `owner_key`
 is refused by an older *httk-workflow* because its manifest members differ;
 the remote host must run this version before a client sends bundles that carry
 `owner_key` (both are then updated together). Exchange jobs adopted before
@@ -561,13 +588,33 @@ to the `inbox` again.
 `status.json` at the exchange root lists the exchange jobs
 (`jobs[{exchange_name, job_id, job_key, state, progress}]`, `updated_at`,
 `truncated`), where `progress` is a bounded excerpt of the scalar members of a
-`progress.json` the job keeps in its payload; the managers write it. `managers.json` (format version 3) lists the
-daemon's manager starts with their ledger state, Slurm job ID, scheduler state,
+`progress.json` the job keeps in its payload; the managers write it. `managers.json` (format version 4) lists the
+daemon's manager starts with their ledger state, Slurm job ID, effective
+`time_limit`, scheduler state,
 exit code and start and end times. Unknown values are `null`. Both files are
 informational: `status.json` is rewritten at most every 10 seconds while a
 manager runs, and `managers.json` when its rows change. Read them with
 `httk remote daemon status REMOTE`; add `--handle` for the scheduler
 state of one manager through a signed request.
+
+`daemon.json` (format version 3) lists every approved configuration as
+`{digest, settings}`. `settings` holds only the allow-listed launcher settings
+that are set: `manager.workers`, `slurm.partition`, `slurm.nodes`,
+`slurm.ntasks`, `slurm.ntasks_per_node`, `slurm.cpus_per_task`, `slurm.mem`,
+`slurm.gres`, `slurm.time_limit` and `slurm.time_limit_max`. Values are the
+operator's own, except that `slurm.time_limit` and `slurm.time_limit_max` are
+canonical `[D-]HH:MM:SS`, with the maximum resolved to its default, the time
+limit. Every other setting stays private, including `slurm.account`,
+`slurm.reservation`, `slurm.export`, `environment.prelude`, `manager.command`,
+`manager.launch_template`, `manager.launch_mpi`, `manager.allocation`,
+`manager.bind_cpus`, `manager.confine` and every `confine.*` setting: they can
+reveal site-internal shell setup, launch commands and accounting. The published
+launcher logs (`launchers/<handle>.log`) carry the manager's Slurm output, so
+anything a prelude prints reaches clients there. The client refuses a document
+with any other key. Approval refuses a launcher whose published setting has a
+control character or is longer than 256 characters, so the published menu
+always stays readable by clients. `httk remote daemon show REMOTE` prints the
+validated document of a pinned daemon.
 
 The daemon checks each submitted manager about once a minute: with `squeue`
 while Slurm lists it, then with `sacct` for its final state and exit code. A
@@ -634,7 +681,7 @@ exchange transfers and `job eject` move job bundles only and never include it.
 ### Upgrading an enrollment
 
 Clients and daemons must upgrade together: protocol 5, ledger 4 and
-`daemon.json` 2 are required. Workspace format 3, internal request format 3
+`daemon.json` 3 are required. Workspace format 3, internal request format 3
 and configuration schemas are unchanged. Old enrollments are refused;
 there is no automatic migration, history reset or old-protocol adapter.
 
@@ -663,7 +710,7 @@ operation fields are rejected. The operations are `health`, and:
 
 | Operation | Additional fields |
 | --- | --- |
-| `start_manager` | `configuration` and `configuration_digest`: the approved launcher name and its SHA256 digest |
+| `start_manager` | `configuration` and `configuration_digest`: the approved launcher name and its SHA256 digest; optional `time_limit`, a canonical `[D-]HH:MM:SS` Slurm `--time` of at least one second |
 | `manager_status` | `handle`: the returned manager handle |
 | `cancel_manager` | `handle`: the returned manager handle |
 | `job_request` | `selector`, `action`, `reason`, `configuration_digest`; `priority`, `step` or outbox-relative `destination` only for the corresponding action |
@@ -735,7 +782,23 @@ allowance. The filesystem rules of the mailbox are specified in
 The foreground daemon logs to stdout: one line per request (operation, request
 ID, outcome), each submitted Slurm job ID, every manager state change and
 published manager log, every failed Slurm client call with its exit code and
-error output, and startup and check results.
+error output, and startup and check results. A count line summarizes the
+managers at a glance; it appears at the first poll and again whenever a count
+changes:
+
+```text
+2026-10-17 12:00:00,000 INFO daemon_managers starting=0 queued=2 running=3 unknown=0 completed=12 failed=1 cancelled=0
+```
+
+`starting` counts starts decided but not yet submitted; `queued` submitted
+managers not yet observed or waiting for their allocation (`PENDING`,
+`CONFIGURING`, `REQUEUED`, `SPECIAL_EXIT` and the other requeue and hold
+states); `running` those in `RUNNING`, `COMPLETING`, `STAGE_OUT`, `SIGNALING`,
+`SUSPENDED`, `STOPPED` or `RESIZING`; `completed` and `cancelled` those
+states; `failed` the other final states (`FAILED`, `TIMEOUT`, `OUT_OF_MEMORY`,
+`NODE_FAIL`, `PREEMPTED`, `BOOT_FAIL`, `DEADLINE`) and `GONE`; and `unknown`
+uncertain submissions and managers in `UNKNOWN` or any other state. Refused
+starts are not counted. Scheduler states are checked about once a minute.
 
 While a submitted job runs, Slurm writes its output, with stderr merged in, to
 `logs/launchers/<handle>.out` in the workspace shared filesystem (the
@@ -934,10 +997,11 @@ services.
 ### PMI-2 launches (Intel MPI)
 
 Intel MPI under Slurm needs `srun --mpi=pmi2`. Set it on the daemon's approved
-launcher, then restart the daemon so `run` picks up the changed launcher:
+launcher, then reload the daemon so it picks up the changed launcher:
 
 ```bash
 httk launcher configure --set manager.launch_mpi=pmi2 small
+httk workspace daemon reload WORKSPACE
 ```
 
 The setting is pinned on the managers the daemon starts, and the built-in
