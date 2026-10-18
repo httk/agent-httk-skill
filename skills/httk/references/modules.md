@@ -55,12 +55,15 @@ Public root names users touch most:
 
 ## httk-atomistic (`httk.atomistic`) — crystal structures
 
-- Root exports (~68 names): `UnitcellStructure`, `UnitcellStructureView`,
+- Root exports (~165 names; the most used): `UnitcellStructure`, `UnitcellStructureView`,
   `ASUStructure`, `ASUStructureView`, `Cell`, `CellView`, `CellParams`,
   `Sites`, `Species`, `Spacegroup`, `SettingTransform`, `recognize_asu`,
   `same_crystal`, `build_supercell`, `conventional_cell`, `primitive_cell`
   (both carry Cartesian/collinear site moments through; magnetic supercells and
-  crystal-axis moments are refused), composition tools,
+  crystal-axis moments are refused), `band_path` (exact HPKOT band-structure
+  k-path; idempotent: an input already in its standard primitive cell is kept;
+  `docs/httk-atomistic/band-paths.md`),
+  composition tools,
   `structure_tolerance`, trajectory family (`Trajectory`, `JsonlTrajectory`,
   …), `PlaneWaveFunctions` (WAVECAR wavefunctions, numpy), and conditionally
   `ASEAtomsView` / `PymatgenStructureView`.
@@ -90,7 +93,8 @@ was merged in and retired (August 18 2026). Registered into
 `httk.registry.io.atomistic`; direct APIs also public:
 
 - CIF/mCIF (`httk.atomistic.io.cif`): `read_cif`, exact dual-channel payloads
-  (`_httk_*_exact` companion tags preserve exactness through write/read);
+  (opt-in `_httk_*_exact` companion tags, `save(..., exact_companions=True)`,
+  preserve exactness through write/read; off by default);
   magnetic mCIF parsed to neutral payloads.
 - VASP (`httk.atomistic.integrations.vasp.io`): POSCAR read/write
   (string-preserving, byte-exact `raw` round-trip), `OutcarFile` (lazy,
@@ -118,7 +122,8 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
 - Per-job and per-step resource requirements are enforced by resource-aware
   managers configured with `--worker-resource`.
 - **Workflows**: no VASP workflows are packaged in this module — the
-  `vasp.relax`/`vasp.static`/`vasp.relax-static` packages live in the
+  `vasp.relax`/`vasp.static`/`vasp.relax-static` packages (and the property
+  workflows up to `vasp.full-characterization`) live in the
   `workflows-vasp` repository (referenced by git URI and installed into each
   workspace that runs them; see `references/workflows.md`); the VASP Python
   primitives (inputs, remedies, collection) and Bash VASP API those runners
@@ -175,8 +180,16 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   `StructureLike`s + total energies to atomic fractions and per-atom
   energies, delegates to `LowerConvexHull`, owns Matplotlib plotting (binary
   and higher-component).
+- `httk.analyse.matsci` also covers equations of state, energetics,
+  elasticity, MD structure and dynamics, thermal response, phonons,
+  electronic properties, defects and MLIP validation (float64 results; inputs
+  preserved). Results are bound to property definitions vendored under
+  `httk.registry.schemas.analyse` (`httk.analyse.definitions` holds their
+  IRIs), and `httk.analyse.records` turns them into typed, storable and
+  filterable data records.
 - Depends on numpy + matplotlib by design. Import from the submodules; the
-  root exports only `generic` and `matsci`.
+  root exports only submodules (`generic`, `matsci`, `records`,
+  `definitions`, `summary`, `plotting`, `integrations`, `crysviz`).
 
 ## httk-serve (`httk.serve`) — dissemination
 

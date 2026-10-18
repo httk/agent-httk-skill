@@ -129,11 +129,16 @@ begins with `Mutable`.
 ## The reporting channel
 
 All diagnostics ride one stdlib-logging hierarchy under `"httk"`. Library code
-only calls `logging.getLogger(__name__)`. Users opt in with
-`httk.core.report.configure_reporting(...)`; per-task capture uses
+only calls `logging.getLogger(__name__)` and never installs handlers; a record
+may name its subsystem with `extra={"context": "optimade"}` (or
+`context_logger`), and every consumer filters by a general level plus
+per-context levels. Unconfigured, Python's `lastResort` prints `WARNING` and
+above. Users opt in with `httk.core.report.configure_reporting(...)` (console)
+and `add_report_file(...)`; per-task capture uses
 `with collect_reports(...) as c:` (async-safe; captures `warnings.warn`). The
 OPTIMADE server runs every request inside a collection and merges it into the
-response `meta.warnings`.
+response `meta.warnings`. Import these from `httk.core.report` (not the root);
+see `docs/httk-core/reporting.md`.
 
 ## Citations
 

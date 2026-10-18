@@ -15,10 +15,10 @@ scale. It is distributed as a family of packages sharing the `httk` namespace:
 | Package | Import | What it gives you |
 | --- | --- | --- |
 | httk-core | `httk.core` | contracts and shared vocabulary: exact math, vectors, datastreams, records, registries, `load`/`save`/`fetch` (stdlib-only) |
-| httk-atomistic | `httk.atomistic` | crystal structures: cells, sites, species, symmetry/ASU, trajectories, ASE/pymatgen/VASP integrations, and file formats (CIF/mCIF, POSCAR, OUTCAR, XDATCAR, OSZICAR, POTCAR, WAVECAR, trajectory JSONL) |
-| httk-store | `httk.store` | data management: SQL stores (SQLite/DuckDB/PostgreSQL), validation, query, federation, versioning + named alternative representations, provenance serving, remote OPTIMADE client (`httk.store.optimade`) |
+| httk-atomistic | `httk.atomistic` | crystal structures: cells, sites, species, symmetry/ASU, trajectories, ASE/pymatgen/VASP integrations, and file formats (CIF/mCIF, POSCAR, OUTCAR, XDATCAR, OSZICAR, EIGENVAL, POTCAR, WAVECAR, trajectory JSONL), HPKOT band paths |
+| httk-store | `httk.store` | data management: SQL stores (SQLite/DuckDB/PostgreSQL/ClickHouse) and MongoDB, validation, query, federation, versioning + named alternative representations, provenance serving, remote OPTIMADE client (`httk.store.optimade`) |
 | httk-workflow | `httk.workflow` | campaigns: projects, workspaces, runners, remotes/HPC, transfers, collection |
-| httk-analyse | `httk.analyse` | analysis: convex hulls (`generic`), phase diagrams + plotting (`matsci`) |
+| httk-analyse | `httk.analyse` | analysis: convex hulls (`generic`); phase diagrams, equations of state, elasticity, phonons, MD, electronic properties, defects, MLIP validation (`matsci`); results as typed definition-bound records |
 | httk-serve | `httk.serve` | dissemination: websites (`httk.serve.web`) and a generic OPTIMADE server (`httk.serve.optimade`) |
 
 `pip install httk2` installs the standard set, including serving.
@@ -40,8 +40,9 @@ elsewhere.
   analyse. A short version is below.
 - **"Find/install a workflow (VASP or otherwise) / write a workflow
   package / what does `requires`/`command` do"** → `references/workflows.md`:
-  the three workflow repositories, referencing by git URI, install/uninstall,
-  and the manifest essentials.
+  the four workflow repositories (VASP, atomate2, other languages, examples),
+  referencing by git URI, install/uninstall (also a whole repository, or by
+  `pip install` of a clone), and the manifest essentials.
 - **"Load/convert/write a structure file"** → `httk.core.load(path)` returns the
   file's native representation; expand with view constructors
   (`UnitcellStructureView(load("x.cif"))`); `httk.core.save(obj, path)` writes.
@@ -90,8 +91,8 @@ httk cannot change queued jobs); `run` drives every job
 until idle; `collect` prints one JSON `CollectedJob` summary per finished job
 (`--raw` emits mechanical `JobRecord` summaries). `httk collect DIR --into results.sqlite --id-base BASE` also
 collects a tree of finished calculations that were *not* run through httk:
-collectors registered by *httk-workflow-vasp* (and the QE, ABINIT, CP2K and ORCA
-packages) recognize each calculation directory; `--dry-run` lists what would be
+collectors registered by *httk-workflow-vasp* (and the QE, ABINIT, CP2K, ORCA,
+GROMACS, LAMMPS and phonopy packages) recognize each calculation directory; `--dry-run` lists what would be
 collected. Packaged VASP workflows keep
 results in the persistent `run/` workdir by default; add
 `--parameter publish_data=true` to `job new` when a curated `data/` copy is also
@@ -140,8 +141,10 @@ See `references/docs/httk-workflow/restarting_jobs.md`.
 Remove terminal or paused jobs with `httk job delete JOB…` (`--force` skips only
 the confirmation; a succeeded job needs `httk job unseal` first). Never `rm -r` a
 job directory: a manager may hold it at that moment. VASP workflow packages
-(`vasp.relax`, `vasp.relax-bash`, `vasp.static`, `vasp.relax-static`) are not
-built in — they live in the `workflows-vasp` repository and are installed into
+(`vasp.relax`, `vasp.relax-bash`, `vasp.static`, `vasp.relax-static`, the
+property workflows through `vasp.full-characterization`; `atomate2.*` in
+`workflows-vasp-atomate2`) are not
+built in — they live in workflow repositories and are installed into
 each workspace that runs them, by `job new --install` (as above) or
 `httk workflow install --workspace WS URI`; after that the short name resolves.
 See `references/workflows.md`.
@@ -197,5 +200,5 @@ identity keys and exchange-directory job eject/adopt, see
   workspace checkout and may trail the online docs; when the two disagree, the
   online docs win.
 - The curated files under `references/` (architecture, modules, campaign,
-  data-serving) are the distilled, stable layer — start there, drop into the
+  workflows, workspace-daemon, data-serving) are the distilled, stable layer — start there, drop into the
   snapshot or online docs for exhaustive detail.

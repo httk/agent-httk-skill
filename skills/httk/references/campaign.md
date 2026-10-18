@@ -33,7 +33,8 @@ silicon--0c4f…	/…/workspace/jobs/ready/silicon--0c4f…~p500~…
 - A job runs only a workflow **installed in its workspace**. `--workflow`
   names an installed workflow by id or short name; with `--install`, a git URI
   (e.g. the `vasp.relax`/`vasp.static`/`vasp.relax-static` packages of
-  `workflows-vasp`, or `vasp.relax-<lang>` of `workflows-vasp-other-languages`),
+  `workflows-vasp`, `atomate2.*` of `workflows-vasp-atomate2`, or
+  `vasp.relax-<lang>` of `workflows-vasp-other-languages`),
   a package directory (`--workflow-dir DIR`) or a known name is installed first,
   after which its short name also resolves; `httk workflow install --workspace
   WS SOURCE` installs without creating a job (see `references/workflows.md`).
@@ -315,7 +316,8 @@ finished job; options: `--raw` (mechanical `JobRecord`s),
 job-pinned collect hooks), `--into STORE` (store collected entries straight
 into an httk-store store — degraded jobs are skipped and the exit code says so).
 `httk workflow postprocess --workspace WS --script NAME` runs a workflow's curated
-post-collection script (e.g. a relaxation plot).
+post-collection script (e.g. `relaxation-report`/`relaxation-plot` of the
+`workflows-vasp` relaxations, `report`/`plots` of every atomate2 package).
 
 In Python, `collect()` yields `CollectedJob`s with typed `outputs` per declared
 role, the provenance `Run` record, `products` links, and degradation reasons

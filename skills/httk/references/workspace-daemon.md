@@ -97,7 +97,8 @@ restricting that account's SFTP access is a site matter. Mount without
 Changing the configuration: edit launchers with `httk launcher
 configure`, or the daemon configuration with `httk workspace daemon configure
 WORKSPACE --set|--add|--remove KEY=VALUE` (lists `launchers`,
-`authorized_keys`), then `httk workspace daemon reload WORKSPACE`. There is no
+`authorized_keys`; `--unset KEY` clears `sacct`/`slurm_conf` or resets
+`max_submissions`/`force`), then `httk workspace daemon reload WORKSPACE`. There is no
 approval step: every `reload`/`check`/`run` re-reads the configuration and
 current launcher bundles and activates changes, rewriting `daemon.json` (clients
 read it live). A running daemon notices the activation at its next poll, stops,
@@ -183,6 +184,22 @@ that the manager stopped. `status.json` and `managers.json` are informational
 only. The client removes a response once it has verified it; the daemon removes
 unconsumed responses after the request lifetime plus the skew allowance
 (3600 + 7800 s).
+
+Ledger history: the daemon retires settled requests and ended manager starts
+(their `managers.json` rows too) after the workspace retention setting
+`retention.daemon_history_days` (default 30; `null` or `"keep"` never), read
+when the daemon starts, so restart it after `httk workspace policy set --key
+retention.daemon_history_days --value 14 WS`. It never retires a request before
+its signed lifetime plus the skew allowance, nor anything that can still
+matter; a start answered `uncertain` without a Slurm job ID stays for good.
+The record limit (4096) and `max_submissions` (default 128) bound this
+retained history, not lifetime totals, so retirement frees quota; exhaustion
+answers a retryable `busy` (same request ID): wait, lower the history, or raise
+`max_submissions` with `daemon configure`. A retired request is forgotten:
+`status --handle`/`cancel` on its handle answer `refused` with
+`unknown_manager`, a status observation of a retired job command reports
+`unknown_command`, and a replay is admitted afresh, where its own expiry
+refuses it.
 
 Parallel launches: code commands name only the program (`vasp.command =
 "vasp_std"`); the attempt's launch prefix `HTTK_WORKFLOW_LAUNCH`

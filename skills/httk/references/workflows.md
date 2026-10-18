@@ -6,10 +6,23 @@ job runs only a workflow installed in its workspace, and workflows never travel
 with jobs: install them in every workspace that runs those jobs. See `campaign.md` for running jobs; this file is about
 where workflows come from and the manifest.
 
-## The three repositories
+## The repositories
 
 - **workflows-vasp** — production VASP: `vasp.relax`, `vasp.relax-bash`,
-  `vasp.static`, `vasp.relax-static`. Use for real calculations.
+  `vasp.static`, `vasp.relax-static`, `vasp.relax-static-coarse`,
+  `vasp.relax-static-hse`, `vasp.general` (job-supplied inputs),
+  `vasp.band-structure`, and the property workflows `vasp.relax-ions`,
+  `vasp.dos`, `vasp.dielectric`, `vasp.elastic`, `vasp.eos`, `vasp.phonons`
+  and `vasp.full-characterization` (one tight relaxation, then band
+  structure, DOS, elastic, EOS, dielectric and phonons as child jobs, sharing
+  every calculation). Use for real calculations; see the vendored
+  `docs/httk-workflow/vasp_runners.md`.
+- **workflows-vasp-atomate2** — atomate2 VASP Makers as `jobflow` packages:
+  `atomate2.static`, `.relax`, `.tight-relax`, `.double-relax`,
+  `.band-structure`, `.dielectric`, `.elastic`, `.phonons`, and
+  `atomate2.full-characterization` (the others as parallel child jobs). Every
+  package declares the postprocess scripts `report` and `plots`
+  (`httk workflow postprocess --script report [JOB]`).
 - **workflows-vasp-other-languages** — the same relaxation authored once per
   native SDK language: `vasp.relax-ada`, `-c`, `-cpp`, `-fortran`, `-java`,
   `-perl`, `-rust`. Use as a compiled/JVM runner starting point.
@@ -59,6 +72,14 @@ running workspace daemon needs no reload.
 ```console
 httk workflow install --workspace WS 'git+https://github.com/httk/workflows-vasp-atomate2@wf-v0.2.0'
 ```
+
+A workflow repository with the in-tree build backend (all four above) can
+also be `pip install`ed from a clone (`pip install ./workflows-vasp`, or
+`-e`): that installs its Python dependencies and makes its packages known in
+that environment by short name and by the same pinned URIs a GitHub install
+gives (HEAD and every `wf-v*` tag, no network); only committed content counts.
+Install them into a workspace as usual. See the vendored
+`docs/httk-workflow/details/workflow_uris.md`.
 
 ## Manifest essentials
 

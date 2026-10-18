@@ -276,10 +276,12 @@ create_asgi_app`) is the site engine behind httk.org:
 
 ## Dissemination via files
 
-- `httk.core.save(obj, "structure.cif")` — CIF written with dual-channel
-  exactness (standard tags are valid decimals; `_httk_*_exact` companions
-  carry exact values and win on re-read). POSCAR round-trips byte-exactly via
-  the raw channel when the source was a POSCAR.
+- `httk.core.save(obj, "structure.cif")` — standard CIF columns only by
+  default (exact rationals as decimals; a cell with no exact CIF form is
+  rounded unless `approximate=False`); `exact_companions=True` adds the
+  non-standard `_httk_*_exact` companions, which carry exact values and win on
+  re-read. POSCAR round-trips byte-exactly via the raw channel when the source
+  was a POSCAR.
 - Trajectories: `save(traj, "run.traj.jsonl")` streams to the
   `httk-trajectory-jsonl` holding format (frames are never stored in
   databases — records hold summaries + a source locator).
