@@ -47,7 +47,18 @@ name), and `httk workflow uninstall SELECTOR` forgets fetched workflows: a pinne
 URI forgets that commit, an unpinned URI or short name the whole
 repository-and-subdirectory lineage. `httk plugin install URI` makes every
 workflow an `httk_plugin.toml` in the repo bundles known by name; install each
-into a workspace like any other.
+into a workspace like any other, or all at once: a `git+` URI with no `#subdir`
+whose repo root holds `httk_plugin.toml` (and no `httk_workflow.toml`) installs
+every package it lists, each under its pinned `@<commit>#<subdir>` URI, one
+`ID<TAB>NAME` line per workflow. Calls among the listed workflows, by name or
+alias, bind to the members at the same commit. Without `--workspace` this only
+fetches every member into the cache; a `REMOTE:WS` workspace gets the pinned
+repository URI and expands it there. `job new --workflow` and `workflow describe` still need `#subdir`. A
+running workspace daemon needs no reload.
+
+```console
+httk workflow install --workspace WS 'git+https://github.com/httk/workflows-vasp-atomate2@wf-v0.2.0'
+```
 
 ## Manifest essentials
 
