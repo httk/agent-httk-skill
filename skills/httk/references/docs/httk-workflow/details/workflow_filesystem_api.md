@@ -1004,6 +1004,11 @@ placement match and whose `parent` names this job (id, key, placement,
 workspace, spawn id), and ids not already present. The plan records each
 child's initial `state.json`, inheriting the parent's `origin` and
 `exchange_name`.
+The manager publishes the children of every outcome action, but a `fail` or
+`retry` outcome published through the SDK carries none: its outcome draft,
+which native Python runners, the Bash bridge and builder composition all
+publish through, discards the children the attempt staged, so a failed parent
+leaves no orphans and a retried activation does not stage them twice.
 
 
 Publication (step 4) works from the plan alone: for each child whose staged
@@ -1175,7 +1180,7 @@ file or a bare workflow document.
 
 ```json
 {"format": "httk-workflow-install", "format_version": 1, "id": "local:hello", "name": "hello",
- "source": "/home/me/hello", "tree_sha256": "<hex>", "installed_at": "<utc>",
+ "source": "/home/me/hello", "reference": null, "tree_sha256": "<hex>", "installed_at": "<utc>",
  "calls": {"inner": "local:inner"}, "requires": ["httk-workflow>=2.1"],
  "runner": {"command": null, "entry": "run.py", "builtin": null},
  "steps": ["start"], "initial_step": "start", "build": false}
@@ -1190,7 +1195,11 @@ platform_tag, built_at}`.
 
 - **Lookup** by id scans `workflows/` for the `--<h16>` suffix and compares
   the `install.json` id; lookup by short name reads every `install.json` and
-  refuses an ambiguous name.
+  takes the latest `installed_at` among the installations of that name.
+  `NAME@REF` keeps only those whose `reference` (the tag or branch a git
+  install was given, `null` otherwise) is `REF`, or whose pinned commit starts
+  with `REF` (at least 7 characters), when no installation has the whole text
+  as its name. Id-shaped text (`local:`, `adhoc:`, `git+`) matches only an id.
 - **Install** assembles the tree in a `build` scratch (installing declared
   calls first, recursively, and building for this platform when the package
   has a build section), then moves an existing installation aside to
@@ -1321,8 +1330,12 @@ never empty while a delivery is in doubt, so it always runs.
    fresh jobs (no `state.json`, `seal.json`, `logs`, `attempts` or
    `.httk-job`) in state `ready`, and its root has no parent. A trusted root
    may keep a parent outside the bundle.
-3. **Rekey** an untrusted bundle: each member gets the id
-   `uuid5(b480bb06-dc60-4d16-a78b-cc6b3af734b4, "<workspace-id>/<client-id>")`;
+3. **Rekey** an untrusted bundle: each member gets the id whose first group
+   (eight hex digits) is the client id's and whose rest is that of
+   `uuid5(b480bb06-dc60-4d16-a78b-cc6b3af734b4, "<workspace-id>/<client-id>")`,
+   so a unique prefix such as `httk job show 8f7047f2` selects the job in both
+   workspaces. A client thus chooses the first eight hex digits of its jobs'
+   ids here, which can make a prefix selector ambiguous and nothing more;
    keys keep their tags and parent links are mapped. The result is recorded in
    `<scratch>/rekey.json` (format `httk-workflow-rekey`, version 1:
    `{manifest, exchange_names: {new id: client id}}`) before anything is
