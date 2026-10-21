@@ -19,7 +19,9 @@ collection that declares no outputs.
 A workflow with nothing to collect, whose registered provider has no
 collector and declares no outputs, is not degraded. Its `CollectedJob` is
 complete, with `run_only` set, no outputs and the job's run as its only
-product. Orchestrating workflows that only spawn or call others, and the small
+product, its staged files recorded as its inputs (see
+[Staged inputs record the exact file](#staged-inputs-record-the-exact-file)).
+Orchestrating workflows that only spawn or call others, and the small
 steps they call, are typically like this.
 
 Every `CollectedJob` also carries `child_runs`: one
@@ -29,6 +31,131 @@ the published `children` of its `state.json`.
 When an output role is a single file-valued result, its run edge points to a
 standard `files` entry (`type = "files"`). File lists remain values within
 their role record.
+
+A `files` entry is identified by its content: its media type
+(`application/octet-stream` unless known), its `format` (the *httk₂* reader
+tag, such as `vasp-poscar`, when one is set) and the SHA-256 digest of its
+bytes. The same bytes at many locations are one entry, which keeps the URL,
+name and size it was first stored with. A `FileRecord` therefore needs a
+`sha256` of 64 lowercase hex digits: a hook building one (or returning a
+`{"entry": {"type": "files", ...}}` response) must compute it, for example
+with `httk.core.digests.sha256_file`. The framework computes it, and sets
+`format` from the file name, for a `{"file": ...}` response and for staged
+inputs.
+
+A `files` entry of a workspace job whose URL is a relative path (neither
+absolute nor `scheme://`) gets the fixed URL `data/<workspace name>/<url>`.
+The workspace name is the registered name whose path is the workspace root, or
+the root directory's name. A hook that builds a `FileRecord` with the bare
+workspace-relative path is prefixed the same way. Only a normalized relative
+path is prefixed; one with an empty, `.` or `..` segment, or one that already
+starts with the prefix, is left as it is with a warning naming the job and the
+role. Because the URL is part of a file entry's identity, the same workspace
+collected under another registered name yields other file entries. The URL
+is entry content, so it is fixed at collect time, before the run's edges and
+the content ids `--into` remaps are derived. Mapping the leading `data` onto a
+real location is a serving-time option instead:
+`httk serve optimade serve --data-path PATH` of *httk-serve*.
+Recognized calculation trees keep their URLs as their collectors give them.
+
+### Inputs
+
+A workspace job's `CollectedJob.inputs` holds the entries the job consumed,
+and each becomes a run input edge before `product_of` curations resolve, so a
+curation naming an input role links to it instead of being reported in
+`products_unlinked`. `--into` stores the inputs like outputs, and the run's
+input edges name their stored ids. Inputs come from two places:
+
+- The collect hook may hand them over (see [Executable hooks](#executable-hooks)
+  for the stream form): a Python hook returns
+  `httk.workflow.hookapi.Collected(outputs, inputs)` instead of a mapping of
+  output roles. This is how an input given through a port, such as a jobflow
+  structure staged as a pymatgen JSON file, names the entry it consumed.
+- The framework records every file staged into the job, as described under
+  [Staged inputs record the exact file](#staged-inputs-record-the-exact-file).
+
+A hook reads the files a job wrote with `record.read_file(relative)`, which
+returns the bytes of a file below the job's payload (for example
+`record.read_file("data/jobflow/jobflow-outputs.json")`) the way the framework
+reads job-writable content: it follows no symlink, refuses a FIFO or other
+special file without blocking, and refuses a file larger than `limit` (default
+64 MiB). An absent, unsafe or oversized file is a `ValueError`.
+
+An input role a hook hands over that the job's workflow declaration does not
+list is a collector error that degrades the job. The framework's own staged
+inputs are labelled from the job's `job.json`, which named them, and are not
+checked against the declaration.
+
+### Staged inputs record the exact file
+
+Inputs are staged into the job verbatim, and what the workflow does with them
+afterwards is its own business, so the store records exactly the files the
+workflow received. Two kinds of staged file are recorded:
+
+- Every declared input (`declared.inputs` of `job.json`) with a
+  `destination`, typed or not, labelled by its role. The file is where
+  submission staged it: a bare name such as `POSCAR` at
+  `<payload>/files/POSCAR`, a name with a directory such as `inputs/POSCAR` at
+  `<payload>/inputs/POSCAR`. When the collect hook hands over the role's
+  entry (or the observed provenance already has an edge for it), that entry
+  keeps the role and the staged file is still recorded, labelled by its
+  payload-relative path. An input without a `destination` (a port, such as
+  a jobflow input handed over from a parent job) is a value, not a staged
+  file, and only a hook can record it.
+- Every file `job new --file`/`--files` staged (also with `--from-command`,
+  the `files` argument of `httk.workflow.new_job`, and the `files` of a
+  child that `Attempt.call` creates), listed in the `staged_files` member of
+  `job.json` and labelled by its payload-relative path, such as
+  `files/INCAR`. A listed file that is also a
+  declared input's destination is recorded once, as that input. A job created
+  before `staged_files` existed records none of these.
+
+Every such file that is a regular file, of any size, type or name (`POTCAR`
+included), becomes at least a `files` entry: its URL
+(`data/<workspace name>/<workspace-relative path>`), name, size, SHA-256
+digest and, when a registered reader matches the name, its `format` (for
+example `vasp-poscar`). The digest is streamed from one read without a size
+bound, the way `record.read_file` (above) reads job-writable content, so a
+symlink or a special file is skipped with a warning, never followed. A
+compressed file (`POSCAR.gz`) is hashed as stored, not decompressed, and its
+`format` is that of the uncompressed name. File entries are identified by
+content, so the same bytes staged by many jobs are one entry, which keeps the
+URL it was first stored with. The bytes stay in the workspace; the store
+holds the URL and the digest. A declared input that is not staged is skipped
+with a warning, or an info message when it is not `required`; a listed staged
+file that is gone is skipped with an info message. A job collected into a
+store by an earlier *httk₂* that recorded fewer inputs gains these edges on
+its next `--into` sweep, so its run is stored again as a new revision
+(`revised` in the report); this is expected, not a sign of changed results.
+
+The run's input edge names that `files` entry, except for a structure *httk₂*
+can read:
+
+- A `structures` input that is not compressed and at most 64 MiB
+  (`READ_FILE_LIMIT`) is also loaded, from exactly the bytes that were
+  hashed, and becomes two entries. The main entry is the structure
+  as *httk₂* reads it by default (any loaded structure wrapped as a
+  `UnitcellStructureView`, which needs *httk-atomistic*), so equal structures
+  share it. Its alternative of kind `file_<hex>` (the first 16 hex digits of
+  the staged file entry's content id) holds the structure read with
+  `as_written=True`, the numbers exactly as written, and the staged file as
+  its `source_file`. Different files of one structure are different
+  alternatives of the same main; the same bytes are one. When the file cannot
+  be read as written, the alternative holds the default reading, with a
+  warning. This happens for a CIF whose coordinates are not exactly on a
+  declared Wyckoff position, and for one that writes a special position as a
+  rounded decimal (`0.3333`): read exactly, its symmetry images become
+  separate sites, so the site count differs from the default reading. The
+  run's input edge, and any product link drawn from that role, names the
+  alternative as `<main id>~file_<hex>`.
+- A `structures` input that is compressed, larger than 64 MiB or not loadable
+  as a structure is recorded as its `files` entry only, with a warning naming
+  the reason.
+- An input of any other declared entry type (a trajectory, for example) is
+  recorded as its `files` entry, with an info message; collect does not load
+  it.
+
+The digest tells whether a copy is still the file the job received.
 
 ### Runs and product curation
 
@@ -135,6 +262,11 @@ A collect hook reads parameters and finds result files through the record:
   in the persistent workdir. A compressed copy (`OUTCAR.gz`) is found too. A
   missing file raises `ValueError`; a job with committed data never falls back
   to the workdir.
+- `record.read_file(relative, limit=...)` returns the bytes of one file below
+  the job's payload, read as job-writable content is read: no symlink is
+  followed, a FIFO or special file is refused without blocking, and a file
+  over `limit` (default 64 MiB) is refused; each of those, and an absent file,
+  raises `ValueError` (see [Inputs](#inputs)).
 
 ```python
 from httk.codes.vasp.collect import read_total_energy
@@ -197,6 +329,27 @@ records = job_records(
 `succeeded`, `failed`, `cancelled` and `paused`; other values are refused by
 name. `placement` restricts collection to jobs at or below one placement, as
 `httk job list --placement` does.
+
+`jobs` (`--job JOB`) selects job trees instead:
+
+```python
+records = job_records(workspace, states=("succeeded", "failed"), jobs=["campaign--4f0c"])
+```
+
+Each selector is resolved as `httk job show` resolves it (a UUID, a job key,
+a unique prefix, or a path inside the workspace; a path is relative to the
+current directory), and an unknown or ambiguous selector is a `ValueError`
+naming it. The selected jobs and all their descendants, followed through the
+`children` of each `state.json`, are yielded depth-first, parent before its
+children, each job once. A selected job that has not finished and is not in
+`states` (ready, running, waiting, or paused unless `paused` is requested) is a
+`ValueError` naming the job and its state. A finished job outside `states`,
+selected or a descendant, is skipped silently as in a sweep, and its
+descendants are still walked: collecting a failed parent with the default
+states yields its succeeded children. A child whose directory cannot be found, and a job
+whose damaged `state.json` hides its children, are passed to `on_skipped` (the
+job itself is still collected, with `gaps` set). `jobs` and `placement`
+cannot be combined. `collect(..., jobs=...)` passes the selection through.
 
 ## From the command line
 
@@ -427,7 +580,11 @@ The first stdin line is
 following line is `{"record": <JobRecord mapping>}`. The hook returns one
 JSONL response per record, in order:
 `{"job_id": ..., "outputs": {role: value}}` or
-`{"job_id": ..., "error": ...}`. Each output value uses exactly one wrapper:
+`{"job_id": ..., "error": ...}`. A response may also carry an `"inputs"`
+member, `{role: value}` with the same wrappers, naming the entries the job
+consumed (see [Inputs](#inputs)); `collect_main` writes it when the hook
+returns a `Collected` with inputs. Each output or input value uses exactly one
+wrapper:
 
 - `{"entry": {...}}` for a registered entry record;
 - `{"value": <json>}` for a `DataRecord`;
@@ -448,8 +605,9 @@ response line, 64 KiB per stderr line and 1 MiB of total stderr.
 - Surplus blank response lines are ignored; a nonblank surplus response line
   degrades the whole group.
 
-Python `.py` hooks run in process with the same assembled-output semantics;
-an ordinary per-job exception degrades that job.
+Python `.py` hooks run in process with the same assembled-output semantics,
+and return either a mapping of output roles or a `Collected`; an ordinary
+per-job exception degrades that job.
 
 ### Format fallback and degradation
 
