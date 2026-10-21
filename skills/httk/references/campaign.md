@@ -104,7 +104,9 @@ optional: the CLI walks up from the current directory to find
 directory); installed workflows live in `workflows/`, and a job directory is
 `jobs/<state>/<placement>/<job_key>~p<NNN>~<token>` (flat below
 `jobs/owned/<owner-id>/` while an owner holds it; empty placement by default,
-`jobs/ready/batch/…` for `--placement batch`). It contains `job.json`,
+`jobs/ready/batch/…` for `--placement batch`; spawned children nest by default
+under `<parent placement>/<parent key>.children`, and workspace setting
+`children.placement=flat` keeps them at the parent's placement). It contains `job.json`,
 `files/`, `run/`, `logs/stdio.out`, `logs/runlog.jsonl`, and
 `.httk-job/state.json`; `data/` exists only when the job committed data (the
 VASP workflows with `--parameter publish_data=true`). Runners execute in the
