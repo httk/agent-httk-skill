@@ -22,7 +22,9 @@ where workflows come from and the manifest.
   `.band-structure`, `.dielectric`, `.elastic`, `.phonons`, and
   `atomate2.full-characterization` (the others as parallel child jobs). Every
   package declares the postprocess scripts `report` and `plots`
-  (`httk workflow postprocess --script report [JOB]`).
+  (`httk workflow postprocess --script report [JOB]`). A script with manifest
+  `outputs` is stored as runs by `httk collect WS --postprocess NAME --into STORE
+  --id-base BASE` (after the job collect).
 - **workflows-vasp-other-languages** — the same relaxation authored once per
   native SDK language: `vasp.relax-ada`, `-c`, `-cpp`, `-fortran`, `-java`,
   `-perl`, `-rust`. Use as a compiled/JVM runner starting point.

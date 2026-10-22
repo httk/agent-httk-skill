@@ -320,6 +320,13 @@ into an httk-store store — degraded jobs are skipped and the exit code says so
 `httk workflow postprocess --workspace WS --script NAME` runs a workflow's curated
 post-collection script (e.g. `relaxation-report`/`relaxation-plot` of the
 `workflows-vasp` relaxations, `report`/`plots` of every atomate2 package).
+A script that declares `outputs` (file patterns) in its manifest can be stored
+as provenance runs: collect the jobs, run the script, then
+`httk collect WS --postprocess NAME --into STORE --id-base BASE` (no `--into`
+previews). One run per job and script (input edge to the job's run, files as
+outputs), served by `httk serve optimade serve STORE`. Unchanged output stores
+nothing; output equal to an earlier revision is an error; a store without a
+`files` family needs `--upgrade` the first time.
 
 In Python, `collect()` yields `CollectedJob`s with typed `outputs` per declared
 role, the provenance `Run` record, `products` links, and degradation reasons
