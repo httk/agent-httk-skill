@@ -252,20 +252,22 @@ httk serve optimade check /srv/optimade/materials.sqlite   # self-test, no servi
 
 ### Combined server (browse + OPTIMADE + files)
 
-`httk serve combined serve STORE --files-dir DIR [--port N]` serves one
-SQLite/DuckDB store as a site at `/` (default: catalog, browser and entry pages
-with provenance), OPTIMADE at `/optimade/` and registered file bytes at
+`httk serve combined serve STORE --data-path NAME=WORKSPACE [--port N]` serves
+one SQLite/DuckDB store as a site at `/` (default: catalog, browser and entry
+pages with provenance), OPTIMADE at `/optimade/` and registered file bytes at
 `/data/`; `check` self-tests without serving. Stored file urls are
-`data/<workspace name>/...`, so `DIR/<workspace name>` must be a symlink to the
-workspace (`mkdir files && ln -s /path/to/ws files/NAME`). Only registered files
-are served. `--data-path URL` instead points file urls at an external server
-(exclusive with `--files-dir`); `--site DIR` replaces the default site. The
-site is built from three widgets: `optimade_catalog`, `optimade_browser`,
-`optimade_entry`. No authentication.
+`data/<workspace name>/...`: `--data-path` is either repeatable `NAME=PATH`
+(workspace NAME's files are under PATH) or one plain `PATH` holding the
+workspaces by name. Only registered files are served. `--data-url URL` instead
+points file urls at an external file server (absolute, or root-relative; the
+rest is percent-encoded); exclusive with `--data-path`. `--site DIR` replaces
+the default site. The site is built from three widgets: `optimade_catalog`,
+`optimade_browser`, `optimade_entry`. No authentication.
 
-`data_path` (here and for `httk serve optimade serve --data-path`) must be a
-URL (absolute, or root-relative like `/files`), never a filesystem path; it
-replaces the leading `data` of served `files` urls and percent-encodes the rest.
+`httk serve optimade serve|check` takes the same `--data-path`/`--data-url`;
+with `--data-path` it also serves the bytes at `/data/` beside the API. The
+served file urls follow the request origin, or `--baseurl` (optimade) /
+`--public-base-url` (combined) behind a proxy.
 
 ## httk-serve: websites
 
