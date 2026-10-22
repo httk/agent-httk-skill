@@ -178,6 +178,10 @@ states other than `owned` are the unowned states (`UNOWNED_STATES`).
   `rmdir`; a move that finds its parent pruned recreates it and retries.
 - Managers MAY restrict their scans to placement prefixes. Join children and
   requests carry the placement, so a lookup lists one placement per state.
+- Where an SDK places a child that names no placement (by default
+  `<parent placement>/<parent job key>.children`, or the parent's placement
+  with the workspace setting `children.placement=flat`) is a convention of the
+  SDK, not protocol.
 
 ## Names as tokens
 
@@ -660,7 +664,7 @@ read. The first reconcile of a job (its first activation) pins it in
 job's owner, through `write_file`, and is absent until an owner first writes it
 (a published child and an adopted exchange job carry one without an
 activation). It is strict except that an absent `job_digest` or `budget_override` reads as
-`null`, and at most 1 MiB.
+`null`, and at most 100 MiB.
 
 | Member | Value | Meaning |
 | --- | --- | --- |
@@ -678,7 +682,7 @@ activation). It is strict except that an absent `job_digest` or `budget_override
 | `failure_history` | list, at most 16 | The last failures. |
 | `join` | object or `null` | The pending join (§Waiting and joins). Kept when the parent fails at its wait with `dependency_failure` (impossible without `on_impossible`, or an unresolvable child) or `budget_exhausted` (the advance would pass the effective `maximum_activations`), so the wait can be reopened. |
 | `observations` | list | The children as the decided join saw them. |
-| `children` | list | Published children: `{job_id, job_key, label, placement, spawn_id, attempt_id}`; for an adopted exchange tree `{job_id, job_key, placement}`. |
+| `children` | list | Published children: `{job_id, job_key, label, placement, spawn_id, attempt_id, activation_id}`; for an adopted exchange tree `{job_id, job_key, placement}`. |
 | `commit` | object or `null` | The commit intent (§The commit). |
 | `release_to` | `{state, priority}` or `null` | The release intent (§The release rule). |
 | `applied_requests` | list of request ids | Requests applied by this job's owners whose files may still exist. |
@@ -1690,6 +1694,11 @@ Quarantine is removed only by hand.
 - **The join grace and stale-request quarantine use clocks.** They fail a job
   or move a request aside, never let a second writer in.
 
+- **Nested `.children` names can go stale.** A `.children` directory name is
+  fixed when the child is spawned and never rewritten: after exchange rekeying
+  it carries the client's pre-rekey key, and after `job detach` or a
+  single-child transfer it still names the former parent. Nothing derives
+  identity from a placement.
 - **Delivery destinations.** An empty directory created concurrently at a
   delivery destination is replaced by the rename.
 

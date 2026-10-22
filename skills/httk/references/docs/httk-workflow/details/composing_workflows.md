@@ -205,7 +205,7 @@ def bands(a):
 ```
 
 `a.parent` is a read-only lookup by the parent's recorded placement, as the
-children's paths in `a.children` are located by the manager at launch; a
+children's paths in `a.children` are located when it is first read; a
 confined attempt sees both read-only. Reading in
 place gives up the guarantees of a copy, so it comes with rules:
 
@@ -266,14 +266,24 @@ reruns the spawning step, which creates new children. See
   writing only its own job directory. Other workspace paths, including the
   rest of `.httk-workspace/` and `exchange/`, are absent.
 - **Unrestricted nesting.** A called workflow is just another job, so it may
-  call further workflows; the depth is not capped.
-- **Workspace and placement are inherited.** Like every spawned child, a
-  called child is created in the calling job's workspace and placement (unless
-  you pass `placement=`), so the whole tree below a root stays where the root
-  was assigned, which {doc}`/campaigns` relies on. A `placement=` must not
+  call further workflows; the depth is not capped, but the default placement stops nesting once it
+  would exceed 1024 bytes (the tree continues at that level's placement).
+- **Workspace is inherited; placement is nested.** Like every spawned child, a
+  called child is created in the calling job's workspace. Unless you pass
+  `placement=`, its placement is `<parent placement>/<parent job key>.children`;
+  the workspace setting `children.placement=flat` gives it the parent's
+  placement instead. Either way the whole tree below a root stays under the
+  root's placement, so a `--placement-prefix` manager serves it, which
+  {doc}`/campaigns` relies on. A `placement=` must not
   contain a component that parses as a job key, since job directories never
   nest; see the
   [placement rules](workflow_filesystem_api.md#placement-rules).
+- **Gather size is bounded only by `state.json`** (100 MiB). Up to about
+  10 000 children per parent stays cheap; beyond that, fan out through
+  intermediate parents.
+- **Order is unspecified.** Listings and collect yield a tree's descendants
+  before its root (`.children` sorts before the job directory); do not rely on
+  order.
 
 ## Where to go next
 

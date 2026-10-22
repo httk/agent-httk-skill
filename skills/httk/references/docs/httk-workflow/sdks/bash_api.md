@@ -191,8 +191,8 @@ step composed lives in shell state, so the subshell costs a step nothing.
 | `httk_workflow_context [FIELD]` | the attempt context, or one field of it |
 | `httk_workflow_state_get NAME` | one key of the job's JSON state |
 | `httk_workflow_declaration NAME` | one workflow declaration: the observed document, else the declared one; 1 when neither exists |
-| `httk_workflow_children [--all\|--succeeded\|--failed]` | one tab-separated row per observed child |
-| `httk_workflow_child LABEL FIELD` | one field of one observed child |
+| `httk_workflow_children [--spawned] [--all\|--succeeded\|--failed]` | one tab-separated row per observed child, or with `--spawned` per published child |
+| `httk_workflow_child [--spawned] LABEL FIELD` | one field of one observed (or, with `--spawned`, published) child |
 | `httk_workflow_parent [FIELD]` | the job that spawned this one, or one field of it; 1 when there is no reachable parent |
 | `$HTTK_WORKFLOW_STEP` | the step this attempt runs |
 | `$HTTK_WORKFLOW_WORKDIR`, `$HTTK_WORKFLOW_JOB_DIR`, `$HTTK_WORKFLOW_DATA_DIR` | absolute paths: the persistent `run/` workdir, the job directory, and its `data/`, which exists once a transaction put something there |
@@ -275,8 +275,7 @@ reports.
 
 `httk_workflow_children` prints `label`, terminal state, job key, workdir, and
 data directory, separated by tabs; the workdir and data columns are absolute
-paths, located when the manager launched this attempt, and are empty when the
-child was not found. Under confinement the children are visible read-only.
+paths, located when read, and are empty when the child was not found. Under confinement the children are visible read-only.
 That is one row per child, so the whole join reads with `read`:
 
 ```bash
@@ -290,6 +289,10 @@ done < <(httk_workflow_children --succeeded)
 `payload`, `workdir`, or `data`. The observation is empty
 unless this activation followed a gather, which is why `aggregate` above hands
 what it learned to `triage` through job state.
+
+`--spawned` switches both verbs to every child the job has published across
+activations (live state, or `missing`; the most recent one under a repeated
+label).
 
 `httk_workflow_parent` reads the other direction: the job that spawned this one.
 Without a field it prints the parent as one JSON object; `FIELD` is `job_id`,
@@ -365,7 +368,7 @@ this attempt's.
 | `--step STEP` | the step the child starts at; required unless `--payload` is given |
 | `--parameter NAME=VALUE`, `--parameter NAME=@FILE.json` | one member of the child's `parameters` object |
 | `--payload DIRECTORY` | spawn a prepared payload directory (from `httk_workflow_job_prepare`) instead of synthesizing a job |
-| `--placement PATH` | where the child is created; the placement of this job by default |
+| `--placement PATH` | where the child is created; `<this job's placement>/<this job's key>.children` by default, or this job's placement with workspace setting `children.placement=flat` |
 | `--tag TAG`, `--name NAME` | override what the child is called |
 | `--priority N`, `--claim-pool POOL`, `--capability NAME` | override how the child is scheduled |
 | `--retry-on CODE`, `--max-attempts-per-activation N`, `--max-total-attempts N`, `--max-activations N` | the child's retry policy |
@@ -395,7 +398,7 @@ for a spawned child. The child's job tag defaults to the label, just as with
 | `--parameter NAME=VALUE`, `--parameter NAME=@FILE.json` | one member of the child's `parameters` object |
 | `--environment NAME=VALUE` | override one of the called workflow's declared environment values |
 | `--tag TAG`, `--name NAME` | what the child is called; the tag defaults to `LABEL` |
-| `--placement PATH` | where the child is created; the placement of this job by default |
+| `--placement PATH` | where the child is created; `<this job's placement>/<this job's key>.children` by default, or this job's placement with workspace setting `children.placement=flat` |
 | `--priority N` | the child's scheduling priority |
 | `--step STEP` | override the called workflow's initial step |
 
