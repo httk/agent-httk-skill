@@ -49,12 +49,12 @@ directories take default permissions, so a setgid bit is not carried over.
 
 `ssh` runs its command in a non-interactive shell. The environment your login
 files set up interactively (`module load` lines, a virtualenv) is not applied,
-and `httk` is often not on `PATH`. Put that setup in the remote's `prelude`
+and `httk` is often not on `PATH`. Put that setup in the remote's `cli_prelude`
 setting rather than in `~/.bashrc`, so it applies only to httk's ssh commands
 and not to every other tool that logs in over ssh:
 
 ```text
-$ httk remote configure --set prelude='module load Python/3.13.5-bundle
+$ httk remote configure --set cli_prelude='module load Python/3.13.5-bundle
 source ~/venv/bin/activate' kappa
 ```
 
@@ -66,9 +66,16 @@ prelude prints. If only the
 `httk` program is somewhere non-standard and the environment is otherwise
 ready, the narrower `httk_command=/path/to/httk` setting is enough.
 
-The adapter `prelude` is not the workspace's `environment.prelude`. The adapter
-prelude prepares the shell so `httk` can run at all; the manager applies
-`environment.prelude` later, once it is already running on the remote.
+The `cli_prelude` is not the workspace's `environment.prelude`. It runs before
+each `httk` command the CLI runs on the remote over ssh or a mount executor, so
+that `httk` can run at all; it does not run at job start. The manager applies
+`environment.prelude` later, when a launcher starts it, and the per-workflow
+prelude when a job of that workflow runs.
+
+Earlier releases called this setting `prelude`. A remote that still stores
+`prelude` is refused when a command would use it, and `--set prelude=...` is
+refused; rename it with
+`httk remote configure NAME --unset prelude --set cli_prelude=...`.
 
 ### Passwords and second factors
 
@@ -136,26 +143,58 @@ $ httk workspace status kappa:runs
 ```
 
 The `NAME:WORKSPACE` spelling is a binding, not a filesystem path. Install the
-job's workflow there, transfer the job and run its manager there:
+job's workflow there, push the jobs waiting to start and run its manager there:
 
 ```console
 $ httk workflow install --workspace kappa:runs 'git+https://github.com/httk/workflows-vasp#vasp-relax'
-$ httk job transfer --job JOB default kappa:runs
+$ httk job push kappa:runs
 $ httk workflow run --workspace kappa:runs --count 4
 ```
 
-Workflows never travel with jobs: a transferred job whose workflow is not
-installed at the destination waits there, and the transfer warns about it. The
+`httk job push [SRC] DST` moves every `ready` job of SRC; the SRC left out is
+the workspace the command runs in, else the default workspace (the per-user
+one is created on first use).
+
+Workflows travel with the jobs. A transfer (push, pull or `job transfer`, local
+or remote ends, either direction) installs in DST every workflow the moved jobs
+need that DST lacks and SRC has, under the same id, before adopting them: each
+job's effective workflow (after `job request set_workflow`) and the closure of
+its `[workflow.calls]`. One query asks DST which of them it has; the missing
+store entries then travel as their sources only (`install.json` and
+`package/`, never `builds/`, and `requires` is not checked there), each is
+installed after its tree digest is verified (an integrity check of the copy:
+SRC is trusted, and the digest does not prove that the content belongs to the
+id), and one with `[workflow.build]` is built for DST's platform after the
+adoption, as is one DST already had without a build for its platform. Nothing
+is ever replaced: a DST that has the id with another tree keeps it, the jobs
+run it, and the transfer warns. A shipped workflow is recorded as installed now, so it becomes DST's
+newest installation of its short name. A build that fails, or a workflow
+installed in neither workspace, leaves the jobs waiting at DST with a warning
+(`httk workflow build --workspace DST ID` builds it later, as does the next
+transfer); `--no-workflows` ships nothing, and an SRC running an older
+httk-workflow ships nothing either, with a warning. A copy a failed call left
+in DST's `.httk-workspace/tmp/push.<hex>/` is named in a warning and removed by
+`httk workspace gc` after a day. The workspace daemon's exchange never installs a workflow a
+client sends. The
 remote invocation asks the owning machine to run
 `httk workflow manager run --workspace runs --detach …`. The target workspace
 then applies its own `manager.launch`, `manager.workers`, scheduler settings and
 `environment.prelude`, as if the command had been run on the login node. Fetch
-finished jobs back with the reverse transfer, selecting them by state (add
-`--placement PREFIX` for one campaign, or name single jobs with
-`--job JOB_UUID`):
+finished jobs back with a pull, which moves every `succeeded` job of SRC into
+DST, by default the same workspace a push takes from (add `--placement PREFIX`
+for one campaign; `--job JOB_UUID`, `--state STATE` or `--step STEP` replaces
+the implicit state, and `--step` without `--state` selects from every unowned
+state):
 
 ```console
-$ httk job transfer --kind succeeded kappa:runs default
+$ httk job pull kappa:runs
+```
+
+Push and pull are the everyday forms of `httk job transfer SRC DST`, which
+names both ends and an explicit selection (`--job`, `--state`, `--step`):
+
+```console
+$ httk job transfer --state succeeded --placement camp kappa:runs default
 ```
 
 A transfer holds the jobs on the source, copies them, adopts them at the
@@ -181,18 +220,21 @@ $ httk workspace init --name scratch local-tree:/tmp/me/httk/scratch
 
 ### Job trees travel together
 
-A child job spawned by another job travels with its parent. `--tree` moves a
-job together with its spawned descendants, with their placements kept; without
-it, a job whose descendants are present is refused. Every descendant must be
-paused or terminal, so a fetch of finished work brings a campaign back whole
-once it is done; to move a tree still in flight, pause its unfinished children
+A child job spawned by another job travels with its parent. `job push` and
+`job pull` always move a root together with its spawned descendants, with
+their placements kept; `job transfer` does so with `--tree` and without it
+refuses a job whose descendants are present. Every descendant must be paused or
+terminal, so a pull of finished work brings a campaign back whole once it is
+done. A root that finished before its children (an `any_terminal`,
+`any_succeeded` or `at_least` join) is refused and stays, never split, until
+they finish; to move a tree still in flight, pause its unfinished children
 first. A child that should leave alone is detached first, because a child may
 read its parent's files in place (see {doc}`composing_workflows`):
 
 ```console
-$ httk job transfer --kind succeeded --tree kappa:runs default
+$ httk job pull kappa:runs
 $ httk job detach CHILD
-$ httk job transfer --job CHILD default kappa:runs
+$ httk job push --job CHILD kappa:runs
 ```
 
 ## Mounted filesystem with a separate executor (`mount`)
@@ -225,7 +267,7 @@ $ httk remote configure \
 `configure` refuses unless `mount_root` is an existing directory (set
 `check_mount=no` to configure the remote before the filesystem is mounted) and
 the executor can run a cheap `true` on the remote (set `check_connectivity=no`
-to configure it anyway). The `prelude` and `httk_command` settings mean the same
+to configure it anyway). The `cli_prelude` and `httk_command` settings mean the same
 as for `ssh`.
 
 A transfer also refuses when `mount_root` does not exist. An empty, unmounted

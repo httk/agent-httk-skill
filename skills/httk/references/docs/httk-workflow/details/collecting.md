@@ -283,7 +283,10 @@ read.
 A record carries the immutable job digest and, in `runner_provenance`, the
 installed workflow the job ran: its id and the SHA-256 of its installed package
 tree, as the manager recorded them at launch (`workflow_pin` in `state.json`).
-A stored result therefore names the software that produced it.
+A stored result therefore names the software that produced it. For a job that
+`set_workflow` switched, collection resolves the provider, the collector and
+the run's `workflow_definition_uri` from that pinned installation rather than
+from the declared `workflow`.
 
 ### Damage is reported
 
@@ -308,7 +311,7 @@ partition at a time, not as one in-memory result array.
 | --- | --- |
 | `workspace`, `workspace_id` | the absolute workspace root and its identity |
 | `job_id`, `job_key` | the job UUID and the complete `tag--uuid` key |
-| `job` | the validated job definition, including its `digest`, `workflow` (the installed workflow's id) and `workflow_name` |
+| `job` | the validated job definition, including its `digest`, `workflow` (the declared installed workflow's id) and `workflow_name`; `workflow_override` (`{id, name}`) only when an operator's `set_workflow` made the job run another installation |
 | `runner_provenance` | `{"id", "tree_sha256"}` of the installed workflow the job last launched with, or `null` |
 | `state` | the kind this job stopped in: `succeeded`, `failed`, `cancelled`, or `paused` |
 | `failure` | the unified failure record — `code`, `message`, optional `details`, `retryable` — or `null` |
@@ -401,7 +404,7 @@ records = job_records(
 )
 ```
 
-`states` defaults to `("succeeded",)` and accepts only stopped-job kinds:
+`states` defaults to `("succeeded",)` and accepts only the states of stopped jobs:
 `succeeded`, `failed`, `cancelled` and `paused`; other values are refused by
 name. `placement` restricts collection to jobs at or below one placement, as
 `httk job list --placement` does.
@@ -426,6 +429,13 @@ states yields its succeeded children. A child whose directory cannot be found, a
 whose damaged `state.json` hides its children, are passed to `on_skipped` (the
 job itself is still collected, with `gaps` set). `jobs` and `placement`
 cannot be combined. `collect(..., jobs=...)` passes the selection through.
+
+`steps` (`--step STEP`) keeps only the jobs at one of these steps: the step of
+the job's current activation, or the initial step of its `job.json` before the
+first. It narrows a sweep and, with `jobs`, the reported jobs (the tree is
+still walked). A job left out for its step is not passed to `on_skipped` and
+is not counted as skipped. `collect`, `campaign_collect` and
+`collect_postprocess` take `steps` too.
 
 ## From the command line
 
@@ -471,9 +481,10 @@ Each `--raw` line is exactly `JobRecord.as_mapping()`, and
 to a file, shipped and read back by the storing process.
 
 Jobs that ran on a remote are collected the same way once home:
-`httk job transfer --job JOB REMOTE:NAME default` moves them into the local
-default workspace in their terminal state, and collect cannot tell them from
-local jobs. See {doc}`/details/workflow_cli`.
+`httk job pull REMOTE:NAME` moves every succeeded job into the local
+workspace (the enclosing one, else the default) in its terminal state, and
+`httk job transfer --job JOB REMOTE:NAME default` moves single jobs whatever
+their state; collect cannot tell them from local jobs. See {doc}`/details/workflow_cli`.
 
 ### Summary line and exit codes
 

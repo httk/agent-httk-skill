@@ -425,7 +425,10 @@ Slurm's partition and site defaults apply:
 Each signed start submits exactly one manager, with the launcher's batch
 directives plus `--parsable`, `--export=<mode>`, `--no-requeue`,
 `--input=/dev/null`, `--clusters`, the job name `httk-<handle>` and its output
-file. The export mode is the launcher setting `slurm.export`, either `NONE`
+file. The launcher's `slurm.sbatch_options` (see
+[Launchers](launchers.md#workspace-settings)) is frozen with the launcher like any other
+setting and adds its directives last; a workspace's `slurm.sbatch_options`, like
+every workspace setting, never reaches a daemon submission. The export mode is the launcher setting `slurm.export`, either `NONE`
 (the default when unset) or `NIL`; see the site's `sbatch` manual for what each
 means on that cluster. The batch script, piped to `sbatch`, writes nothing into
 the workspace. It runs the frozen `environment.prelude` under `set -e` in a
@@ -605,7 +608,10 @@ be omitted: the job then goes to the outbox root as `outbox/CLIENT_JOB_KEY`
 (the name rule above); with `--destination D` it goes to `outbox/D/<name>`. State, parent/join,
 runner-step and seal guards still apply. `set_budget` is accepted for such a
 root: the typed command carries the action `set_budget` and the field `budget`
-(the `--max-*` options of the CLI). Managers need no client keys; existing
+(the `--max-*` options of the CLI). `set_workflow` is not carried by the
+daemon protocol: the CLI refuses it for a mount-daemon remote, and a job that
+carries a `workflow_override` cannot be ejected into the exchange inbox.
+Managers need no client keys; existing
 `exchange.authorized_keys` settings are left stored but unused.
 
 An idle job that the daemon safely claims changes immediately. A held job,
@@ -647,7 +653,7 @@ that are set: `manager.workers`, `slurm.partition`, `slurm.nodes`,
 operator's own, except that `slurm.time_limit` and `slurm.time_limit_max` are
 canonical `[D-]HH:MM:SS`, with the maximum resolved to its default, the time
 limit. Every other setting stays private, including `slurm.account`,
-`slurm.reservation`, `slurm.export`, `environment.prelude`, `manager.command`,
+`slurm.reservation`, `slurm.export`, `slurm.sbatch_options`, `environment.prelude`, `manager.command`,
 `manager.launch_template`, `manager.launch_mpi`, `manager.allocation`,
 `manager.bind_cpus`, `manager.confine` and every `confine.*` setting: they can
 reveal site-internal shell setup, launch commands and accounting. The published

@@ -3,7 +3,7 @@
 The complete path: create a project, set up workspaces (local and remote),
 instantiate a workflow over inputs and parameters, send jobs to an HPC system,
 monitor, fetch results home, collect, and analyse. `httk workspace …` and
-`httk job …` (which owns `job transfer`) are top-level command groups; workflow
+`httk job …` (which owns `job push`/`job pull`/`job transfer`) are top-level command groups; workflow
 execution remains under `httk workflow …`. The full command tree is in the docs snapshot
 (`docs/httk-workflow/workflow_cli.md`); managers in `taskmanager.md`.
 
@@ -127,6 +127,9 @@ $ httk workspace settings set --key manager.launch --value cluster runs
 $ httk workspace settings set --key slurm.partition --value batch runs
 ```
 
+`settings set` takes repeated `--key K --value V` pairs in one write; arbitrary
+sbatch options go in `slurm.sbatch_options` (a string of long options).
+
 ```console
 $ httk remote add --template ssh kappa
 $ httk remote configure \
@@ -156,7 +159,8 @@ version it found. Software the runners need at execution time (`module load
 VASP`, a `source activate`) belongs in a **prelude**, not in `vasp.command`:
 `environment.prelude` applies workspace-wide, `workspace workflow-prelude set
 --workflow ID --value "…" WS` is per workflow (both run under `set -e`); see
-`taskmanager.md`.
+`taskmanager.md`. A remote's `cli_prelude` adapter setting is different: it runs
+before each httk command the CLI runs on the remote, not at job start.
 
 **Pitfall:** the adapters read JSON over the remote's stdout. A login banner or
 shell greeting printed on stdout on the remote breaks transfers and remote
@@ -166,14 +170,15 @@ commands — put greetings on stderr or behind a non-interactive-shell test.
 
 ```console
 $ httk workflow install --workspace kappa:runs 'git+https://github.com/httk/workflows-vasp#vasp-relax'
-$ httk job transfer --job silicon--0c4f default kappa:runs
+$ httk job push default kappa:runs        # all `ready` jobs
 $ httk workflow run --workspace kappa:runs --workers 8
 $ httk workspace status kappa:runs
 ```
 
-Workflows never travel with jobs: install the workflow in the destination
-workspace too (a transferred job whose workflow is missing waits there, and the
-transfer warns).
+A transfer to an ordinary (ssh/local) destination carries the workflows the
+moved jobs need and installs them there under the same ids (`--no-workflows`
+opts out). Through the workspace daemon it does not: the operator installs
+workflows there, and a job whose workflow is missing waits (the transfer warns).
 
 ### Task sizing and worker resources
 
@@ -220,8 +225,11 @@ and `mem` unless given; the local adapter injects host `procs`/`mem`.
 `--count N` starts N managers (auto-detected capacities split, explicit pairs
 per manager); each manager owns its allotment.
 
-- `job transfer --job JOB [--tree] SRC DST` is the one verb for moving jobs
-  either direction. It **holds** each job on SRC (in
+- `job push [SRC] DST` (all `ready` jobs; omitted SRC = enclosing/project/
+  per-user default workspace) and `job pull SRC [DST]` (all `succeeded` jobs)
+  are the everyday verbs; whole trees move, and `--job`/`--state`/`--step`
+  narrow the selection. `job transfer [--job JOB] [--state S] [--step STEP]
+  [--tree] SRC DST` is the general form for moving jobs either direction. It **holds** each job on SRC (in
   `.httk-workspace/transfers/outgoing/<transfer id>/`, out of both state
   trees), **copies** the bundle to DST, **adopts** it there into the state and
   priority it left, and only then **releases** the hold. Delivery is at least
@@ -249,6 +257,10 @@ per manager); each manager owns its allotment.
   remedy ladder retrying known VASP failure modes. For `EDDAV`/`EDDDAV` ZHEGV
   failures on CPU MPI, the bounded ladder sets `NPAR=1`, then adds two bands
   when `NBANDS` is explicit, then gives up; it does not reduce the allocation.
+  The launch wrapper rounds `NBANDS` to the band-group count by default
+  (`vasp.nbands_rounding=off` opts out); a `incar_tags` value of JSON null
+  (Bash `httk_vasp_unset_tag`) removes the tag and our derived value (e.g.
+  `NBANDS`/`MAGMOM`) so VASP's default applies.
 - Before submitting a manager, `httk workflow precheck --workspace WS` reports readiness
   read-only: declared-environment resolution, the workflow and its calls
   installed and built, per-job claimability against live managers, missing
@@ -261,7 +273,9 @@ per manager); each manager owns its allotment.
   authoring a runner, `job debug --workspace WS JOB` drives one job in the
   foreground printing transitions.
 - Control: `job request ACTION --reason TEXT JOB…` with `pause`, `continue`,
-  `restart`, `cancel`, `override_step`, `set_budget`, `set_priority`, `detach`,
+  `restart`, `cancel`, `override_step`, `set_budget`, `set_workflow --workflow
+  NAME@REF --state ready` (same declared workflow, another installed version;
+  not via the daemon), `set_priority`, `detach`,
   `eject`, `delete`, `seal`, `unseal`; the job's owner applies it once at its
   next boundary, and a manager claims an unowned job to apply it (`--wait` for
   `pause`). `job delete|seal|unseal|detach` apply at once to an unowned job,
@@ -272,19 +286,21 @@ per manager); each manager owns its allotment.
     `dependency_failure` parent returns it to waiting on its children (no
     attempt, no budget); on any other failed or paused job it reruns the step
     as a new attempt. `restart` always reruns the step as a new attempt (a
-    parent spawns fresh children). `override_step --step STEP` activates at a
+    parent spawns fresh children). Revivals restore the declared retry allowance
+    automatically (`--keep-budget` opts out). `override_step --step STEP` activates at a
     named step. Cancelled jobs cannot be revived.
   - Fix-the-child flow: `job why PARENT`; fix the child; `job request continue
     --reason TEXT CHILD` (no `--force` while the parent still waits on it);
     watch `job show`/`job log`; `job request continue --reason TEXT PARENT`.
     `job request continue --tree --reason TEXT PARENT` resumes failed
     descendants deepest first, then the parent (local workspaces only).
-  - Raise a retry budget after the fact: `job request set_budget
+  - Go beyond the declared retry limits (a plain revival already restores them): `job request set_budget
     --max-attempts-per-activation N|unlimited --max-total-attempts N|unlimited
     --max-activations N|unlimited --reason TEXT JOB` (at least one option). The
     override lives in `state.json`; `job.json` is untouched and `job
-    why`/`job show` print `used/limit (declared N)`. Typical: `retry_exhausted`
-    -> `set_budget --max-attempts-per-activation 3` -> `restart`. See
+    why`/`job show` print `used/limit (declared N)`. Typical: the declared
+    limit itself is too low -> `set_budget --max-attempts-per-activation 10` ->
+    `restart` (a revival never lowers a higher limit). See
     `docs/httk-workflow/restarting_jobs.md`.
 - Recovery: a job changes hands only when its owner is **proven dead** — there
   are no leases and no time-based takeover. The proof is the owner's process
@@ -304,12 +320,13 @@ per manager); each manager owns its allotment.
 ## 6. Fetch results home and collect
 
 ```console
-$ httk job transfer --job JOB_UUID [--job JOB_UUID …] kappa:runs default
+$ httk job pull kappa:runs                # all `succeeded` jobs
 $ httk collect
 ```
 
-The reverse transfer names each job by its canonical UUID (a remote SRC
-requires them; `--tree` brings a root home with its finished descendants). It
+`job pull` brings every succeeded root home with its finished descendants (to
+fetch particular jobs use `job transfer --job JOB_UUID … kappa:runs default`;
+a remote SRC requires canonical UUIDs). It
 holds the jobs on the remote, copies and adopts them locally, and only then
 releases the remote hold. Transfers take no file locks. Fetched jobs are then
 ordinary local jobs. `collect` prints one summary per

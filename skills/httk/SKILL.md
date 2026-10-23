@@ -131,12 +131,15 @@ quickstart `workspace/jobs/succeeded/silicon*` names the finished job. Change a
 job's course with `httk job request ACTION --reason TEXT JOB`, `ACTION` being
 `pause`, `continue`, `restart`, `override_step --step STEP`, `set_budget`
 (`--max-attempts-per-activation|--max-total-attempts|--max-activations N|unlimited`
-to raise a retry budget) or `cancel`. A failed or paused job keeps its files
+to go beyond the declared retry limits), `set_workflow --workflow NAME@REF
+--state ready` (switch jobs to another installed version of the same declared
+workflow; not via the daemon) or `cancel`. A failed or paused job keeps its files
 (edit all but `job.json` first; `job why JOB` names the remedy): `continue`
 puts a `dependency_failure` parent back to waiting on its children (no new
 attempt, no budget used) and otherwise reruns the step as a new attempt;
 `restart` always reruns the step as a new attempt (a fresh set of children for
-a parent); a revived step reruns from its top, so edit the file it reads from.
+a parent); a revived step reruns from its top, so edit the file it reads from. Revivals
+restore the declared retry allowance automatically (`--keep-budget` opts out).
 See `references/docs/httk-workflow/restarting_jobs.md`.
 Remove terminal or paused jobs with `httk job delete JOB…` (`--force` skips only
 the confirmation; a succeeded job needs `httk job unseal` first). Never `rm -r` a
@@ -151,7 +154,7 @@ See `references/workflows.md`.
 
 For a cluster campaign, configure the workspace's manager launcher first; use
 a remote only when transport to another machine is needed. For the full
-remote/HPC path (`kappa:runs` colon workspaces, `job transfer`, `campaign`
+remote/HPC path (`kappa:runs` colon workspaces, `job push`/`job pull`/`job transfer`, `campaign`
 partitioning, Python `new_jobs` streaming, `collect --into` a store), follow
 `references/campaign.md`. For the confined `mount-daemon` workflow, including
 identity keys and exchange-directory job eject/adopt, see

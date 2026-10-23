@@ -82,7 +82,7 @@ WORKSPACE/
 │   ├── requests/<job-uuid>.<request-uuid>.json
 │   ├── tmp/<owner-id>.<purpose>.<token>/   owner scratch
 │   ├── tmp/trash.<token>                   an entry being removed
-│   ├── tmp/push.<hex>/                     a remote install's pushed package
+│   ├── tmp/push.<hex>/                     a remote install's or transfer's pushed copy
 │   ├── quarantine/<epoch>-<token>/         {entry, reason.json}
 │   ├── exchange-jobs/<exchange-name>/      the exchange index
 │   ├── transfers/outgoing/<transfer-id>/   held bundles
@@ -663,8 +663,8 @@ read. The first reconcile of a job (its first activation) pins it in
 `state.json` (format `httk-workflow-state`, version 1) is written only by the
 job's owner, through `write_file`, and is absent until an owner first writes it
 (a published child and an adopted exchange job carry one without an
-activation). It is strict except that an absent `job_digest` or `budget_override` reads as
-`null`, and at most 100 MiB.
+activation). It is strict except that an absent `job_digest`, `budget_override` or
+`workflow_override` reads as `null`, and at most 100 MiB.
 
 | Member | Value | Meaning |
 | --- | --- | --- |
@@ -694,6 +694,7 @@ activation). It is strict except that an absent `job_digest` or `budget_override
 | `history_tail` | list, at most 32 | `{at, event, ...}` entries: `released`, `request_applied`, `request_dropped`, `join_decided`, `paused`, `unsealed`. |
 | `job_digest` | 64 hex digits or `null` | The pinned job digest. |
 | `budget_override` | object or `null` | Optional. Set by `set_budget`: keys are a non-empty subset of `maximum_attempts_per_activation`, `maximum_total_attempts` and `maximum_activations`, each an integer of at least 1 or `null` (that limit lifted). Absent keys fall back to `job.json`. The effective policy is the `retry_policy` of `job.json` with these keys replaced. |
+| `workflow_override` | `{id, name}` or `null` | Optional. Set by `set_workflow`: the installed workflow the job runs instead of `job.json`'s `workflow` (both members nonempty strings). Every run path (precheck, the manager's assessment and launch, the attempt context) resolves the **effective** workflow, this override or else `job.json`'s; collection of a job with an override uses `workflow_pin`, the installation that produced the outputs. A damaged `state.json` is not salvaged for it. |
 
 An unowned job's `state.json` is stable, because nobody owns the job; readers
 read it non-blocking and bounded and tell an absent file from a damaged one.
@@ -854,7 +855,11 @@ binds the inode opened when the sandbox is built, so the `state.json` replaced b
 read-only to the job. Installed workflows, the parent and the children are
 visible read-only through the workspace bind. The attempt context
 (`HTTK_WORKFLOW_CONTEXT`) and the `HTTK_WORKFLOW_*` variables are described in
-{doc}`/runtime_helpers`.
+{doc}`/runtime_helpers`. The context (format `httk-workflow-attempt-context`,
+version 3) carries `workflow: {id, name}`, the installation the manager
+launched: the job's effective workflow. A child the attempt spawns names that
+workflow in its `job.json`, and `a.call` resolves aliases in that
+installation's `[workflow.calls]`.
 
 ### Confined launches
 
@@ -1065,8 +1070,9 @@ wait so the wait can be reopened (`continue`): with `dependency_failure`
 because the condition became impossible without an `on_impossible` advance, or
 because a child is unresolvable; and with `budget_exhausted` because a
 satisfied join, or an `on_impossible` rescue, would advance past the effective
-`maximum_activations`. After `set_budget` raises that limit, `continue`
-re-decides the join and advances. A successful advance and a join naming an
+`maximum_activations`. A `continue` restores the declared allowance (with
+`keep_budget`, after `set_budget` raises that limit), re-decides the join and
+advances. A successful advance and a join naming an
 invalid step clear it.
 
 **The revival guard:** `continue`, `restart` or `override_step` of a child is
@@ -1106,13 +1112,15 @@ version 3, strict, at most 64 KiB:
 | `format`, `format_version` | yes | `"httk-workflow-request"`, `3` |
 | `request_id`, `job_id` | yes | UUIDs; the file name MUST be `<job_id>.<request_id>.json`. |
 | `placement` | yes | The job's placement, a hint for locating it. |
-| `action` | yes | `cancel`, `pause`, `continue`, `restart`, `override_step`, `set_priority`, `set_budget`, `detach`, `eject`, `delete`, `seal` or `unseal`. |
+| `action` | yes | `cancel`, `pause`, `continue`, `restart`, `override_step`, `set_priority`, `set_budget`, `set_workflow`, `detach`, `eject`, `delete`, `seal` or `unseal`. |
 | `operator`, `reason`, `created_at` | yes | Attribution and ordering. |
 | `priority` | `set_priority` only, required | 0–999. |
 | `budget` | `set_budget` only, required | An object with the shape of `budget_override`: a non-empty subset of `maximum_attempts_per_activation`, `maximum_total_attempts` and `maximum_activations`, each an integer of at least 1 or `null` (lifted). |
+| `workflow` | `set_workflow` only, required | An installed workflow id (`local:`, `adhoc:` or `git+`), never a short name. |
 | `step` | `override_step` only, required | The step to restart at. |
 | `destination` | `eject` only, required | An absolute directory, or a missing name in one. |
 | `force` | `continue`, `restart`, `override_step`; only `true` | Accept the revival hazard. |
+| `keep_budget` | `continue`, `restart`, `override_step`; only `true` | Keep the effective retry limits: do not restore the declared allowance (§Application). |
 | `tree` | `eject` only; only `true` | Eject the job's descendants with it. |
 | `operator_key`, `signature` | both or neither | An *httk* identity signature, for attribution. An unsigned request applies; one whose signature does not verify is malformed. |
 
@@ -1140,16 +1148,61 @@ at and the request, giving the new document and one effect:
 | --- | --- | --- |
 | `cancel` | not terminal | `Release(cancelled)` |
 | `pause` | not terminal, not `paused`, not `waiting` | `Release(paused)` |
-| `continue` | `failed` or `paused`, revival guard | `Release(waiting)` with the retained `join` when the job failed at its wait, no new attempt; else `Release(ready)`: failure cleared, next attempt `manual_continue` if the last one started; `failed`/`retry_exhausted` past an effective attempt budget, `budget_exhausted` past `maximum_activations` |
-| `restart` | `failed` or `paused`, revival guard | `Release(ready)`: failure cleared, `join` dropped, next attempt `manual_continue` if the last one started; `failed`/`retry_exhausted` past an effective attempt budget, `budget_exhausted` past `maximum_activations` |
-| `override_step` | `failed` or `paused`, revival guard | `Release(ready)` with a new activation of `step`, dropping a retained `join`; `failed`/`retry_exhausted` or `budget_exhausted` past an effective budget, as `restart` |
+| `continue` | `failed` or `paused`, revival guard | The declared allowance restored (below); `Release(waiting)` with the retained `join` when the job failed at its wait, no new attempt; else `Release(ready)`: failure cleared, next attempt `manual_continue` if the last one started; `failed`/`retry_exhausted` past an effective attempt budget, `budget_exhausted` past `maximum_activations` (reachable only with `keep_budget`) |
+| `restart` | `failed` or `paused`, revival guard | The declared allowance restored; `Release(ready)`: failure cleared, `join` dropped, next attempt `manual_continue` if the last one started; `failed`/`retry_exhausted` past an effective attempt budget, `budget_exhausted` past `maximum_activations` (only with `keep_budget`) |
+| `override_step` | `failed` or `paused`, revival guard | The declared allowance restored; `Release(ready)` with a new activation of `step`, dropping a retained `join`; `failed`/`retry_exhausted` or `budget_exhausted` past an effective budget, as `restart` |
 | `set_priority` | always | `Release(<current state>, priority)` |
 | `set_budget` | not `succeeded` or `cancelled` | `Release(<current state>, priority)` with `budget` merged into `budget_override` (a later value for a key wins); no new attempt, no revival guard |
+| `set_workflow` | not `succeeded` or `cancelled`; the workflow check (below) | `Release(<current state>, priority)` with `workflow_override: {id, name}` (the name from the installation with exactly that id) and `runner_steps: null`; the `request_applied` entry carries `workflow: {from, to}`; no new attempt, no `force` |
 | `detach` | the job has a parent link not yet detached | `Release(<current state>)` with `detached: {at, operator}` |
 | `eject` | the destination is usable | `Eject(destination, tree)` (§Eject) |
 | `delete` | terminal or `paused`; a succeeded job only after `unseal`; no non-terminal parent waits on it | `Discard`: the job directory, its request files and (for an exchange root) its index entry are removed |
 | `seal` | `succeeded` without a seal digest | `Seal`: seal the payload, record `seal`, release back |
 | `unseal` | `succeeded`, not yet released | `Unseal`: record `seal: {released: true, ...}`, remove `.httk-job/seal.json`, release back |
+
+**Restoring the declared allowance:** unless it carries `keep_budget`, a
+`continue`, `restart` or `override_step` first merges into `budget_override`,
+for each limit `L` whose `job.json` value `D` is not `null`, `L = max(E, U + D)`
+where `E` is the effective limit (left alone when `null`, i.e. lifted) and `U`
+counts the units already started, read from `state.json` before the revival's
+own attempt or activation:
+
+- `maximum_attempts_per_activation`: `0` for `override_step` and for a
+  `continue` that reopens a wait; else `attempt.ordinal`, less 1 when that
+  attempt's `started_at` is `null`, and `0` without an attempt;
+- `maximum_total_attempts`: `counters.attempts_total`, less 1 when the current
+  attempt is unstarted;
+- `maximum_activations`: `counters.activations`, less 1 when the current
+  activation has no started attempt (no attempt, or an unstarted one with
+  ordinal 1), at least `0`.
+
+The two "less 1" rules do not apply to `override_step`: it abandons the
+unstarted attempt or activation while the counters keep its slot, so its `U`
+is `counters.attempts_total` and `counters.activations`.
+
+A limit whose `D` is `null` is restored to unlimited by removing its key from
+`budget_override` (`null` when no key remains). Only keys that change are
+written, and the `request_applied` history entry then carries them as `budget`
+(`null` for a restored unlimited limit). Automatic retries never raise a limit.
+
+**The workflow check of `set_workflow`:** the owner looks the id up in the job's
+workspace by exact id and refuses it, naming the rule, unless the installation
+(2) carries the declaration `$id` of the job's stored `declarations.workflow`
+(the same short name when that has none); (3) declares the inputs of
+`declared.inputs` by name, destination and hook-consumed flag; (4) declares the
+output names of `declarations.workflow.outputs`; (5) declares no parameter the
+job has no value for (unless `declared.parameters` lists it too), drops none of
+`declared.parameters`, and accepts every parameter value's declared type;
+(6) declares the environment names and types of `environment.declared`; and
+(7) declares the job's current step (`activation.step`, else `initial_step`),
+or with a `join` its `next_step` and `on_impossible` step. A job storing
+`declarations.workflow` has empty snapshots where they are absent (`job new`
+always writes `declared.inputs`); for a job storing none (a spawned child) the
+job's current installation stands in for (2)-(6), and without it the request
+is refused. A job of a language realization is refused. A switch to the id
+`job.json` names clears `workflow_override`; a dropped request's
+`request_dropped` entry carries `workflow: {from, to}` too. The posting CLI runs
+the same check first.
 
 A request that does not apply is a `Drop`: its id is recorded, a
 `request_dropped` entry with the reason goes to `history_tail`, and the job is
@@ -1175,7 +1228,9 @@ from `applied_requests` at the next write.
 
 A job references a workflow by id, and that workflow, and the transitive
 closure of its `[workflow.calls]`, must be installed before a manager starts
-the job. There is no automatic transfer of workflows with jobs.
+the job. A job transfer installs the workflows its jobs need in the
+destination when it lacks them, as copies of the source's store entries (see
+**Install a copy** below); the exchange never does.
 
 ```text
 workflows/<slug>--<h16>/
@@ -1220,9 +1275,20 @@ platform_tag, built_at}`.
   leaves only `.old.<t>`, which lookups use as the installation and which `gc`
   moves back into place; `gc` removes an `.old.<t>` tree only once the
   installation exists.
+- **Install a copy** (the receiving side of a transfer, hidden
+  `workflow install --workspace WS --from-store DIR…`) takes another
+  workspace's store entry: only `id`, `reference` and `calls` from its
+  `install.json` (a known id prefix, a git id pinned to a commit, `calls`
+  naming the manifest's aliases), everything else derived again from the copied
+  `package/`, whose tree digest must be the recorded `tree_sha256`. `source`
+  records the transfer (`transfer from SRC`) and `installed_at` the time of the
+  copy. It never replaces: an installation of the id already here (an
+  `.old.<t>` only copy too) is kept, and the final rename onto
+  `<slug>--<h16>` fails on an occupied name, so of two concurrent copies the
+  first wins and the other reports the winner as present or as another tree.
 - **Uninstall** and **build** work in a scratch and move the result.
-- **No races are handled, by decision.** Users do not change workflows that
-  jobs are using, and two operators installing one id at once is not
+- **No other races are handled, by decision.** Users do not change workflows
+  that jobs are using, and two operators installing one id at once is not
   supported.
 - **At launch** the manager records `workflow_pin: {id, tree_sha256}` in
   `state.json`. Nothing enforces that the installed digest matches the one
@@ -1280,9 +1346,12 @@ one sequence, run by an owner that has claimed the root in any unowned state:
    `state.json`, confirmed from the child's side (its `job.json` names the
    parent and it is not detached), located with settling. Each MUST be
    terminal or paused; they are claimed in sorted UUID order. Without `tree`, a
-   root with descendants present is refused. On any refusal every claimed job,
-   the root included, is given back. `--wait` first posts `pause` requests and
-   waits until the jobs are quiescent.
+   root with descendants present is refused. Into an exchange's `inbox` (a
+   directory named `inbox` beside an `exchange.json`), a member whose
+   `state.json` carries `workflow_override` is refused: the untrusted adoption
+   there rebuilds `state.json`, which would drop it. On any refusal every
+   claimed job, the root included, is given back. `--wait` first posts `pause`
+   requests and waits until the jobs are quiescent.
 3. **Bundle.** In a fresh `eject` scratch, write `bundle.json` first
    (recording each member's `from` state and priority), then append `ejected`
    to each member that already has a run log (a fresh job gets none and remains
@@ -1508,7 +1577,9 @@ hour.
 Authenticated job commands use daemon protocol 5, not the internal request
 format. The confined daemon verifies authorized keys, workspace/enrollment,
 freshness and active configuration. `job_request` names one internal UUID or
-unique UUID prefix and one of all ten internal request actions. It refuses
+unique UUID prefix and one of all ten internal request actions, with the
+optional member `keep_budget` (only `true`, only on `continue`, `restart` and
+`override_step`) copied into the internal request. It refuses
 force, path/glob/tag selectors and destinations outside the exchange outbox;
 eject includes the whole tree. All existing operation guards apply.
 
@@ -1606,7 +1677,7 @@ primitives, so a killed collection leaves the workspace consistent.
 | `manager_logs` | `logs/managers/<owner-id>.log` of owners without `owner.json`, older than `trash_days`. |
 | `launcher_logs` | `logs/launchers/<launch id>.*` older than `trash_days` when no owner record carries that launch id, and `exchange/launchers/<handle>.log` older than `trash_days`. |
 | `owner_tombstones` | A tombstone older than `owner_tombstone_days` whose owner holds nothing else. |
-| `tmp_entries` | Write temporaries older than a day in `requests/` and `owners/*/`, `tmp/trash.<t>` entries older than a day, and `workflows/*.old.<t>` trees older than a day once their installation exists (an only copy is moved back instead). |
+| `tmp_entries` | Write temporaries older than a day in `requests/` and `owners/*/`, `tmp/trash.<t>` entries and `tmp/push.<hex>/` copies older than a day, and `workflows/*.old.<t>` trees older than a day once their installation exists (an only copy is moved back instead). |
 
 There is no age-based collection of scratch, held bundles or quarantine.
 

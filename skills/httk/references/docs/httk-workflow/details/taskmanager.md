@@ -65,8 +65,8 @@ live in `.httk-workspace/format.json`:
 
 ```console
 httk workspace policy show WORKSPACE
-httk workspace policy set --key visibility_deadline_seconds --value 30 WORKSPACE
-httk workspace policy set --key retention.attempt_control_days --value 14 WORKSPACE
+httk workspace policy set --key visibility_deadline_seconds --value 30 \
+  --key retention.attempt_control_days --value 14 WORKSPACE
 httk workspace policy unset --key retention.trash_days WORKSPACE
 ```
 
@@ -175,10 +175,13 @@ and builds a `[workflow.build]` package for this platform (unless
 platform, and `httk workflow uninstall --workspace WORKSPACE SELECTOR` removes
 one; `--check` warns about unfinished jobs that still use it.
 
-Workflows never travel with jobs. A job transferred, ejected or adopted into a
-workspace that lacks its workflow stays `ready` and unclaimed until the workflow
-is installed there; `job adopt` and `job transfer` warn about it, and `job why`
-and `workflow precheck` name it. Do not reinstall a workflow that running jobs
+`job transfer` (and `job push`/`job pull`) installs the workflows its jobs need
+in the destination when it lacks them and the source has them, never replacing
+an installation (see {doc}`remotes`). Otherwise a job ejected, adopted, or
+transferred with `--no-workflows` into a workspace that lacks its workflow
+stays `ready` and unclaimed until the workflow is installed there; `job adopt`
+and `job transfer` warn about it, and `job why` and `workflow precheck` name
+it. Do not reinstall a workflow that running jobs
 use: the installed digest is recorded at launch (`workflow_pin`), not enforced.
 
 ## Submitting jobs
@@ -758,14 +761,16 @@ see {doc}`monitor`.
 
 For large workspaces, list jobs a page at a time with
 `job list --json --limit N`, passing its `next_after` value back as `--after`.
-`--kind` selects states, `--placement` prunes to a placement prefix, and
-`--tag-contains` narrows the stream before state is read.
+`--state` selects states, `--placement` prunes to a placement prefix,
+`--tag-contains` narrows the stream before state is read, and `--step` keeps
+the jobs at a step (the current activation's, or the initial step before the
+first activation).
 
 These commands find a job by listing its placement in each state and read its
 `job.json`, `state.json` and run logs; none writes anything:
 
 ```console
-httk job list --workspace WORKSPACE --kind ready --placement project-a
+httk job list --workspace WORKSPACE --state ready --placement project-a
 httk job show --workspace WORKSPACE JOB
 httk job log --workspace WORKSPACE --limit 20 JOB
 httk job why --workspace WORKSPACE JOB
@@ -778,7 +783,10 @@ from the current working directory. An ambiguous prefix is refused, listing the
 jobs it matched. A job's directory name changes at every move, so script with
 UUIDs or keys, never with paths.
 
-`job show` reports the state and phase, placement, priority, workflow, step,
+`job show` reports the state and phase, placement, priority, workflow (after a
+`set_workflow`, the declared one and the one the job runs:
+`demo (local:demo) -> demo-next (local:demo-next) by set_workflow`; the JSON
+report carries `workflow_override`), step,
 the activation and attempt counters against the effective retry budgets (a
 limit raised by `set_budget` reads `1/3 (declared 1)`), the last failure, a waiting job's children, and the payload, workdir and attempt paths.
 `job log` prints the owner's run log (`claimed`, `attempt_started`, `outcome`,
@@ -830,17 +838,19 @@ httk job request pause --workspace WORKSPACE --reason "inspection" JOB
 httk job request override_step --step relax --reason "redo relax" JOB
 httk job request set_priority --priority 100 --reason "urgent" JOB
 httk job request set_budget --max-attempts-per-activation 3 --reason "flaky node" JOB
+httk job request set_workflow --workflow relax@v1.3.0 --state ready --reason "bump"
 ```
 
 | Action | Applies to | Effect |
 | --- | --- | --- |
 | `cancel` | any non-terminal job | `cancelled`; a running attempt is stopped first |
 | `pause` | a job not terminal, paused or waiting | `paused`, at the next boundary when running |
-| `continue` | a failed or paused job | `waiting` with the retained join when the job failed at its wait on children (no new attempt, no attempt budget counted; a wait that failed with `budget_exhausted` needs `set_budget --max-activations` first); otherwise `ready`, the failure cleared and a new attempt counted against the budget |
-| `restart` | a failed or paused job | `ready`; the failure is cleared, a retained join is dropped, and a new attempt is counted against the budget |
-| `override_step` | a failed or paused job | `ready` with a new activation of `--step`; a retained join is dropped |
+| `continue` | a failed or paused job | `waiting` with the retained join when the job failed at its wait on children (no new attempt); otherwise `ready`, the failure cleared and a new attempt; the declared retry allowance is restored first unless `--keep-budget` |
+| `restart` | a failed or paused job | `ready`; the failure is cleared, a retained join is dropped, and a new attempt is recorded; the declared retry allowance is restored first unless `--keep-budget` |
+| `override_step` | a failed or paused job | `ready` with a new activation of `--step`; a retained join is dropped; the declared retry allowance is restored first unless `--keep-budget` |
 | `set_priority` | any job | the new `--priority` (0 is highest) |
 | `set_budget` | any job not succeeded or cancelled | the retry budgets raised or lifted per `--max-*` option; merged into `state.json` `budget_override`, state and priority unchanged; a limit set below what the job has used ends it at the next budget check |
+| `set_workflow` | any job not succeeded or cancelled whose workflow `--workflow` may replace | the job runs the installed `--workflow` from its next attempt; recorded as `state.json` `workflow_override`, `runner_steps` cleared, state and priority unchanged; refused naming the failed compatibility rule (see {doc}`/restarting_jobs`) |
 | `detach` | a spawned job | independent of its parent, permanently |
 | `eject` | a quiescent job | moved out as a bundle to `--destination` |
 | `delete` | a terminal or paused job; a succeeded one only after `unseal`; no waiting parent | removed |
@@ -860,9 +870,13 @@ descendants, deepest first, before the parent itself; see
 
 The retry budgets that bind a revival, a retry and an `advance` are the
 effective ones: the `retry_policy` limits in `job.json` with the `budget_override`
-that `set_budget` wrote into `state.json`. `job.json` is never edited. A job that
-failed for lack of budget is revived by `set_budget`, then `restart` or
-`continue`; see {doc}`/restarting_jobs`.
+that `set_budget` wrote into `state.json`. `job.json` is never edited. Each
+revival (`continue`, `restart`, `override_step`) first raises that override so
+every declared limit again allows its declared number of units from that point
+(a declared-unlimited limit is restored to unlimited), and records the raised
+limits in history; `--keep-budget` keeps the limits as they are, so a job that
+failed for lack of budget then needs `set_budget` first. Automatic retries never
+raise a limit; see {doc}`/restarting_jobs`.
 
 `job request` exits `0` once the files are posted, and warns when no live
 manager serves the job. `--wait` (only for `pause`) waits until each job was

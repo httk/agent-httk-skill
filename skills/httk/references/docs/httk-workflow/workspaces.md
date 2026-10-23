@@ -74,8 +74,9 @@ httk workflow install --workspace default 'git+https://github.com/httk/workflows
 httk workspace workflows default
 ```
 
-`job new --install` installs a missing workflow on the fly. Workflows never
-travel with jobs: install them in every workspace that runs those jobs.
+`job new --install` installs a missing workflow on the fly. A job transfer
+(`job push`, `job pull`, `job transfer`) installs the workflows its jobs need
+in the destination when it lacks them (see {doc}`details/remotes`).
 
 ## Environment preludes
 
@@ -105,11 +106,13 @@ directives it should use:
 ```console
 httk launcher add --template slurm --global cluster
 httk launcher check cluster
-httk workspace settings set --key manager.launch --value cluster default
-httk workspace settings set --key slurm.partition --value batch default
-httk workspace settings set --key slurm.time_limit --value 02:00:00 default
+httk workspace settings set --key manager.launch --value cluster \
+  --key slurm.partition --value batch --key slurm.time_limit --value 02:00:00 default
 httk workflow run --count 4 --workspace default
 ```
+
+`--key` and `--value` repeat in pairs, the i-th `--key` taking the i-th
+`--value`; every pair is validated before any is stored, in one write.
 
 `httk workflow run --count 4` now submits four managers through Slurm and
 prints their scheduler job ids. `--inline` runs one manager in the current
@@ -131,12 +134,15 @@ does not schedule anything; the destination workspace's launcher does that.
 ```console
 httk remote add --template ssh kappa
 httk remote configure --set host=login.example.org --set username=me kappa
-httk remote configure --set prelude='module load Python/3.13' kappa
+httk remote configure --set cli_prelude='module load Python/3.13' kappa
 httk remote check kappa
 ```
 
-`ssh` runs commands in a non-interactive shell, so the remote's `prelude`
-setting is where `httk` is put on `PATH` for those commands. A workspace on the
+`ssh` runs commands in a non-interactive shell, so the remote's `cli_prelude`
+setting is where `httk` is put on `PATH` for those commands. It runs before
+each `httk` command the CLI runs on the remote, not at job start: jobs get
+their environment from `environment.prelude` and the per-workflow prelude
+(see [Environment preludes](#environment-preludes)). A workspace on the
 remote is created and addressed by writing the remote name before it:
 
 ```console
@@ -146,9 +152,13 @@ httk workspace status kappa:runs
 httk workflow run --workspace kappa:runs --count 4
 ```
 
-`NAME:WORKSPACE` is a binding, not a path. Jobs are created locally and moved
-with `httk job transfer`, after `httk workflow install --workspace kappa:runs …`
-installed their workflow there; see {doc}`running`. Besides `ssh`, the packaged
+`NAME:WORKSPACE` is a binding, not a path. Jobs are created locally, pushed
+with `httk job push kappa:runs` (every job waiting to start) after
+`httk workflow install --workspace kappa:runs …` installed their workflow
+there, and the finished ones brought back with `httk job pull kappa:runs`
+(every succeeded job); the end left out is the workspace the command runs in,
+else the default workspace. `httk job transfer SRC DST` is the general form;
+see {doc}`running`. Besides `ssh`, the packaged
 templates are `local` (a second tree on this machine), `mount` (files over a
 shared mount, commands through a separate executor) and `mount-daemon` (files
 as the only channel, through an exchange directory: the workspace's managers serve it, and the confined broker only starts, queries and cancels managers).

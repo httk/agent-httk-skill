@@ -162,12 +162,17 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   seal|unseal` (core-owned), `httk seal verify`. A job seal lives
   inside the job directory at `<payload>/.httk-job/seal.json`, so it travels
   wherever the job directory goes (transfer, or `job eject`/`job adopt`).
-- `job transfer --job JOB [--tree] SRC DST` moves jobs between workspaces
-  (hold, copy, adopt, release; `--resume`, `transfer status`).
+- `job push [SRC] DST` (all `ready` jobs) and `job pull SRC [DST]` (all
+  `succeeded` jobs) are the everyday transfer verbs; `job transfer [--job JOB]
+  [--state S] [--step STEP] [--tree] SRC DST` is the general form between
+  workspaces (hold, copy, adopt, release; `--resume`, `--release`, `--hold`,
+  `transfer status`).
   `job eject [--tree] [--wait] [--hold] JOB DEST` / `job adopt [--move] BUNDLE`
   move a job (with `--tree`, its descendants, all paused or terminal) out of a
   workspace to a plain bundle directory, and into any workspace, without either
-  side needing to be registered. Workflows never travel with jobs.
+  side needing to be registered. Transfers to an ordinary (ssh/local)
+  destination carry the needed workflows and install them there under the same
+  ids (`--no-workflows` opts out; never via the workspace daemon).
 
 ## httk-analyse (`httk.analyse`) — analysis
 
