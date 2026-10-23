@@ -53,6 +53,30 @@ The manager exports each scalar setting into the attempt environment under its
 environment variable is a deployment override and wins over the workspace
 setting; a job's own parameter of the same name wins over both.
 
+`httk workspace settings show` marks each setting by who reads it:
+*recognized* (by *httk-workflow*, an installed code-support package, or a
+workflow installed in the workspace whose manifest declares the key; see
+{doc}`details/workflow_packages`), *unrecognized* (in a namespace
+*httk-workflow* owns, such as `slurm.`, but read by nothing, so it has no
+effect; an unknown `confine.` key even stops managers from starting), or
+*undeclared* (nothing installed declares reading it, though a workflow may
+still read it without declaring it, or a future workflow may):
+
+```console
+$ httk workspace settings show default
+foo.bar	1	undeclared: nothing installed declares reading it; a workflow may still read it without declaring it, or a future workflow may
+mywf.threshold	0.5	recognized by workflow mywf
+slurm.account	"proj"	recognized by httk-workflow
+slurm.qos	"high"	unrecognized: httk-workflow reads no setting slurm.qos; pass it with slurm.sbatch_options=--qos=high
+```
+
+Setting an unrecognized key still stores it but prints a `warning:` line on
+standard error; setting an undeclared key prints a milder `notice:` line. On a terminal the markers are also colored; set `NO_COLOR` to
+turn that off. The namespaces `manager`, `slurm`, `confine`, `environment`,
+`seal`, `postprocess`, `children` and `httk_v1` belong to *httk-workflow*, so a
+workflow reads its own keys outside them, and a code package uses its code's
+namespace, such as `vasp.`.
+
 The SDK itself reads `children.placement` (`nested`, the default, or `flat`)
 from the attempt's settings snapshot to place spawned children; see
 {doc}`campaigns`. Unlike other settings it is not overridden by job parameters

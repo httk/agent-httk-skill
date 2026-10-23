@@ -97,6 +97,7 @@ and output relationships are all validated before a provider is returned.
 | `resources` | no | Default resource requirements: a table mapping resource labels to non-negative integers, or to Slurm duration strings for `maxtime` and `mintime`. |
 | `steps` | no | Per-step resource overrides. Valid only with an executable runner, and only for names in its declared `steps` list. |
 | `calls` | no | The sub-workflows this one calls: a `[workflow.calls]` table mapping an alias to a workflow name or commit-pinned git URI. |
+| `settings` | no | The workspace settings the workflow reads, as a list of unique dotted names outside *httk-workflow*'s namespaces; see [`settings`](#settings). |
 | `requires` | no | Minimum distribution versions as a list of `NAME>=VERSION` strings (only `>=`, a plain `N(.N)*` release, each distribution once), for example `["httk-workflow>=2.2.0", "httk-atomistic>=2.1.2"]`. |
 
 ```toml
@@ -172,6 +173,32 @@ The declaration is resolved through the workspace store:
 - **At call time**, `Attempt.call` accepts only a declared alias or the
   installed id an alias names, and the callee must be installed. An ad hoc
   workflow (a runner file) declares no calls and so can call nothing.
+
+A table instead of a string declares a **call slot**, whose target each job's
+creator binds (see [call slots](composing_workflows.md#call-slots)):
+
+```toml
+[workflow.calls.forces]
+declaration_file = "calls/structure-forces.json"   # required: the interface declaration
+description = "computes the forces on every site of one structure"
+default = "ase.static"                             # optional, a reference like a fixed call's
+default_parameters = { calculator = "ase.calculators.emt:EMT" }   # optional, only with default
+```
+
+Unknown keys are refused, and the interface document is validated when the
+manifest is parsed (see
+[interface declarations](declarations.md#interface-declarations)). A slot's
+`default` follows the alias rules of a fixed call, and `default_parameters`
+(job-parameter rules: string keys, finite values, the size limit) are passed
+when a job binds the slot to its default. `install.json` records the fixed
+calls in `calls` and the slots in `slots`, alias to the default's installed id,
+the default as written when it is not installed, or `null`. Installing never
+installs a default: `httk workflow install` prints a notice for each one that
+is not installed, job creation refuses to rely on it until it is (except with
+`job new --install`), and `httk workflow build` also builds the installed
+defaults and the workflows they call. A default is not a dependency of a job that bound another
+workflow: readiness follows the job's own bindings. A workflow installed as the
+target of a fixed call must give every slot a default.
 
 ### `[workflow.resources]` and `[workflow.steps.NAME]`
 
@@ -403,6 +430,30 @@ supplies shared overrides, and each `JobItem` in `new_jobs` may carry its own
 `environment` mapping. `workflow describe` shows each entry's type, setting,
 default, and description.
 
+### `settings`
+
+The optional `[workflow]` member `settings` lists the workspace settings the
+workflow reads beyond its environment entries, such as keys it reads with
+`Attempt.setting`. It only informs: `httk workspace settings show` marks a key
+an installed workflow declares as *recognized by workflow NAME*, and writing it
+prints no notice. Each item is a dotted setting name, listed once. A name in a
+namespace *httk-workflow* owns (`manager`, `slurm`, `confine`, `environment`,
+`seal`, `postprocess`, `children`, `httk_v1`) is refused: the workflow's own
+keys belong outside them. The setting each environment entry resolves counts
+as declared without being listed, and `workflow describe` shows the combined
+list. An environment entry whose setting lies in one of those namespaces keeps
+working as before, but never changes how the key is classified.
+
+A manifest rejects unknown keys before its `requires` is checked, so an
+*httk-workflow* older than the release that introduced `settings` refuses a
+package that uses it.
+
+```toml
+[workflow]
+name = "mywf"
+settings = ["mywf.threshold", "mywf.mode"]
+```
+
 ### `[workflow.outputs.<NAME>]`
 
 `entry_type` is required; `ref`, `description`, `product_of`, and `role` are
@@ -574,7 +625,8 @@ metadata and is never emitted. The document becomes
 With `declaration_file`, the document is validated and embedded verbatim. Its
 `$id` must equal `declaration_uri` when both are given, its input and output
 role maps must exactly cover the manifest's entry-typed inputs and outputs,
-and it must not contain `product_of`. The declaration is the authoritative
+an entry's `ref` must equal the manifest's where both give one, and it must not
+contain `product_of`. The declaration is the authoritative
 OPTIMADE document; the manifest is the authoritative *httk*-owned glue.
 
 ## Building and registering binaries

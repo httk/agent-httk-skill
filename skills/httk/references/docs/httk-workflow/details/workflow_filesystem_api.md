@@ -651,6 +651,8 @@ exchange bundle rewrites the client's ids and `claim.pool` before publication
 | `parent` | `{workspace_id, job_id, job_key, placement, activation_id, spawn_id}` or `null` | The spawning job. |
 | `seal_succeeded` | boolean or `null` | Whether a succeeded job is sealed; `null` defers to the `seal.succeeded` setting. |
 | `staged_files` (optional) | array of `{path, size, sha256}`, sorted by `path` | The files `job new` staged (`--file`/`--files` and declared-input destinations), each with its payload-relative path and the size and lowercase hex SHA-256 computed when it was staged; `collect` records each as the run's file input exactly as staged. A runner-prepared payload may give only `{path}`, omitting `size` and `sha256` together. Absent when there are none. |
+| `calls` (optional) | object: call slot alias → exactly `{workflow, parameters}` | The binding of every call slot of the workflow: the installed id (non-empty, no whitespace) the slot calls and the parameters it is called with (finite JSON); at most 256 KiB serialized. Present exactly when the workflow has call slots; a manager claims the job only when its alias set is the installed workflow's slot set and each bound workflow and its fixed calls are installed (and built). |
+| `persist_outputs` (optional) | object: interface output name → output role | Set on a job called through a call slot: on `succeed`, the job runs its own workflow's collect hook and records each role's property value in `.httk-job/outputs.json` as `{format: "httk-workflow-outputs", format_version: 1, outputs: {name: {role, definition, value}}}`, or fails with `workflow.outputs_unavailable`. The file is runner-private (outside the payload digest and the seal) and travels with a trusted bundle. |
 
 The **job digest** is the SHA-256 of the stored `job.json` bytes, exactly as
 read. The first reconcile of a job (its first activation) pins it in
@@ -1009,7 +1011,7 @@ A runner proposes children in its outcome: complete payloads in
 `httk-workflow-spawn`, version 2, strict:
 `{format, format_version, children: [{job_key, label, placement,
 workspace_id?, job_id?, spawn_id?}]}`). Validation (commit step 1) requires
-unique labels and keys, this workspace, a `job_id` agreeing with the key, a
+unique labels and keys within the spawn set, this workspace, a `job_id` agreeing with the key, a
 real directory per child that passes `walk_untrusted`, no `state.json`,
 `seal.json`, `logs` or `attempts` at its top, a valid `job.json` whose key and
 placement match and whose `parent` names this job (id, key, placement,
@@ -1035,6 +1037,11 @@ not copied, which is safe because the parent is quiescent. The children are
 recorded in the parent's `state.json` `children`. A child's workflow is
 checked when the child is claimed, not at the parent's commit.
 
+The manager validates label uniqueness per spawn set only. Uniqueness per parent
+job, across activations, is a runner-side contract the SDK enforces: a spawn or
+call whose label names an existing child of the job reuses that child and
+stages nothing.
+
 ### Waiting and joins
 
 A `wait` outcome records the join in `state.json` and releases the parent to
@@ -1044,6 +1051,9 @@ A `wait` outcome records the join in `state.json` and releases the parent to
 {"children": [{"label": "a", "job_id": "<uuid>", "job_key": "<key>", "placement_hint": "p"}],
  "condition": "all_succeeded", "count": 0, "on_impossible": null, "next_step": "aggregate"}
 ```
+
+A join may name an existing child of this parent, not only children the same
+attempt spawned (a reused child, as `rejoin` entries already do).
 
 | Condition | Satisfied when | Impossible when |
 | --- | --- | --- |
@@ -1248,11 +1258,16 @@ file or a bare workflow document.
 ```json
 {"format": "httk-workflow-install", "format_version": 1, "id": "local:hello", "name": "hello",
  "source": "/home/me/hello", "reference": null, "tree_sha256": "<hex>", "installed_at": "<utc>",
- "calls": {"inner": "local:inner"}, "requires": ["httk-workflow>=2.1"],
+ "calls": {"inner": "local:inner"}, "slots": {"forces": "local:pair"}, "requires": ["httk-workflow>=2.1"],
  "runner": {"command": null, "entry": "run.py", "builtin": null},
  "steps": ["start"], "initial_step": "start", "build": false}
 ```
 
+`calls` maps each fixed-call alias to the installed id it resolved to, and
+`slots` each call slot alias to its default's installed id, the default as
+written when it was not installed then (a later install of it resolves by that
+name), or `null` without a default; a default is never installed with the
+workflow and is no dependency of a job.
 `runner` names exactly one of `command` (an argv with `{package}` and
 `{artifacts}` placeholders), `entry` (an executable package member) or
 `builtin` (`cwl`, `pwd`, `jobflow`, `httk-v1`, run by the manager's own
@@ -1277,9 +1292,10 @@ platform_tag, built_at}`.
   installation exists.
 - **Install a copy** (the receiving side of a transfer, hidden
   `workflow install --workspace WS --from-store DIR…`) takes another
-  workspace's store entry: only `id`, `reference` and `calls` from its
+  workspace's store entry: only `id`, `reference`, `calls` and `slots` from its
   `install.json` (a known id prefix, a git id pinned to a commit, `calls`
-  naming the manifest's aliases), everything else derived again from the copied
+  naming the manifest's fixed-call aliases, `slots` its call slot aliases; a
+  record without `slots` has none), everything else derived again from the copied
   `package/`, whose tree digest must be the recorded `tree_sha256`. `source`
   records the transfer (`transfer from SRC`) and `installed_at` the time of the
   copy. It never replaces: an installation of the id already here (an

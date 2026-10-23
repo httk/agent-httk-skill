@@ -120,9 +120,9 @@ Remote-capable commands (workspace status, settings, `gc`, `fsck`, `job list`,
 | `workspace owners [NAME...]` | list the owners (managers, CLI processes, daemons) with their liveness; `managers` is an alias | `--kind manager\|cli\|daemon`, `--json` |
 | `workspace attest-dead OWNER [NAME] --reason TEXT` | declare an owner and its launches ended, so the next manager tick or `workspace gc` recovers its jobs | `--operator NAME`, `--force` |
 | `workspace workflows [NAME...]` | list the workflows installed in a workspace | `--json` |
-| `workspace show [NAME...]` | print application settings | `--key KEY`, `--json` |
+| `workspace show [NAME...]` | print application settings, each marked recognized, unrecognized or undeclared | `--key KEY`, `--json` |
 | `workspace configure [NAME...]` | set and unset application settings | `--set KEY=VALUE`, `--unset KEY` (repeatable), `--json` |
-| `workspace settings show\|set\|unset` | print, store or remove application settings; `set` takes repeated `--key`/`--value` pairs in one write | `--key KEY`, `--value VALUE` |
+| `workspace settings show\|set\|unset` | print, store or remove application settings; `show` adds a column marking each key recognized, unrecognized or undeclared, and `set` takes repeated `--key`/`--value` pairs in one write, warning about unrecognized keys and noting undeclared ones | `--key KEY`, `--value VALUE` |
 | `workspace workflow-prelude show\|set\|unset` | print, store or remove one workflow's prelude | `--workflow WORKFLOW`, `--value VALUE` (`@FILE` reads a file) |
 | `workspace policy show\|set\|unset` | print, store or reset policy members; `set` takes repeated `--key`/`--value` pairs in one write | `--key KEY`, `--value JSON`, `--json` |
 | `workspace fsck [NAME...]` | check the job tree for what the kernel cannot resolve; only while nothing else uses the workspace | `--repair` (quiescent workspace only, asks first), `--yes`, `--json` |
@@ -223,7 +223,7 @@ recently installed one of that name) or `NAME@REF` (see
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `workflow install SOURCE...` | install into a workspace: a package directory, a git URI, a runner file or workflow document (installed ad hoc), or a workflow name known here; a git URI without `#SUBDIR` whose repository root carries `httk_plugin.toml` installs every workflow that plugin lists; declared calls are installed too and a `[workflow.build]` package is built | `--workspace`, `--no-calls`, `--no-build`, `--format`, `--json`, `--adapter-timeout` |
+| `workflow install SOURCE...` | install into a workspace: a package directory, a git URI, a runner file or workflow document (installed ad hoc), or a workflow name known here; a git URI without `#SUBDIR` whose repository root carries `httk_plugin.toml` installs every workflow that plugin lists; declared calls are installed too (call slot defaults never are: a `notice:` names each one not installed) and a `[workflow.build]` package is built | `--workspace`, `--no-calls`, `--no-build`, `--format`, `--json`, `--adapter-timeout` |
 | `workflow uninstall SELECTOR...` | remove installed workflows by id, short name or `NAME@REF`; a selector several installations share is refused | `--workspace`, `--check` (warn about unfinished jobs using it), `--json` |
 
 ```console
@@ -266,7 +266,9 @@ selects the newest installation of that name) that declare
 artifacts in the installation's `builds/<platform>/`; a `REMOTE:WS` workspace
 builds on the remote. `install` already builds for the platform it runs on; run
 `build` on each other platform whose managers serve the workspace. `--list`
-prints the registered builds. The exit status is `1` when any target failed.
+prints the registered builds. A target's installed call slot defaults, and the
+workflows they call, are built with it; a default that is not installed is
+skipped. The exit status is `1` when any target failed.
 The manager passes the artifacts to the runner through
 `HTTK_WORKFLOW_RUNNER_ARTIFACTS`, and a job whose workflow is not built for the
 manager's platform stays `ready` and unclaimed there.
@@ -277,7 +279,7 @@ manager's platform stays `ready` and unclaimed there.
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `job new [OPTIONS]` | scaffold and submit jobs of an installed workflow | `--workspace`, exactly one of `--workflow`, `--workflow-dir`, `--from-runner`, `--from-command`; `--install`, `--parameter`, `--environment`, `--format`, `--input`, `--input-move-from-job`, `--input-from`, `--file`, `--files`, `--tag`, `--name`, `--placement`, `--priority`, `--step`, `--json` |
+| `job new [OPTIONS]` | scaffold and submit jobs of an installed workflow | `--workspace`, exactly one of `--workflow`, `--workflow-dir`, `--from-runner`, `--from-command`; `--install`, `--call`, `--call-parameter`, `--parameter`, `--environment`, `--format`, `--input`, `--input-move-from-job`, `--input-from`, `--file`, `--files`, `--tag`, `--name`, `--placement`, `--priority`, `--step`, `--json` |
 | `job submit SOURCE...` | submit prepared payload directories | `--workspace`, `--move`, `--json` |
 | `job request ACTION JOB_ID...` | post one operator request per job (remote: signed envelope or typed daemon command) | `--workspace`, `--operator`, required `--reason`, `--state`, `--step`, `--placement`, `--priority`, `--override-step`, `--destination`, `--max-attempts-per-activation`, `--max-total-attempts`, `--max-activations`, `--force`, `--keep-budget`, `--wait`, `--timeout`, `--adapter-timeout`, daemon-only `--request-id` |
 | `job delete JOB...` | delete terminal or paused jobs (remote: over the adapter) | `--workspace`, `--force`, `--adapter-timeout` |
@@ -345,6 +347,13 @@ Other options:
   workflows-vasp workflows keep their results in the persistent workdir `run/`
   and copy a curated set into `data/` only with `--parameter publish_data=true`.
 - `--environment NAME=VALUE` overrides one declared workflow environment entry.
+- `--call ALIAS=WORKFLOW` binds the workflow's call slot ALIAS to WORKFLOW
+  (a workflow name or commit-pinned git URI, like a `[workflow.calls]`
+  reference (never a path), installed first with `--install`, which also
+  installs an unbound slot's default) instead of its
+  default; `--call-parameter ALIAS NAME=VALUE` gives the bound workflow one
+  parameter, spelled as for `--parameter`. Both repeat. See
+  [call slots](composing_workflows.md#call-slots).
 - `--format FORMAT` selects the format of a bare document (see
   [Running workflow documents](#running-workflow-documents)).
 - `--priority` (0 is highest) and `--step` override the workflow's defaults.
@@ -792,7 +801,7 @@ and required inputs. It exits `1` for any problem; see
 | `launcher list` | list manager launchers visible to this project | `--json` |
 | `launcher add NAME...` | create launchers from the packaged `slurm` template | `--template`, `--set`, `--global`, `--non-interactive` |
 | `launcher configure NAME...` | update launcher settings | `--set`, `--unset`, `--add KEY=PATH[:PATH...]`, `--remove KEY=PATH[:PATH...]` |
-| `launcher show NAME...` | describe launchers and their settings | `--json` |
+| `launcher show NAME...` | describe launchers and their settings, each marked by whether the launcher reads it | `--json` |
 | `launcher check NAME...` | check a launcher's required binaries | `--launcher-timeout` |
 | `launcher remove NAME...` | remove launcher bundles | `--force` |
 
