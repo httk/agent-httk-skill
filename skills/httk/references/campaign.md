@@ -287,7 +287,7 @@ per manager); each manager owns its allotment.
     attempt, no budget); on any other failed or paused job it reruns the step
     as a new attempt. `restart` always reruns the step as a new attempt (a
     parent spawns fresh children). Revivals restore the declared retry allowance
-    automatically (`--keep-budget` opts out). `override_step --step STEP` activates at a
+    automatically (`--keep-budget` opts out). `override_step --override-step STEP` activates at a
     named step. Cancelled jobs cannot be revived.
   - Fix-the-child flow: `job why PARENT`; fix the child; `job request continue
     --reason TEXT CHILD` (no `--force` while the parent still waits on it);

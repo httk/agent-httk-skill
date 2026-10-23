@@ -129,7 +129,7 @@ unique prefix of either, or an in-workspace path or glob; a job directory moves
 between `jobs/<state>/` trees with its state, so from the project root after the
 quickstart `workspace/jobs/succeeded/silicon*` names the finished job. Change a
 job's course with `httk job request ACTION --reason TEXT JOB`, `ACTION` being
-`pause`, `continue`, `restart`, `override_step --step STEP`, `set_budget`
+`pause`, `continue`, `restart`, `override_step --override-step STEP`, `set_budget`
 (`--max-attempts-per-activation|--max-total-attempts|--max-activations N|unlimited`
 to go beyond the declared retry limits), `set_workflow --workflow NAME@REF
 --state ready` (switch jobs to another installed version of the same declared
