@@ -889,6 +889,9 @@ products are emitted.
    must carry the job's workflow id, and its tree digest must match the one
    the job ran with (`state.json` `workflow_pin`). Refusal or tampering
    degrades that job instead of stopping the sweep.
+4. **Embedded workflow.** A job created with `job new --embed-workflow` embeds its tree in
+   `workflow/`; with `--allow-job-collector` its hooks are loaded from a
+   verified snapshot of that tree (see *Embedded workflows* below).
 
 ## Git URI references
 
@@ -992,7 +995,13 @@ Installing copies the package's sources into the workspace store,
 calls, `requires`, runner, steps and initial step, and with `builds/` for
 registered builds. Reinstalling an id replaces its installation; jobs keep
 their workflow id, so users do not reinstall a workflow that queued jobs are
-using. `httk workflow list --workspace WS` and
+using. `job new --workflow-dir DIR --install` reinstalls when the sources
+of `DIR` have changed since the installation (compared by the installed
+digest's rules, ignoring `.git` and declared build artifacts), so an
+edited package directory is picked up by the next job. To iterate on a runner
+for one job only, without reinstalling, unlock the job: it gets its own copy of
+the installed `package/` at `workflow/` in the job directory to edit and rerun (see
+{doc}`/restarting_jobs`). `httk workflow list --workspace WS` and
 `httk workflow describe --workspace WS ID` show installations; the manager
 records the id and tree digest it launched in `state.json` `workflow_pin`.
 The store layout is specified in
@@ -1045,3 +1054,130 @@ See {doc}`/details/declarations` for declaration carriage,
 {doc}`/details/provenance` for the tree-pinned provenance handoff,
 {doc}`/details/collecting` for collect-hook and fallback behavior, and
 {doc}`/details/workflow_cli` for the complete command reference.
+
+## Embedded workflows
+
+`httk job new --embed-workflow` makes a job that embeds its workflow in
+`<job>/workflow/` and names no installation. This section is the reference;
+the short version is in {doc}`/workflow_packages`.
+
+### Creating a job with an embedded workflow
+
+`--embed-workflow` combines with `--workflow ID|ALIAS|GIT-URI`, `--workflow-dir DIR`,
+`--from-runner FILE` and `--from-command CMD` (and the API's
+`new_job(..., embed_workflow=True)` / `new_jobs(..., embed_workflow=True)`), and is refused with
+`--install`. Nothing is installed; fetching a git URI into the fetch cache is
+allowed, as for `workflow describe`. The creator resolves the package, builds one
+scratch snapshot of it (no symlinks, special files, hard-linked files, `.git` or
+`__pycache__`), computes the embedded digest, runs the instantiate hooks from that
+snapshot pinned to the digest, and copies the snapshot into each job's
+`workflow/`, re-verifying the digest. A hook that writes `workflow/` in the
+payload is refused. A package with `[workflow.build]`, a language realization
+(CWL, PWD, jobflow, httk v1) and a fixed callee that is not installed are refused
+for embedding. Campaigns copy the tree per job.
+
+The job records:
+
+- `workflow = {id, name}` with the id `embedded:<name>@<sha12>` (`sha12` the first
+  12 hex digits of the tree digest);
+- an `embedded` member in `job.json`, frozen at creation:
+  `{tree_sha256, runner: {entry} | {command}, steps, initial_step, calls, slots, requires, source}`.
+  `runner` is exactly one of a single entry name or a command list without
+  `{artifacts}`, `calls` values are installed workflow ids (never `embedded:`),
+  `slots` and `requires` have the shape of `install.json`, and `source` is a
+  commit-pinned git URI or `null`.
+
+Everything else `job.json` freezes for an installed workflow (declarations,
+parameters, inputs, resources, environment, call-slot bindings, seal policy) is
+frozen the same way.
+
+### The embedded digest
+
+The tree digest is not the store's `tree_digest`. It is the SHA-256 over the
+sorted entries, each framed as `D\0<path>\n` for a directory or
+`F\0<path>\0<exec 0|1>\0<size>\0<sha256 of content>\n` for a file, walked
+through descriptors without following symlinks; it refuses symlinks, special
+files, files with more than one hard link and a `__pycache__` directory
+anywhere. `PYTHONDONTWRITEBYTECODE=1` is set for runners and for instantiate and
+collect executables, so running an embedded-workflow job does not add bytecode to the tree.
+
+### Security model and what is guaranteed
+
+- **Job-local code runs only inside the job's sandbox.** The manager, the
+  workspace daemon, launch templates, build steps and platform probes never
+  execute or parse anything from `workflow/`.
+- **Privileged settings never come from `workflow/`.** The runner entry or
+  command, steps, calls, slot interfaces, `requires`, resources, environment
+  declarations, parameters and seal policy are in `job.json`, written by the job's
+  creator from the manifest read at creation. `job.json` is immutable,
+  digest-pinned and a read-only overlay in confined attempts.
+- **Read-only while running.** In a confined attempt and its ranks, `workflow/`
+  is a read-only overlay; an attempt that creates it fails.
+- **Pinned at a trusted moment, verified before trusted use.** The manager
+  compares the embedded digest of `workflow/` with `embedded.tree_sha256` after
+  the claim and before every launch (a mismatch fails the job with
+  `protocol_error`, "workflow/ changed since the job was created" or "the job's
+  workflow/ is missing") and records `workflow_pin` with `source: "embedded"`.
+  Collection verifies it again from a snapshot.
+- **Trust follows the author of `job.json`.** An operator-created job embeds
+  operator-trusted code. Children of an embedded-workflow job get the parent's verified
+  tree from the manager, never from the runner. Untrusted exchange bundles never
+  hold an embedded workflow.
+
+These guarantees hold for confined attempts and their ranks. An unconfined
+attempt already runs with the manager's uid and authority, so there is nothing
+for it to escape and the digest checks are integrity checks only. Anyone with
+filesystem access to the workspace, or with remote install rights, can already do
+anything; the model defends against the running job.
+
+### Children, collection, transfer
+
+- **Children.** A child of an embedded-workflow job must name the parent's embedded id and
+  have the same `embedded` member; the manager copies the parent's verified
+  `workflow/` into each child at publication (replay-safe: a complete copy
+  with the right digest is kept, a temporary or mismatching one is recopied). A
+  child payload that brings its own `workflow/` is refused. Children of an embedded-workflow
+  job that name a store workflow are unaffected.
+- **Collection.** `collect` never runs an embedded collector from the payload. With
+  `--allow-job-collector` (the same opt-in as for an installed tree, and only when
+  no registered provider supplies a collector) it copies `workflow/` into a private
+  snapshot in the system temporary directory, requires the snapshot's embedded
+  digest to equal both `embedded.tree_sha256` and the pin (`source == "embedded"`),
+  runs the hooks and executable collectors from the snapshot (never from the
+  payload; Python hook modules are per snapshot) and removes it when the collect
+  window ends. A registered provider of the same short name is never used for an
+  embedded-workflow job. A mismatch degrades that job (see {doc}`collecting`). The run's
+  definition URI is `embedded.source` when set, else none, and `JobRecord.job`
+  holds `embedded`. Postprocess scripts
+  never run from a payload.
+- **Damaged state.** Rebuilding a damaged `state.json` never deletes the `workflow/`
+  of a job with an embedded workflow, and keeps `workflow/` whenever `job.json` cannot be read.
+- **Seals.** `workflow/` is a payload member, so the job seal covers it.
+- **Transfer.** `job transfer`, `job adopt` and `job eject` bundles carry
+  `workflow/` (trusted bundles); an embedded id is never reported as a missing
+  workflow, while its fixed callees and slot-bound workflows are shipped or
+  required as for any job. Trusted bundles run the embedded-workflow job at the destination with nothing installed.
+  An untrusted exchange bundle with an `embedded` member is refused for every member,
+  root included ("member <id>: an untrusted bundle may not hold an embedded workflow
+  (job.json's embedded)").
+- **Switching and unlocking.** `set_workflow` is refused for an embedded-workflow job and to
+  an `embedded:` target ("an embedded workflow cannot be switched; unlock the job and
+  edit workflow/ instead"), by the CLI and the owner. `unlock` never uses the store and keeps the tree ("job unlocked; existing runner
+  copy kept"; a request to copy when the tree is missing is dropped: "the embedded
+  workflow/ is missing; nothing to copy"); an unlocked embedded-workflow job launches unverified with `source: "copy"` and re-pins the
+  digest (see {doc}`/restarting_jobs`).
+- **Inspection.** `job show` appends "; embedded, digest <sha12>" to the workflow
+  line (JSON member `embedded`). `job why` has an "embedded workflow" check
+  (`workflow/ has the digest <sha12> job.json froze`, or the launch texts; for an
+  unlocked job `the job is unlocked: its workflow/ launches unverified`), and its
+  installed-workflow check reads "its calls are installed and built here".
+  Precheck reports the launch texts as a runner problem. None of them reports an
+  embedded-workflow job as not installed. `workflow uninstall --check` counts jobs whose
+  dependencies (embedded fixed calls and slot bindings) include the workflow.
+
+### Limits
+
+An embedded workflow has no store build and cannot embed its callees; two jobs with the same
+tree are not deduplicated; an older httk-workflow rejects a `job.json` with
+`embedded`; and an embedded workflow shares the prelude of an installed workflow of
+the same name.

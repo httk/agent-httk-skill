@@ -2,8 +2,9 @@
 
 No workflow is built into `httk-workflow`. All VASP workflows and every other
 non-trivial workflow live in separate git repositories, referenced by URI. A
-job runs only a workflow installed in its workspace, and workflows never travel
-with jobs: install them in every workspace that runs those jobs. See `campaign.md` for running jobs; this file is about
+job runs a workflow installed in its workspace, and installed workflows do not
+travel with jobs: install them in every workspace that runs those jobs, or embed
+the workflow in the job (`--embed-workflow`, below). See `campaign.md` for running jobs; this file is about
 where workflows come from and the manifest.
 
 ## The repositories
@@ -82,6 +83,44 @@ that environment by short name and by the same pinned URIs a GitHub install
 gives (HEAD and every `wf-v*` tag, no network); only committed content counts.
 Install them into a workspace as usual. See the vendored
 `docs/httk-workflow/details/workflow_uris.md`.
+
+## Embedded workflows (no installation)
+
+`httk job new --embed-workflow` copies the workflow package into the job's own
+`workflow/` directory and installs nothing in the workspace store (Python:
+`new_job(..., embed_workflow=True)`). Use it for one-off jobs and code under
+development, or when the code must travel and be sealed with the job.
+
+```console
+httk job new --workspace WS --embed-workflow --workflow-dir ./my_relax --input structure=POSCAR
+httk job new --workspace WS --embed-workflow --from-command 'my_executable {input}' --file input=a.dat
+```
+
+- It combines with `--workflow`, `--workflow-dir`, `--from-runner` and
+  `--from-command`, and is refused together with `--install`.
+- The job's workflow id is `embedded:<name>@<sha12>`. `job.json` holds an
+  `embedded` member that pins the tree digest plus the runner, steps, calls,
+  call-slot interfaces and `requires`, read from the manifest at creation.
+- The code runs only inside the job's sandbox. The manager, the daemon, launch
+  templates and build steps never read or run anything from `workflow/`. The
+  manager checks the tree against the digest after claiming and before every
+  launch, and refuses a changed tree.
+- `workflow/` is read-only to the running job, and an attempt that creates one
+  fails. Collection uses a verified private copy, and children running the
+  parent's workflow get their own verified copy.
+- The following are refused:
+  - language realizations (CWL/PWD/jobflow/httk-v1);
+  - packages with `[workflow.build]`;
+  - calls to workflows that are not installed;
+  - trees with symlinks, special or hard-linked files, or `__pycache__`;
+  - jobs submitted through a daemon's exchange;
+  - `set_workflow` on an embedded job.
+- `job show`, `job why` and `workflow precheck` report embedded jobs.
+- To change one job's code, `httk job unlock` it (a one-way debug mode) and
+  edit `workflow/`.
+
+Details: vendored `docs/httk-workflow/details/workflow_packages.md` (*Embedded
+workflows*).
 
 ## Manifest essentials
 

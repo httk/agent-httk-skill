@@ -109,6 +109,8 @@ hoc; `{n}` is filled from `--parameter n=…`). Inputs:
 copied into the working directory before the command runs. For a
 plain "run this program N times through SLURM" task, `--from-command` plus a
 `slurm` launcher is the whole recipe — see the vendored `launchers.md`.
+Add `--embed-workflow` to keep the workflow in the job's own `workflow/` instead
+of installing it in the workspace (see `references/workflows.md`).
 Workers can enforce per-job and per-step resource requirements; start them with
 capacities such as:
 

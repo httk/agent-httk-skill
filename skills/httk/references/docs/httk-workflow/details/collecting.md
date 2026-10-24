@@ -286,7 +286,52 @@ tree, as the manager recorded them at launch (`workflow_pin` in `state.json`).
 A stored result therefore names the software that produced it. For a job that
 `set_workflow` switched, collection resolves the provider, the collector and
 the run's `workflow_definition_uri` from that pinned installation rather than
-from the declared `workflow`.
+from the declared `workflow`. An unlocked job (see [Unlocked
+jobs](#unlocked-jobs)) is the exception: it may have run from its own edited
+copy of the package, so its pin names the digest of that copy and no installed
+tree.
+
+### Unlocked jobs
+
+A job in debug mode (`httk job unlock`, see {doc}`/restarting_jobs`) carries the
+`state.json` `unlocked` marker, and its code, `job.json` and even its succeeded
+state may have been changed by hand. Collection therefore does not store it
+unless told to:
+
+- `collect()` yields it degraded, with `missing_collector` set to
+  `job is unlocked (debug mode); pass --force to collect it`. As for any
+  degraded job nothing is stored, and the sweep exits nonzero.
+- `collect_postprocess` (`--postprocess`) sets `CollectedPostprocess.error` to
+  the same text, which makes the command exit 1.
+- `collect(..., force=True)` (`httk collect --force`) collects it, also with
+  `--postprocess`. The job's registered provider's collector is used as for any
+  job; the collect hook of the runner copy (`workflow/` in the job directory) runs,
+  unverified, only with `--allow-job-collector`, only when no in-process
+  registered provider supplies a collector, and only after the job has run again from the copy (`workflow_pin` `source` `"copy"`) with the copy unchanged since that launch. Unlocking a finished job and collecting straight away degrades the
+  job with `the job's last attempt did not run from its runner copy; restart it before collecting`; the other reasons read `runner copy modified since the
+  job ran: ... digest X does not match pinned Y` and `... could not be verified`. An unlocked job without a copy uses the installed tree as before. With `--into`, the run is stored with no mark that the job
+  was unlocked: whoever forces the collection takes the responsibility.
+- A job with an embedded workflow (created with `job new --embed-workflow`, see
+  {doc}`workflow_packages`) is not degraded by its tree: with
+  `--allow-job-collector`, and only when no registered provider supplies a
+  collector, collection copies `workflow/` into a private snapshot in the system temporary
+  directory (removed when the collect window ends; unlocked runner copies are
+  collected the same way), computes the embedded digest of the snapshot, requires
+  it to equal both `job.json`'s `embedded.tree_sha256` and the launch pin (`source`
+  `embedded`; an unlocked embedded-workflow job needs `source` `copy` or `embedded` and the pin
+  digest), loads Python hooks as modules private to the snapshot (identical trees
+  of two jobs never share a module) and runs executable collectors with the
+  snapshot as working directory. A registered provider with the same short name is
+  never used for an embedded-workflow job. Otherwise the job degrades with `the job's last attempt did not run from its workflow/; restart it before collecting`, `embedded workflow modified since the job was created: the last launch pinned <X>, job.json <Y>`, `... digest <X> does not match pinned <Y>` or `... <path> could not be verified: <error>`. An unlocked embedded-workflow job whose launch pinned no digest is refused with `the job's
+  workflow/ could not be digested at launch (its launch pinned no digest); fix it
+  and restart before collecting`. Unlocked copies keep their existing texts. Only that job degrades. Nothing is ever executed from the payload itself, and without
+  `--allow-job-collector` a payload never causes code to run at collection.
+  `CollectedJob.workflow_id` is the embedded id, and the definition URI is
+  `embedded.source` when it is a commit-pinned git URI, else `None`.
+- Every per-job summary line of an unlocked job, degraded or forced, and the
+  store report carry `"unlocked": true`, and
+  `JobRecord.job["unlocked"]` carries the marker.
+- `--raw` and campaign collection are readouts and do not check the marker.
 
 ### Damage is reported
 
@@ -312,7 +357,7 @@ partition at a time, not as one in-memory result array.
 | `workspace`, `workspace_id` | the absolute workspace root and its identity |
 | `job_id`, `job_key` | the job UUID and the complete `tag--uuid` key |
 | `job` | the validated job definition, including its `digest`, `workflow` (the declared installed workflow's id) and `workflow_name`; `workflow_override` (`{id, name}`) only when an operator's `set_workflow` made the job run another installation |
-| `runner_provenance` | `{"id", "tree_sha256"}` of the installed workflow the job last launched with, or `null` |
+| `runner_provenance` | `{"id", "tree_sha256", "source"}` of the workflow the job last launched with (`source` `installed` or `copy`), or `null` |
 | `state` | the kind this job stopped in: `succeeded`, `failed`, `cancelled`, or `paused` |
 | `failure` | the unified failure record — `code`, `message`, optional `details`, `retryable` — or `null` |
 | `placement` | the placement subtree this job sits in |
@@ -443,6 +488,7 @@ is not counted as skipped. `collect`, `campaign_collect` and
 httk collect --workspace WORKSPACE
 httk collect --workspace WORKSPACE --state succeeded --state failed
 httk collect --workspace WORKSPACE --placement project/campaign --raw
+httk collect --workspace WORKSPACE --force      # also collect unlocked jobs
 ```
 
 `httk collect` also takes a PATH. A workspace root or a registered workspace
@@ -517,7 +563,10 @@ means a job could not be collected, stored or read, and the counts say which.
 
 Each summary line carries its own triage fields:
 
-- `missing_collector` explains a degradation.
+- `missing_collector` explains a degradation; for an unlocked job it says to
+  pass `--force`.
+- `unlocked` is `true` on every line of a job that carries the debug-mode
+  marker.
 - `products_unlinked` lists `product_of` links skipped because the output was
   produced but its curated source edge is absent from the observed provenance,
   as `"<role> -> <source> (source edge absent in observed provenance)"`. A
@@ -535,7 +584,9 @@ product links are saved into a file-backed SQLite store, and its report gains
 ### Degraded and failed jobs
 
 A degraded job stores nothing: its report carries
-`"stored": null, "skipped": "degraded"` and no empty `Run` is written. A job
+`"stored": null, "skipped": "degraded"` and no empty `Run` is written. An
+unlocked job is degraded this way unless collected with `--force` (see
+[Unlocked jobs](#unlocked-jobs)). A job
 whose entries cannot be stored keeps a `"storage_error"` and fails the exit
 code.
 
@@ -657,7 +708,8 @@ The first postprocess collect into a store whose layout has no `files` family
 (no job stored a file yet) needs `--upgrade`; a store that declares `files`
 with zero rows needs none (the upgrade is an additive layout upgrade; back the store up first). The
 command ends with one `httk-workflow-postprocess-collect-summary` line and
-exits 1 on any error or unreadable `job.json`; jobs with no receipt, a failed
+exits 1 on any error or unreadable `job.json` (an unlocked job is an error,
+see [Unlocked jobs](#unlocked-jobs)); jobs with no receipt, a failed
 script, no declared outputs or no matching files are skipped (exit 0).
 `httk serve optimade serve STORE` serves the runs and files, and the job's
 run shows the postprocess run through the reverse `_httk_is_input`

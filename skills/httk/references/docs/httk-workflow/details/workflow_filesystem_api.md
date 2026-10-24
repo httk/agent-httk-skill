@@ -151,7 +151,7 @@ dotted names to JSON scalars; the protocol reads `seal.succeeded`, `seal.keys`,
 | `waiting` | A parent waiting for its join to be decided. |
 | `paused` | Stopped until an operator request (`continue`, `restart`, `override_step`, `delete`, ...). |
 | `failed` | Ended with a failure; `continue`, `restart` and `override_step` revive it; a parent failed at its wait keeps `join` and `continue` reopens it. |
-| `succeeded` | Ended successfully; never changed by the protocol until `job unseal`. |
+| `succeeded` | Ended successfully; never changed by the protocol until `job unseal`, or unless the job is unlocked (§Unlocked jobs). |
 | `cancelled` | Cancelled by a request. |
 
 `succeeded`, `failed` and `cancelled` are terminal (`TERMINAL_STATES`); the six
@@ -641,7 +641,7 @@ exchange bundle rewrites the client's ids and `claim.pool` before publication
 | `tag` | label or `null` | The job key tag. |
 | `name` | string | Display name. |
 | `placement` | canonical placement text | Authoritative and immutable (§Placement rules). |
-| `workflow` | `{id, name}` | The installed workflow's id (§The workflow store) and its name. |
+| `workflow` | `{id, name}` | The installed workflow's id (§The workflow store) and its name; for a job with an embedded workflow (§Embedded workflows) the id `embedded:<name>@<sha12>`. |
 | `initial_step` | step name | The step of the first activation. |
 | `priority` | `0`–`999` | The submitted priority. |
 | `claim` | `{pool, required_capabilities}` | Eligibility labels; pool `default` needs no routing. A pool `exchange-<16 hex>` is an exchange pool (§Adopt). |
@@ -652,21 +652,24 @@ exchange bundle rewrites the client's ids and `claim.pool` before publication
 | `seal_succeeded` | boolean or `null` | Whether a succeeded job is sealed; `null` defers to the `seal.succeeded` setting. |
 | `staged_files` (optional) | array of `{path, size, sha256}`, sorted by `path` | The files `job new` staged (`--file`/`--files` and declared-input destinations), each with its payload-relative path and the size and lowercase hex SHA-256 computed when it was staged; `collect` records each as the run's file input exactly as staged. A runner-prepared payload may give only `{path}`, omitting `size` and `sha256` together. Absent when there are none. |
 | `calls` (optional) | object: call slot alias → exactly `{workflow, parameters}` | The binding of every call slot of the workflow: the installed id (non-empty, no whitespace) the slot calls and the parameters it is called with (finite JSON); at most 256 KiB serialized. Present exactly when the workflow has call slots; a manager claims the job only when its alias set is the installed workflow's slot set and each bound workflow and its fixed calls are installed (and built). |
+| `embedded` (optional) | `{tree_sha256, runner, steps, initial_step, calls, slots, requires, source}` | Present exactly when `workflow.id` starts with `embedded:` (§Embedded workflows). `tree_sha256` is the embedded digest of `<payload>/workflow`; `runner` is exactly `{entry}` (one member name) or `{command}` (a string list without `{artifacts}`); `steps` are strings including `initial_step`; `calls` values are installed workflow ids, never `embedded:`; `slots` and `requires` are validated as in `install.json`; `source` is a commit-pinned git URI or `null`. The trusted subset of an installation, frozen by the creator from the manifest read at creation. |
 | `persist_outputs` (optional) | object: interface output name → output role | Set on a job called through a call slot: on `succeed`, the job runs its own workflow's collect hook and records each role's property value in `.httk-job/outputs.json` as `{format: "httk-workflow-outputs", format_version: 1, outputs: {name: {role, definition, value}}}`, or fails with `workflow.outputs_unavailable`. The file is runner-private (outside the payload digest and the seal) and travels with a trusted bundle. |
 
 The **job digest** is the SHA-256 of the stored `job.json` bytes, exactly as
 read. The first reconcile of a job (its first activation) pins it in
 `state.json` `job_digest`. From then on a different digest fails the job with
 `protocol_error`, and an attempt that changed `job.json` has its outcome voided
-(§Exit without an outcome).
+(§Exit without an outcome). An unlocked job (§Unlocked jobs) is the exception:
+a different digest is pinned again, with a `job_digest_repinned` history entry carrying `{from, to}`,
+and a `job.json` that cannot be read still fails the job.
 
 ### `state.json`
 
 `state.json` (format `httk-workflow-state`, version 1) is written only by the
 job's owner, through `write_file`, and is absent until an owner first writes it
 (a published child and an adopted exchange job carry one without an
-activation). It is strict except that an absent `job_digest`, `budget_override` or
-`workflow_override` reads as `null`, and at most 100 MiB.
+activation). It is strict except that an absent `job_digest`, `budget_override`,
+`workflow_override` or `unlocked` reads as `null`, and at most 100 MiB.
 
 | Member | Value | Meaning |
 | --- | --- | --- |
@@ -692,11 +695,12 @@ activation). It is strict except that an absent `job_digest`, `budget_override` 
 | `exchange_name` | UUID or `null` | The client's own id of an exchange job. |
 | `detached` | `{at, operator}` or `null` | Set by `detach`. |
 | `seal` | `null`, `{sha256, signed}`, `{disabled: true}` or `{released: true, at, request_id}` | The authoritative seal record (§Seals). |
-| `workflow_pin` | `{id, tree_sha256}` or `null` | The installation the last launch used. |
-| `history_tail` | list, at most 32 | `{at, event, ...}` entries: `released`, `request_applied`, `request_dropped`, `join_decided`, `paused`, `unsealed`. |
+| `workflow_pin` | `{id, tree_sha256, source, workflow_present}` or `null` | The installation the last launch used. `source` is `"installed"` (the installation in the store), `"embedded"` (a locked embedded-workflow job's `workflow/`, verified against `job.json` before the launch) or `"copy"` (the job's own `workflow/` runner copy, for an unlocked job); `workflow_present` is a boolean: whether `workflow/` existed at launch. For a copy, `tree_sha256` is the digest of that copy at launch, or `null` when it cannot be digested. |
+| `history_tail` | list, at most 32 | `{at, event, ...}` entries: `released`, `request_applied`, `request_dropped`, `join_decided`, `paused`, `unsealed`, `job_digest_repinned`. |
 | `job_digest` | 64 hex digits or `null` | The pinned job digest. |
 | `budget_override` | object or `null` | Optional. Set by `set_budget`: keys are a non-empty subset of `maximum_attempts_per_activation`, `maximum_total_attempts` and `maximum_activations`, each an integer of at least 1 or `null` (that limit lifted). Absent keys fall back to `job.json`. The effective policy is the `retry_policy` of `job.json` with these keys replaced. |
 | `workflow_override` | `{id, name}` or `null` | Optional. Set by `set_workflow`: the installed workflow the job runs instead of `job.json`'s `workflow` (both members nonempty strings). Every run path (precheck, the manager's assessment and launch, the attempt context) resolves the **effective** workflow, this override or else `job.json`'s; collection of a job with an override uses `workflow_pin`, the installation that produced the outputs. A damaged `state.json` is not salvaged for it. |
+| `unlocked` | `{at, operator, reason?, inherited_from?}` or `null` | Optional. Set by `unlock`, or seeded into the first `state.json` of a child published by an unlocked parent (`inherited_from`: that parent's job key). One-way: no request clears it, and damage handling keeps it. It marks the job as debugged (§Unlocked jobs). |
 
 An unowned job's `state.json` is stable, because nobody owns the job; readers
 read it non-blocking and bounded and tell an absent file from a damaged one.
@@ -727,6 +731,18 @@ are trusted and read-only to the job.
 untrusted (format `httk-workflow-runlog-event` version 2: `timestamp`, `kind`,
 `message`, `files`). `job log` and the collectors read both logs; the owner
 events form the timeline and the runner records annotate it.
+
+`workflow/` at the top of the payload exists only in an unlocked job made with
+a runner copy: the copy of the installed `package/` the manager launches the
+runner from (§Unlocked jobs). `workflow` is a protocol-reserved top-level
+payload name (with `job.json`, `state.json`, `attempts/`, `logs/` and
+`.httk-job/`): input destinations, `staged_files` and `--input-move-from-job`
+paths may not target it, and an httk-v1 template package with a top-level
+`workflow` member is refused at job preparation. Execution from `workflow/` is
+not automatic: only an unlocked job (`state.json` `unlocked`) that has the
+directory runs from it, and the `workflow/` of a locked job is inert. Being a
+top-level payload member, it is covered by the job seal if one is written;
+unlocked jobs are never sealed.
 
 ## Jobs
 
@@ -852,7 +868,11 @@ attempts/<A>/
 otherwise, no capabilities) with the workspace bound read-only and the job
 directory writable, both at their real paths, and read-only overlays of the
 trusted entries present at launch: `job.json`, `state.json`,
-`.httk-job/seal.json`, `.httk-job/releases/` and `logs/`. Each overlay
+`.httk-job/seal.json`, `.httk-job/releases/`, `logs/` and `workflow/`, for the
+attempt and for its ranks (the rank keeper sandbox of `HTTK_WORKFLOW_LAUNCH`) alike (job-local
+code runs only inside the job's own sandbox, and nothing an attempt writes there
+is trusted afterwards). A symlinked trusted entry, `workflow` included, fails the
+launch. Each overlay
 binds the inode opened when the sandbox is built, so the `state.json` replaced before the gate opens stays
 read-only to the job. Installed workflows, the parent and the children are
 visible read-only through the workspace bind. The attempt context
@@ -920,13 +940,15 @@ failure fails the job with `protocol_error`. Manager failures carry
 
 An attempt that ends without a valid outcome fails with a reserved code below.
 A cancelled attempt commits as `cancelled` whatever it published. An attempt
-that changed or broke `job.json` has its outcome voided. Manager-detected
+that changed or broke `job.json`, or that left a `workflow/` that did not exist at its launch (`workflow_pin`
+`workflow_present` false), has its outcome voided and that `workflow/` deleted; the
+same check runs when the manager recovers a crashed `running` attempt. Manager-detected
 failures are retried only when their code is in `retry_on` and the effective
 budgets (`retry_policy` with `budget_override`) allow.
 
 | Code | Meaning |
 | --- | --- |
-| `protocol_error` | Exit status 0 without an outcome, an unusable outcome, or an outcome, child, transaction, seal or `job.json` the protocol forbids. |
+| `protocol_error` | Exit status 0 without an outcome, an unusable outcome, or an outcome, child, transaction, seal or `job.json` the protocol forbids; an attempt that created `workflow/` fails with the message `the attempt created workflow/; it was removed`. |
 | `process_failure` | A runner that could not be started, or exited nonzero without an outcome. |
 | `owner_lost` | Unclean: the attempt's owner died, or drained it, before it published. |
 | `timeout` | The manager stopped the attempt at its `maxtime`. |
@@ -975,7 +997,7 @@ outcome is never relaunched.
 | `next_step`, `resources`, `join`, `pause` | Action details for the settled document. |
 | `failure`, `reason`, `unclean` | The failure, why a retried attempt runs, whether it follows an unclean end. |
 | `seal` | Whether to seal (decided at step 2, so a replay is deterministic). |
-| `children` | The publication plan: `{job_id, job_key, label, spawn_id, placement, priority, staged, initial_state}`, `staged` being `attempts/<A>/outcome.ready/children/jobs/<key>`. |
+| `children` | The publication plan: `{job_id, job_key, label, spawn_id, placement, priority, staged, initial_state, embedded_sha256}`, `embedded_sha256` being the 64-hex embedded digest of a child that gets its parent's tree, else `null`, `staged` being `attempts/<A>/outcome.ready/children/jobs/<key>`. |
 | `request_id`, `request` | The applied `cancel` request and its audit record. |
 | `transactions_failed`, `seal_failed` | The rewrites of steps 3 and 5. |
 
@@ -989,7 +1011,7 @@ modes.
   attempt) and commits by renaming it to `txn/<seq>/`. `Attempt.put` stages
   into the attempt's implicit transaction below `data/`, which commits with
   the outcome. A staged path MUST NOT start with `job.json`, `state.json`,
-  `seal.json`, `logs` or `attempts`.
+  `seal.json`, `logs`, `attempts` or `workflow`.
 - **Manager side** (quiescent; at every commit and reconcile): uncommitted
   `*.tmp` staging is discarded; committed transactions are applied in seq
   order, for every action, because the job committed them by its own choice.
@@ -1013,7 +1035,7 @@ A runner proposes children in its outcome: complete payloads in
 workspace_id?, job_id?, spawn_id?}]}`). Validation (commit step 1) requires
 unique labels and keys within the spawn set, this workspace, a `job_id` agreeing with the key, a
 real directory per child that passes `walk_untrusted`, no `state.json`,
-`seal.json`, `logs` or `attempts` at its top, a valid `job.json` whose key and
+`seal.json`, `logs`, `attempts` or `workflow` at its top, a valid `job.json` whose key and
 placement match and whose `parent` names this job (id, key, placement,
 workspace, spawn id), and ids not already present. A child of an exchange
 job (`origin` `exchange` in its trusted `state.json`, or a job in an exchange
@@ -1102,7 +1124,8 @@ crashes.
   During recovery such a job goes to quarantine too.
 - **`job.json` or `state.json` unreadable after the claim:** the job fails
   with `protocol_error` in a fresh `state.json` that salvages `origin`,
-  `exchange_name`, `job_digest` and `applied_requests` where they still parse.
+  `exchange_name`, `job_digest`, `unlocked` and `applied_requests` where they
+  still parse.
   Without salvaged `applied_requests`, every pending request of the job is
   deleted and recorded as `request_dropped`: none can be told from an applied
   one. A CLI owner gives such a job back instead, or quarantines it when it
@@ -1122,12 +1145,13 @@ version 3, strict, at most 64 KiB:
 | `format`, `format_version` | yes | `"httk-workflow-request"`, `3` |
 | `request_id`, `job_id` | yes | UUIDs; the file name MUST be `<job_id>.<request_id>.json`. |
 | `placement` | yes | The job's placement, a hint for locating it. |
-| `action` | yes | `cancel`, `pause`, `continue`, `restart`, `override_step`, `set_priority`, `set_budget`, `set_workflow`, `detach`, `eject`, `delete`, `seal` or `unseal`. |
+| `action` | yes | `cancel`, `pause`, `continue`, `restart`, `override_step`, `set_priority`, `set_budget`, `set_workflow`, `detach`, `unlock`, `eject`, `delete`, `seal` or `unseal`. |
 | `operator`, `reason`, `created_at` | yes | Attribution and ordering. |
 | `priority` | `set_priority` only, required | 0–999. |
 | `budget` | `set_budget` only, required | An object with the shape of `budget_override`: a non-empty subset of `maximum_attempts_per_activation`, `maximum_total_attempts` and `maximum_activations`, each an integer of at least 1 or `null` (lifted). |
-| `workflow` | `set_workflow` only, required | An installed workflow id (`local:`, `adhoc:` or `git+`), never a short name. |
+| `workflow` | `set_workflow` only, required | An installed workflow id (`local:`, `adhoc:` or `git+`), never a short name and never a `embedded:` id. |
 | `step` | `override_step` only, required | The step to restart at. |
+| `no_copy` | `unlock` only, optional; only `true` | Mark the job without copying the installed package (`job unlock --no-copy`, and what the CLI posts to ancestors). Absent means the owner copies the runner (§Unlocked jobs). |
 | `destination` | `eject` only, required | An absolute directory, or a missing name in one. |
 | `force` | `continue`, `restart`, `override_step`; only `true` | Accept the revival hazard. |
 | `keep_budget` | `continue`, `restart`, `override_step`; only `true` | Keep the effective retry limits: do not restore the declared allowance (§Application). |
@@ -1145,8 +1169,8 @@ runs, only a `cancel` acts at once: the attempt and its launches are stopped
 (`SIGTERM`, then `SIGKILL` after the cancel grace) and the job commits as
 `cancelled`; other requests wait for the boundary. An unowned job, located at
 the request's placement, is claimed, reconciled (which applies the requests)
-and released. `job request`, `job delete`, `job seal`, `job unseal` and
-`job detach` apply their requests at once, as a CLI owner, when the job is
+and released. `job request`, `job delete`, `job seal`, `job unseal`, `job detach` and
+`job unlock` apply their requests at once, as a CLI owner, when the job is
 unowned.
 
 Requests apply in the order of their `created_at` instants (a time without a
@@ -1158,16 +1182,17 @@ at and the request, giving the new document and one effect:
 | --- | --- | --- |
 | `cancel` | not terminal | `Release(cancelled)` |
 | `pause` | not terminal, not `paused`, not `waiting` | `Release(paused)` |
-| `continue` | `failed` or `paused`, revival guard | The declared allowance restored (below); `Release(waiting)` with the retained `join` when the job failed at its wait, no new attempt; else `Release(ready)`: failure cleared, next attempt `manual_continue` if the last one started; `failed`/`retry_exhausted` past an effective attempt budget, `budget_exhausted` past `maximum_activations` (reachable only with `keep_budget`) |
-| `restart` | `failed` or `paused`, revival guard | The declared allowance restored; `Release(ready)`: failure cleared, `join` dropped, next attempt `manual_continue` if the last one started; `failed`/`retry_exhausted` past an effective attempt budget, `budget_exhausted` past `maximum_activations` (only with `keep_budget`) |
-| `override_step` | `failed` or `paused`, revival guard | The declared allowance restored; `Release(ready)` with a new activation of `step`, dropping a retained `join`; `failed`/`retry_exhausted` or `budget_exhausted` past an effective budget, as `restart` |
+| `continue` | `failed` or `paused` (an unlocked job also `succeeded`), revival guard | The declared allowance restored (below); `Release(waiting)` with the retained `join` when the job failed at its wait, no new attempt; else `Release(ready)`: failure cleared, next attempt `manual_continue` if the last one started; `failed`/`retry_exhausted` past an effective attempt budget, `budget_exhausted` past `maximum_activations` (reachable only with `keep_budget`) |
+| `restart` | `failed` or `paused` (an unlocked job also `succeeded`), revival guard | The declared allowance restored; `Release(ready)`: failure cleared, `join` dropped, next attempt `manual_continue` if the last one started; `failed`/`retry_exhausted` past an effective attempt budget, `budget_exhausted` past `maximum_activations` (only with `keep_budget`) |
+| `override_step` | `failed` or `paused` (an unlocked job also `succeeded`), revival guard | The declared allowance restored; `Release(ready)` with a new activation of `step`, dropping a retained `join`; `failed`/`retry_exhausted` or `budget_exhausted` past an effective budget, as `restart` |
 | `set_priority` | always | `Release(<current state>, priority)` |
-| `set_budget` | not `succeeded` or `cancelled` | `Release(<current state>, priority)` with `budget` merged into `budget_override` (a later value for a key wins); no new attempt, no revival guard |
-| `set_workflow` | not `succeeded` or `cancelled`; the workflow check (below) | `Release(<current state>, priority)` with `workflow_override: {id, name}` (the name from the installation with exactly that id) and `runner_steps: null`; the `request_applied` entry carries `workflow: {from, to}`; no new attempt, no `force` |
+| `set_budget` | not `succeeded` (unless unlocked) or `cancelled` | `Release(<current state>, priority)` with `budget` merged into `budget_override` (a later value for a key wins); no new attempt, no revival guard |
+| `set_workflow` | not `succeeded` (unless unlocked) or `cancelled`; no `workflow/` runner copy in the job; the workflow check (below) | `Release(<current state>, priority)` with `workflow_override: {id, name}` (the name from the installation with exactly that id) and `runner_steps: null`; the `request_applied` entry carries `workflow: {from, to}`; no new attempt, no `force` |
 | `detach` | the job has a parent link not yet detached | `Release(<current state>)` with `detached: {at, operator}` |
-| `eject` | the destination is usable | `Eject(destination, tree)` (§Eject) |
-| `delete` | terminal or `paused`; a succeeded job only after `unseal`; no non-terminal parent waits on it | `Discard`: the job directory, its request files and (for an exchange root) its index entry are removed |
-| `seal` | `succeeded` without a seal digest | `Seal`: seal the payload, record `seal`, release back |
+| `unlock` | not `cancelled`; not already unlocked with its copy made (or `no_copy`; dropped as "already unlocked"); a `succeeded` job has no live seal ("run `job unseal` first"); the effective workflow is installed when a copy is made | `Release(<current state>)` with `unlocked: {at, operator, reason}`; unless `no_copy`, the package copy is made first (§Unlocked jobs) |
+| `eject` | the destination is usable; for an unlocked job not into an exchange inbox | `Eject(destination, tree)` (§Eject) |
+| `delete` | terminal or `paused`; a succeeded job only after `unseal` (not needed when it is unlocked); no non-terminal parent waits on it | `Discard`: the job directory, its request files and (for an exchange root) its index entry are removed |
+| `seal` | `succeeded` without a seal digest; refused for an unlocked job | `Seal`: seal the payload, record `seal`, release back |
 | `unseal` | `succeeded`, not yet released | `Unseal`: record `seal: {released: true, ...}`, remove `.httk-job/seal.json`, release back |
 
 **Restoring the declared allowance:** unless it carries `keep_budget`, a
@@ -1209,7 +1234,10 @@ or with a `join` its `next_step` and `on_impossible` step. A job storing
 `declarations.workflow` has empty snapshots where they are absent (`job new`
 always writes `declared.inputs`); for a job storing none (a spawned child) the
 job's current installation stands in for (2)-(6), and without it the request
-is refused. A job of a language realization is refused. A switch to the id
+is refused. A job of a language realization is refused. For an unlocked job every rule
+beyond the installation (the checks above and that of the call slots) is
+skipped; a job whose directory holds a runner copy
+(§Unlocked jobs) is refused. A switch to the id
 `job.json` names clears `workflow_override`; a dropped request's
 `request_dropped` entry carries `workflow: {from, to}` too. The posting CLI runs
 the same check first.
@@ -1233,6 +1261,137 @@ deletion leaves a file whose id is in `applied_requests`: any later owner
 deletes it on sight, unapplied, so a stale `continue` cannot re-apply after the
 job failed again. An id whose file is gone needs no skipping and is dropped
 from `applied_requests` at the next write.
+
+### Unlocked jobs
+
+An `unlock` request (`httk job unlock`, `httk job request unlock`) puts a job
+in debug mode: it lifts the provenance-integrity rules for that job and marks
+it so that collection will not store it by accident. It is a request like the
+others (applied by the owner, exactly once), except that the workspace daemon
+protocol does not carry it.
+
+- **The marker.** `state.json` `unlocked` records `{at, operator, reason?,
+  inherited_from?}`. It is one-way: no request clears it, damage handling
+  keeps it (§Damage handling) and `JobRecord.job["unlocked"]` carries it like
+  `workflow_override`. A manager seeds `{at, inherited_from: <parent job key>}`
+  into the first `state.json` of every child that an unlocked parent
+  publishes; such a child has no runner copy. The CLI also posts a
+  marker-only `unlock` (`no_copy: true`) to every ancestor of a selected job,
+  nearest first; `job request unlock` on a local workspace does the same. Through an
+  ssh remote's request envelope `unlock` is refused for a spawned job.
+- **The runner copy.** Applying `unlock` without `no_copy` copies the effective
+  installation's `package/` to `<payload>/workflow/`, the way the
+  store copies a package (no symlinks, modes kept; the crash-temporary name is
+  `.httk-job/workflow.<token>`, renamed into place). An existing copy is never
+  overwritten (a first unlock that finds one keeps it), and a job that runs a
+  language realization copies nothing. The copy is not fsynced and may be torn
+  after a power loss; remove it and unlock again, which makes a fresh copy. If
+  the effective workflow is not installed, the request is dropped with that
+  reason. When a copy exists the manager resolves the runner entry or command
+  against it, `HTTK_WORKFLOW_RUNNER_ROOT` names it, and the job's own
+  installation (calls, slots, `persist_outputs`, spawn ids) is read from it;
+  called workflows, and the build spec, platform probe and build artifacts of a
+  compiled workflow, still come from the store. The launch digest of the copy
+  excludes the installation's declared build artifacts. The copy is used only while
+  the job is unlocked: a `workflow/` in a locked job is inert, and execution
+  from it is never automatic. The copy is a top-level payload member
+  and the reserved name `workflow` keeps the protocol's own routes (transactions,
+  staged inputs, input moves, bundles) from writing it. In a confined attempt
+  `workflow/` is a read-only overlay, and an attempt after which `workflow/` exists
+  although it was absent at launch (`workflow_pin` `workflow_present` false) fails
+  with `protocol_error` ("the attempt created workflow/; it was removed") with its
+  outcome voided, exactly like one that rewrites `job.json`, and that `workflow/`
+  is deleted (also when the manager recovers a crashed `running` attempt). A tree
+  present at launch, such as one the operator placed before `job unlock`, is never
+  touched; it was read-only for the attempt. When the manager rebuilds a damaged
+  `state.json` it also deletes `workflow/` unless the salvaged pin says it was
+  present at launch. A spawned child staged
+  with a top-level `workflow/` is refused as carrying a trusted entry. Unlocked jobs are never sealed, so the seal covering `workflow/` matters only
+  for the layout. The operator edits it in place. An untrusted exchange bundle
+  may not carry it (§Adopt: exchange jobs run only pre-installed
+  workflows); trusted bundles (`job transfer`, `job adopt`, `job eject`) carry it
+  along.
+- **Relaxed.** A different `job.json` digest is pinned again (§`job.json`);
+  `continue`, `restart`, `override_step`, `set_budget` and `set_workflow`
+  apply to a `succeeded` job; `set_workflow` (refused by the CLI too while a `workflow/` copy exists) skips its compatibility rules
+  except the installation and language-realization checks (§Application); no seal is written for a succeeded job (`seal` is
+  `{"disabled": true}`) and `seal` is refused; `delete` needs no `unseal`.
+  `persist_outputs` skips the pinned-tree digest check and loads the collect
+  hook from the runner root unverified.
+- **Refused or unchanged.** A succeeded job with a live seal must be unsealed
+  before it can be unlocked. Owner-only `state.json`, exactly-once requests,
+  the symlink, placement and schema refusals, the sandbox overlays,
+  `cancelled` as a final state, the retry budgets and the staged-input digests
+  are unchanged. Nothing clears `data/`, `run/` or the existing children when a
+  step reruns. `job new --input-move-from-job` out of an unlocked job is
+  refused, and so is ejecting it into an exchange inbox.
+- **Collection.** `collect` degrades an unlocked job and stores nothing for it,
+  unless forced (see {doc}`collecting`). A forced collection with
+  `--allow-job-collector` uses the runner copy's collect hook only after the
+  job has run again from the copy (`workflow_pin` `source` `"copy"`) with the copy
+  unchanged since that launch; otherwise the job degrades with `runner copy
+  the job's last attempt did not run from its runner copy; restart it before
+  collecting` (the other reasons are `runner copy modified since the job ran: ...
+  digest X does not match pinned Y` and `... could not be verified`).
+- **Older readers.** An httk-workflow that predates `unlocked` treats such a
+  `state.json` as damaged and rebuilds it without the marker; this is accepted.
+
+### Embedded workflows
+
+A job created with `job new --embed-workflow` names no installation: its `workflow.id` is
+`embedded:<name>@<sha12>` (the first 12 hex digits of the tree digest), its
+`job.json` has an `embedded` member, and its workflow is the tree in
+`<payload>/workflow/`. Store installs and lookups refuse the `embedded:` prefix,
+so no path confuses an embedded workflow with an installation. The reserved `workflow/`
+name is the same one an unlocked job's runner copy uses; the difference is who
+vouches for it. An unlocked job's copy is whatever the operator left there, and
+the job is launched from it unverified (`source: "copy"`). An embedded workflow's tree
+is pinned in `job.json` by the creator: the manager computes the **embedded
+digest** (sha256 over the sorted entries framed as `D\0<path>\n` and
+`F\0<path>\0<exec 0|1>\0<size>\0<sha256>\n`, descriptor-anchored, refusing
+symlinks, special files, hard-linked files and `__pycache__`) after the claim and
+before every launch, and a locked job whose tree differs, or is missing, fails
+with `protocol_error` ("the job's workflow/ is missing"; "the job's workflow/
+cannot be verified: <reason>" for a symlink, special file, hard link or
+`__pycache__`, and for a `workflow/` that is a symlink or not a directory
+("embedded workflow tree <path>: ... is a symlink or not a directory"), the
+"is missing" text being only for a `workflow/` that does not exist (the manager,
+precheck and `job why` use the same texts); "workflow/ changed since the job was created: digest X, created
+Y"); a match launches with `workflow_pin`
+`{id, tree_sha256, source: "embedded", workflow_present: true}`. `assess` reads no
+tree: `requires`, slot bindings and the installation of fixed callees and bound
+workflows come from `job.json`. An unlocked embedded-workflow job launches unverified and pins the embedded digest (`null`
+when it cannot be computed) with `source: "copy"`. The runner is launched from `job.json`'s
+`embedded.runner`, with `{package}` expanded to `<payload>/workflow`. The embedded
+view exists per job and never enters an id-keyed cache.
+
+The confinement of `workflow/` (read-only overlay for the attempt and its ranks;
+creating it voids the attempt) is unchanged and is what the guarantees rest on;
+an unconfined attempt already has the manager's authority. Children of an embedded-workflow
+job must repeat the parent's `workflow` and `embedded`; `publish_children` copies
+the parent's launched `workflow/` into each spec-only child of the parent's own
+embedded workflow (descriptor-anchored, into the temporary name `workflow.partial`,
+which a proposed child may not contain, verified against the parent's launch pin,
+then renamed; a replay keeps a
+complete matching copy and recopies anything else), while a child payload that
+brings its own `workflow/` stays refused, and a child naming an embedded workflow
+its parent does not embed is refused ("spawned child ... names an embedded workflow
+its parent does not embed"). Children of an unlocked parent get the parent's current tree with its digest at
+publication (editing it during the run is fine), inherit `unlocked` and pin
+`source: "copy"`; a locked parent's tree must still equal its launch pin, else
+the publication fails ("the parent's workflow/ changed since its attempt
+launched"). `a.call` of
+`[workflow.calls]` callees works (they must be installed), and `bound_workflows`
+(the dependencies checked at claim and precheck, and shipped by transfer) include an
+embedded workflow's fixed calls. Untrusted exchange bundles are refused
+when any member, the root included, has an `embedded` member (`member <id>: an
+untrusted bundle may not hold an embedded workflow (job.json's embedded)`); trusted
+eject, adopt and transfer carry the job, which runs at the destination with
+nothing installed, and an embedded id is never reported as a missing workflow
+(its callees are). `JobRecord.job` holds `embedded`, and the run's workflow
+definition URI is `embedded.source` when set, else none. See
+{doc}`workflow_packages` for creation and the security model, and
+{doc}`collecting` for collection from a verified snapshot.
 
 ## The workflow store
 
@@ -1306,9 +1465,11 @@ platform_tag, built_at}`.
 - **No other races are handled, by decision.** Users do not change workflows
   that jobs are using, and two operators installing one id at once is not
   supported.
-- **At launch** the manager records `workflow_pin: {id, tree_sha256}` in
+- **At launch** the manager records `workflow_pin: {id, tree_sha256, source, workflow_present}` in
   `state.json`. Nothing enforces that the installed digest matches the one
-  present at job creation.
+  present at job creation. An unlocked job that has a runner copy is launched
+  from that copy, `source` is `"copy"`, and `tree_sha256` is the digest of the copy at launch, or
+  `null` when it cannot be digested (§Unlocked jobs).
 
 ## Moving jobs
 
@@ -1424,8 +1585,8 @@ never empty while a delivery is in doubt, so it always runs.
    payloads, with no structural entry a symlink or special file, and every
    member's `job.json` agrees with the manifest. An **untrusted** bundle's
    whole tree also passes `walk_untrusted`, holds no symlink at all, holds only
-   fresh jobs (no `state.json`, `seal.json`, `logs`, `attempts` or
-   `.httk-job`) in state `ready`, and its root has no parent. A trusted root
+   fresh jobs (no `state.json`, `seal.json`, `logs`, `attempts`,
+   `workflow` or `.httk-job`) in state `ready`, and its root has no parent. A trusted root
    may keep a parent outside the bundle.
 3. **Rekey** an untrusted bundle: each member gets the id whose first group
    (eight hex digits) is the client id's and whose rest is that of
@@ -1652,14 +1813,16 @@ confined job.
 ## Seals
 
 A job seal is `<payload>/.httk-job/seal.json`: a signed record of the
-payload's files (excluding `attempts/`, `logs/`, `.httk-job/` and
-`state.json`) whose subject is only `{job_id, job_key}`, so it stays true
+payload's files (excluding `attempts/`, `logs/`, `.httk-job/` and `state.json`; a
+`workflow/` runner copy of an unlocked job (§Unlocked jobs) is a payload member
+and so would be covered, though unlocked jobs are never sealed) whose subject is only `{job_id, job_key}`, so it stays true
 wherever the job moves. It is written at
 
 commit step 5 for a `succeed` when the job's `seal_succeeded`, or else the
 `seal.succeeded` setting (default on), asks for it; keys come from the
 `seal.keys` setting (default `project,identity`), and with no key the seal is
-unsigned. A succeeded job without a seal records `seal: {disabled: true}`.
+unsigned. A succeeded job without a seal records `seal: {disabled: true}`;
+so does a succeeded unlocked job, which is never sealed.
 
 **The authority is `state.json`:** `seal.sha256` is the digest of the seal
 document, so a seal a job planted proves nothing. A succeeded job is never
