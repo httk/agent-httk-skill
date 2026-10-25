@@ -127,8 +127,13 @@ $ httk workspace settings set --key manager.launch --value cluster runs
 $ httk workspace settings set --key slurm.partition --value batch runs
 ```
 
-`settings set` takes repeated `--key K --value V` pairs in one write; arbitrary
-sbatch options go in `slurm.sbatch_options` (a string of long options).
+`settings set` takes repeated `--key K --value V` pairs in one write, and
+`workspace configure --set K=V … --unset K … WS` sets and unsets in one write
+(one forwarded command for a remote workspace; `settings unset --key A --key B`
+and `policy show|set|unset` work remotely too); arbitrary sbatch options go in
+`slurm.sbatch_options` (a string of long options). GPUs come from whichever
+form the job requested (`slurm.gres=gpu:N`, `--gpus`, `--gpus-per-node`,
+`--gpus-per-task`).
 
 ```console
 $ httk remote add --template ssh kappa
@@ -136,9 +141,8 @@ $ httk remote configure \
       --set host=kappa.example.org --set username=rar --set check_connectivity=yes kappa
 $ httk remote check kappa                    # verifies httk answers there
 $ httk workspace init kappa:/scratch/rar/httk/runs
-$ httk workspace settings set --key manager.launch --value cluster kappa:runs
-$ httk workspace settings set --key slurm.partition --value batch kappa:runs
-$ httk workspace settings set --key vasp.command --value "vasp_std" kappa:runs
+$ httk workspace configure --set manager.launch=cluster \
+      --set slurm.partition=batch --set vasp.command=vasp_std kappa:runs
 ```
 
 A *remote* is one reachable machine (named like `git remote`). The owning
@@ -148,7 +152,10 @@ command transports, `mount` with a separate executor, and `mount-daemon` for
 signed typed requests and job eject/adopt through a confined destination
 broker's exchange directory. Ordinary remote
 execution uses the destination workspace launcher; `mount-daemon` starts only
-operator-approved configurations. See
+operator-approved configurations. For password/2FA hosts set the remote's
+`interactive_auth=yes`: httk reuses your own ssh `ControlPath` when
+`~/.ssh/config` defines one (needs a running master or `ControlMaster auto`),
+and only otherwise keeps its own 10-minute shared connection. See
 [`workspace-daemon.md`](workspace-daemon.md) for daemon setup, key handling,
 and exchange-directory job flow. `remote show` never prints credential values.
 
@@ -256,11 +263,17 @@ per manager); each manager owns its allotment.
   (`prepare` → `run` → `publish` for the VASP runners) with the reviewed
   remedy ladder retrying known VASP failure modes. For `EDDAV`/`EDDDAV` ZHEGV
   failures on CPU MPI, the bounded ladder sets `NPAR=1`, then adds two bands
-  when `NBANDS` is explicit, then gives up; it does not reduce the allocation.
-  The launch wrapper rounds `NBANDS` to the band-group count by default
-  (`vasp.nbands_rounding=off` opts out); a `incar_tags` value of JSON null
-  (Bash `httk_vasp_unset_tag`) removes the tag and our derived value (e.g.
-  `NBANDS`/`MAGMOM`) so VASP's default applies.
+  (from VASP's default band count when `NBANDS` is absent), then gives up; it
+  does not reduce the allocation. Preparation derives neither `MAGMOM` nor
+  `NBANDS`: VASP's defaults apply (1 μB per ion, VASP's band count) unless a
+  POSCAR comment `[MAGMOM=...]` or `incar_tags` sets them. The launch wrapper
+  writes VASP's default `NBANDS` rounded to the band-group count when a launch
+  has more than one band group (`vasp.nbands_rounding=off` opts out); an
+  `incar_tags` value of JSON null (Bash `httk_vasp_unset_tag`) removes a
+  template's tag so VASP's default applies. GPU launches (GPUs from the Slurm
+  binding or the job's `gpus` resource; wrapper `--gpus N`, `0` forces CPU) get
+  `NCORE = 1` and `KPAR` at most the irreducible k-points, and warn unless one
+  rank runs per GPU.
 - Before submitting a manager, `httk workflow precheck --workspace WS` reports readiness
   read-only: declared-environment resolution, the workflow and its calls
   installed and built, per-job claimability against live managers, missing
@@ -276,24 +289,28 @@ per manager); each manager owns its allotment.
   `restart`, `cancel`, `override_step`, `set_budget`, `set_workflow --workflow
   NAME@REF --state ready` (same declared workflow, another installed version;
   not via the daemon), `set_priority`, `detach`,
-  `eject`, `delete`, `seal`, `unseal`; the job's owner applies it once at its
-  next boundary, and a manager claims an unowned job to apply it (`--wait` for
-  `pause`). `job delete|seal|unseal|detach` apply at once to an unowned job,
+  `eject`, `delete`, `seal`, `unseal`; the CLI applies it at once to a job no
+  owner holds, and an owned job gets it once at its owner's next boundary
+  (printed `queued`; `--wait` for `pause`). `job delete|seal|unseal|detach` apply at once to an unowned job,
   print `queued` (exit 0) for an owned one, `refused` (exit 1) otherwise.
   - Revive a failed job (it stays in `jobs/failed/…`; `job why` names the
     remedy). Edit anything but `job.json` first, in the file the step reads
     (a step that regenerates a file overwrites a hand edit). `continue` on a
     `dependency_failure` parent returns it to waiting on its children (no
     attempt, no budget); on any other failed or paused job it reruns the step
-    as a new attempt. `restart` always reruns the step as a new attempt (a
-    parent spawns fresh children). Revivals restore the declared retry allowance
+    as a new attempt. `restart` always reruns the step as a new attempt; on a
+    parent the rerun reuses existing children by label, so `restart` refuses
+    (non-zero, nothing posted) while the parent has a failed or cancelled
+    child: `continue --tree` it or `httk job delete` the child (`--force`
+    restarts anyway). Revivals restore the declared retry allowance
     automatically (`--keep-budget` opts out). `override_step --override-step STEP` activates at a
     named step. Cancelled jobs cannot be revived.
   - Fix-the-child flow: `job why PARENT`; fix the child; `job request continue
     --reason TEXT CHILD` (no `--force` while the parent still waits on it);
     watch `job show`/`job log`; `job request continue --reason TEXT PARENT`.
     `job request continue --tree --reason TEXT PARENT` resumes failed
-    descendants deepest first, then the parent (local workspaces only).
+    descendants deepest first, then the parent (also over ssh remotes; not
+    through a workspace daemon).
   - Go beyond the declared retry limits (a plain revival already restores them): `job request set_budget
     --max-attempts-per-activation N|unlimited --max-total-attempts N|unlimited
     --max-activations N|unlimited --reason TEXT JOB` (at least one option). The

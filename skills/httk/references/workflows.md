@@ -57,7 +57,10 @@ httk workflow uninstall --workspace WS vasp.relax
 file (`--from-runner`) or command (`--from-command`) is installed ad hoc. After
 install, the manifest's `[workflow] name` (its **short name**, e.g.
 `vasp.relax`) resolves too, unless two installations share it — then the URI is
-required. Without `--workspace`, `httk workflow install URI` only fetches into
+required. An id is one workflow: reinstalling different sources under an id
+that unfinished jobs use is not refused, but `workflow install` warns naming
+them, `job why` shows a `workflow pin` check, and `httk collect` refuses such a
+job with remedies. Without `--workspace`, `httk workflow install URI` only fetches into
 this machine's cache (then `--workspace WS vasp.relax` installs it by short
 name), and `httk workflow uninstall SELECTOR` forgets fetched workflows: a pinned
 URI forgets that commit, an unpinned URI or short name the whole

@@ -139,8 +139,9 @@ workflow; not via the daemon) or `cancel`. A failed or paused job keeps its file
 (edit all but `job.json` first; `job why JOB` names the remedy): `continue`
 puts a `dependency_failure` parent back to waiting on its children (no new
 attempt, no budget used) and otherwise reruns the step as a new attempt;
-`restart` always reruns the step as a new attempt (a fresh set of children for
-a parent); a revived step reruns from its top, so edit the file it reads from. Revivals
+`restart` always reruns the step as a new attempt (a parent reuses its children
+by label, so it refuses while one is failed or cancelled: `continue --tree` the
+parent or delete the child, or `--force`); a revived step reruns from its top, so edit the file it reads from. Revivals
 restore the declared retry allowance automatically (`--keep-budget` opts out).
 See `references/docs/httk-workflow/restarting_jobs.md`.
 Remove terminal or paused jobs with `httk job delete JOB…` (`--force` skips only
