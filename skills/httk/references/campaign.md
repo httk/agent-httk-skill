@@ -50,7 +50,9 @@ silicon--0c4f…	/…/workspace/jobs/ready/silicon--0c4f…~p500~…
 - Fan out over a directory: `--input-from structure structures/` makes one
   job per readable structure file, tagged after the file. `--placement
   project/<batch>` organizes the state tree (bounded fan-out; a manager or
-  collect can target one subtree).
+  collect can target one subtree; `job push|pull|transfer` accept
+  `--placement PREFIX` too). Tags are unique per placement: `job new
+  --duplicate-tag {refuse,skip,allow}` (default `refuse`).
 - `new_job`/`new_jobs`/`scaffold_job` (and `JobItem` per-item overrides in a
   `new_jobs` campaign) accept `provenance=`: one declared-side `provenance`
   document (`httk.workflow.provenance`), sections `inputs`/`artifacts`/`outputs`
@@ -167,7 +169,8 @@ VASP`, a `source activate`) belongs in a **prelude**, not in `vasp.command`:
 `environment.prelude` applies workspace-wide, `workspace workflow-prelude set
 --workflow ID --value "…" WS` is per workflow (both run under `set -e`); see
 `taskmanager.md`. A remote's `cli_prelude` adapter setting is different: it runs
-before each httk command the CLI runs on the remote, not at job start.
+before each httk command the CLI runs on the remote, not at job start; it
+must not read stdin or print to stdout.
 
 **Pitfall:** the adapters read JSON over the remote's stdout. A login banner or
 shell greeting printed on stdout on the remote breaks transfers and remote
@@ -242,7 +245,16 @@ per manager); each manager owns its allotment.
   priority it left, and only then **releases** the hold. Delivery is at least
   once: rerunning the command, or `job transfer --resume [SRC] [DST]`, finishes
   an interrupted transfer; `httk transfer status [WS]` and `job why JOB` show
-  holds; `job transfer --release T` discards a hold whose jobs DST already has.
+  holds; `job transfer --release T [--keep] [--destination-id ID]` discards a hold whose
+  jobs DST already has (`--keep` leaves away copies).
+  `job push` (and `job transfer --keep`) keeps an inert `away` copy of each moved
+  job in SRC unless `--no-keep`; `job pull` replaces away copies when the job
+  returns, and `job recover JOB… | --all` returns a lost job's copy to the state
+  it left, to push again. A push to a remote is one ssh connection and one remote
+  `httk` start (bundles stream into `httk job adopt --stdin-tar`), with no probe
+  first; pull is three connections and two starts, remote-to-remote four and
+  three; shipping missing workflows adds one of each. A custom remote adapter
+  must implement `deliver` (seven base operations).
   A remote SRC needs canonical job UUIDs. `--tree` moves a job with its
   descendants (all paused or terminal); a job whose descendants are present is
   otherwise refused, and `job detach CHILD` makes a child independent. SRC/DST

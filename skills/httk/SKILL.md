@@ -21,7 +21,10 @@ scale. It is distributed as a family of packages sharing the `httk` namespace:
 | httk-analyse | `httk.analyse` | analysis: convex hulls (`generic`); phase diagrams, equations of state, elasticity, phonons, MD, electronic properties, defects, MLIP validation (`matsci`); results as typed definition-bound records |
 | httk-serve | `httk.serve` | dissemination: websites (`httk.serve.web`) and a generic OPTIMADE server (`httk.serve.optimade`) |
 
-`pip install httk2` installs the standard set, including serving.
+`pip install httk2` installs the standard set, including serving. Simulation-code
+support is separate: `httk-workflow-{abinit,cp2k,gromacs,lammps,orca,phonopy,qe,vasp}`
+(namespace `httk.codes.<code>`; phonopy needs vasp), via `pip install
+httk-workflow-<code>` or `pip install "httk2[<code>]"` / `"httk2[codes]"`.
 Metapackage name is ASCII `httk2`; the project is written *httk₂* in prose.
 
 `workspace` and `job` are top-level CLI groups. Except for `workspace forget`
@@ -70,7 +73,8 @@ elsewhere.
 
 ## The five-minute campaign (local)
 
-From an empty directory containing a VASP-5 `POSCAR`:
+From an empty directory containing a VASP-5 `POSCAR` (with
+`pip install "httk2[vasp]"` or `pip install httk-workflow-vasp` installed):
 
 ```console
 $ httk project init --name myproject .
@@ -91,8 +95,9 @@ httk cannot change queued jobs); `run` drives every job
 until idle; `collect` prints one JSON `CollectedJob` summary per finished job
 (`--raw` emits mechanical `JobRecord` summaries). `httk collect DIR --into results.sqlite --id-base BASE` also
 collects a tree of finished calculations that were *not* run through httk:
-collectors registered by *httk-workflow-vasp* (and the QE, ABINIT, CP2K, ORCA,
-GROMACS, LAMMPS and phonopy packages) recognize each calculation directory; `--dry-run` lists what would be
+collectors registered by the installed `httk-workflow-<code>` distributions
+(vasp, qe, abinit, cp2k, orca, gromacs, lammps, phonopy; a code's collectors
+exist only once its distribution is installed) recognize each calculation directory; `--dry-run` lists what would be
 collected. Packaged VASP workflows keep
 results in the persistent `run/` workdir by default; add
 `--parameter publish_data=true` to `job new` when a curated `data/` copy is also

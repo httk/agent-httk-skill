@@ -128,7 +128,9 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   workspace that runs them; see `references/workflows.md`); the VASP Python
   primitives (inputs, remedies, collection) and Bash VASP API those runners
   build on are `httk.codes.vasp` from *httk-workflow-vasp*, built on the public
-  toolkit `httk.workflow.codes`. A single runner file
+  toolkit `httk.workflow.codes`. The same `httk.codes.<code>` pattern holds for
+  all eight codes (abinit, cp2k, gromacs, lammps, orca, phonopy, qe, vasp):
+  `pip install httk-workflow-<code>` or `pip install "httk2[<code>]"`. A single runner file
   (`--from-runner ./my_runner.py`), or a **workflow package directory** with
   `httk_workflow.toml` (declared inputs/outputs/parameters/environment,
   instantiate/collect hooks as Python or any executable, any-language
@@ -172,7 +174,13 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   workspace to a plain bundle directory, and into any workspace, without either
   side needing to be registered. Transfers to an ordinary (ssh/local)
   destination carry the needed workflows and install them there under the same
-  ids (`--no-workflows` opts out; never via the workspace daemon).
+  ids (`--no-workflows` opts out; never via the workspace daemon). `job push`
+  keeps an inert `away` copy in the source unless `--no-keep` (`job transfer
+  --keep` likewise); `job pull` replaces it, `job recover` restores a lost job.
+  A push to a remote is one ssh connection and one remote `httk` start with no
+  probe (pull three/two, remote-to-remote four/three); custom remote adapters
+  must implement `deliver`; `job transfer --release T --keep` aids recovery.
+  `job push|pull|transfer` accept `--placement`.
 
 ## httk-analyse (`httk.analyse`) — analysis
 

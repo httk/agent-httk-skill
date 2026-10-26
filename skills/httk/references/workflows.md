@@ -2,9 +2,11 @@
 
 No workflow is built into `httk-workflow`. All VASP workflows and every other
 non-trivial workflow live in separate git repositories, referenced by URI. A
-job runs a workflow installed in its workspace, and installed workflows do not
-travel with jobs: install them in every workspace that runs those jobs, or embed
-the workflow in the job (`--embed-workflow`, below). See `campaign.md` for running jobs; this file is about
+job runs a workflow installed in its workspace, and
+`job push|pull|transfer` install the workflows the jobs need in the destination
+by default (`--no-workflows` opts out). Install by hand only for the workspace
+daemon, `--no-workflows`, or non-transfer paths, or embed the workflow in the
+job (`--embed-workflow`, below). See `campaign.md` for running jobs; this file is about
 where workflows come from and the manifest.
 
 ## The repositories
