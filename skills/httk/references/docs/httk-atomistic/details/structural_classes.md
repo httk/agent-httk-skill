@@ -4,8 +4,9 @@
 
 | Geometrical information | Anonymous occupation | Assigned species |
 | ----------------------- | -------------------- | ----------------- |
-| None                    | `Formulatype`        | `ChemicalFormula` |
+| None                    | `Formulatype`        |                   |
 | Wyckoff only            | `BarePrototype`     | `BareProtostructure` |
+| Wyckoff + covalent bonding net | `Protonettype` | `Protonetstructure` |
 | Geometrical class       | `Prototype`         | `Protostructure` |
 | Exact geometry          | `Structuretype`      | `Structure`       |
 
@@ -15,6 +16,22 @@ stores anonymous `PrototypeOccupation` values; `BareProtostructure` stores assig
 its occupied Wyckoff positions. `Prototype` and `Protostructure` additionally
 require an exact fundamental-domain representative, an assigned discriminator,
 or both, identifying a particular geometrical class within the bare class.
+
+`Protonettype` and `Protonetstructure` sit between the bare and refined levels.
+Each is a bare prototype or bare protostructure plus a canonical descriptor of
+its symmetric covalent bonding net. The net records covalent bonds only, written
+`~`: bond order is unspecified and dative bonds count as covalent. A missing row
+means "no covalent bond", not "no contact", and the bond list is supplied by the
+caller; *httk₂* does not decide which atom pairs are bonded. See
+{doc}`../prototypes` for the notation and {doc}`../canonicalization` for the
+canonical form.
+
+A protonetstructure label orders species by the canonical net, so cutting its
+`__net` part does not always give the canonical bare protostructure label;
+`BareProtostructureView` of a protonetstructure and its `bare_protostructure`
+property re-canonicalize instead. The
+anonymous levels do nest as string prefixes. See
+[the species-order rule](../prototypes.md#species-order-of-protonetstructure-labels).
 
 ## Details
 
@@ -39,7 +56,8 @@ partners. The same policy is available through
 
 We can take the weaker geometrical representation one step further, down to:
 
-* A **chemical formula**, `ChemicalFormula`, represents the structure only in terms of composition of the elements. The “Normalized Formula” gives the composition only in relative terms; any other unit cell representation can be condensed into a formula.
+* A **formulatype**, `Formulatype`, keeps only how many sites each species class occupies (reduced, largest first, as `A3B`); disorder and partial occupancy do not affect it, and it is the prefix of every prototype and protostructure label. Its assigned cell in the overview is deliberately empty.
+* A **chemical formula**, `ChemicalFormula`, sits outside the matrix as the occupation-based composition: it represents the structure only in terms of composition of the elements, each site weighted by its occupancy (`AnonymousFormula` is its anonymous rendering). The “Normalized Formula” gives the composition only in relative terms; any other unit cell representation can be condensed into a formula.
 
 Going in another direction, one can strip the absolute meaning of the chemical species and classify occupation only in terms of equivalent and non-equivalent species (the sites carry placeholder/equivalence assignments — a template into which real species may later be filled in). We mark this anonymous-occupation direction with the suffix “-type”. Hence:
 
@@ -62,7 +80,7 @@ To cover a couple of other related names and explain how they differ:
 
 * **Isopointal structures**: account for the spacegroup (with or without distinguishing enantiomorphic groups) and the same complete Wyckoff sequence, including repeated independent occupations but excluding the chemical identity of the occupying atoms.
 * **Isoconfigurational structures**: isopointal structures further distinguished by geometrical classification (i.e., similarities in atomic coordinates and cell parameters, but sometimes with further requirements), however still described by colorless occupation.
-* **AFLOW labels**: very similar to httk bare prototypes, except occupations are ordered by occupying element symbol, making the AFLOW labels different for, e.g., ZrO₂ (A2B_oP12_29_2a_a) and FeS₂ (AB2_oP12_29_a_2a).
+* **AFLOW labels**: very similar to httk bare prototypes, except occupations are ordered by occupying element symbol, making the AFLOW labels different for, e.g., ZrO₂ (A2B_oP12_29_2a_a) and FeS₂ (AB2_oP12_29_a_2a). httk orders classes by site count, then Wyckoff letters, so both share the prefix `A2B_oP12_29_2a_a` and differ only in the suffixes `:O-Zr` and `:S-Fe`.
 * **Extended AFLOW labels**: an extension of three digits is added to describe geometrical similarity (-001, -002, …), bringing them closer to discriminator-carrying prototypes.
 * **Decorated AFLOW labels**: AFLOW labels are sometimes used with a “decoration” to indicate chemical species, although there does not seem to be one universal endorsed format. These decorations take AFLOW labels closer to httk bare protostructures.
 
@@ -94,6 +112,8 @@ Each intermediate family has its own storage identity and registry family:
 | --- | --- | --- |
 | `BarePrototype` | `atomistic_bare_prototype` | `bare_prototypes` |
 | `BareProtostructure` | `atomistic_bare_protostructure` | `bare_protostructures` |
+| `Protonettype` | `atomistic_protonettype` | `protonettypes` |
+| `Protonetstructure` | `atomistic_protonetstructure` | `protonetstructures` |
 | `Prototype` | `atomistic_prototype` | `prototypes` |
 | `Protostructure` | `atomistic_protostructure` | `protostructures` |
 

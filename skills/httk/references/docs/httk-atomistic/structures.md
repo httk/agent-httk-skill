@@ -19,10 +19,15 @@ Every backend produces the same canonical quartet — `cell`, `sites`,
 there is no pairwise conversion between representations. `unwrap()` always
 recovers the exact original.
 
-`Structure` is the exact-geometry, assigned-species cell of the four-row
-material-information taxonomy; {doc}`prototypes` lays out that matrix.
+`Structure` is the exact-geometry, assigned-species cell of the
+material-information matrix; {doc}`prototypes` lays out that matrix.
 Ordinary Wyckoff classification produces `BareProtostructure` or anonymous
-`BarePrototype`. A `Protostructure` or `Prototype` additionally requires an
+`BarePrototype`. A structure may also carry a covalent bond network (read from a
+CIF bond loop, supplied, or found by `distance_bonds`; see
+{doc}`details/asu`, section "Bond networks"). With one, classification can also
+give the bonding-net levels `Protonetstructure` and anonymous `Protonettype`,
+whose labels add the net, bond shapes and torsion letters (see
+[bonding-net labels](prototypes.md#bonding-net-labels)). A `Protostructure` or `Prototype` additionally requires an
 explicit representative and/or discriminator for a geometrical class. These
 refinements affect equality and content identity but remain separate from the label.
 
@@ -36,8 +41,8 @@ content-id distance.
 
 The full guide, {doc}`details/structures`, covers `DatastreamStructure` and
 lazy remote sources, the component families (`Cell`, `Sites`, `Species`),
-exact geometry (surd matrices, Cartesian positions), the numeric float/numpy
-layer, POSCAR loading, supercells, serving structures over OPTIMADE, and
+exact geometry (surd matrices, Cartesian positions), float-owning numeric
+structures and numpy presentations, POSCAR loading, supercells, serving structures over OPTIMADE, and
 `unwrap`/`unview` semantics. The intermediate levels have separate tables:
 `atomistic_bare_prototype`, `atomistic_bare_protostructure`,
 `atomistic_prototype`, and `atomistic_protostructure`. Development stores using

@@ -90,6 +90,24 @@ begins with `Mutable`.
 - Lazy file-backed views: `UnitcellStructureView("x.cif")` parses on first
   access; `httk.core.DatastreamURL(url)` is the explicit consent token for
   network-backed loading.
+- Material-information levels (docs: httk-atomistic `prototypes.md`): a matrix
+  of anonymous / assigned-species values, from `Formulatype` through
+  `BarePrototype`/`BareProtostructure` (Wyckoff positions),
+  `Protonettype`/`Protonetstructure` (plus a covalent bonding net) and
+  `Prototype`/`Protostructure` (plus a representative or discriminator) to
+  `Structuretype`/`Structure`. Labels nest as prefixes (formula type, then
+  bare prototype, then `__` and the net; assigned levels append `:` and the
+  species-class names, e.g. `Ag-O`), and the refined levels share the bare label. Get them with `canonical_bare_prototype`,
+  `canonical_bare_protostructure`, `canonical_protonettype`,
+  `canonical_protonetstructure` and friends. Ordinary classification returns
+  bare values; refinement is always explicit.
+- Bond networks: a structure's optional `bonds` is a `BondNetwork` of symmetry
+  orbits of bonds with a `BondSource`. It comes from a CIF `_geom_bond_` loop,
+  from the caller, or from an explicit `distance_bonds(structure)` (covalent
+  radii with metal rules). Net labels add per-site bond shapes
+  (`T4`, `TP3`, `A2`, ..., `I` for irregular) and, on qualifying molecular
+  bonds, torsion letters `c`/`g`/`t`. `httk.core.save(..., "x.cif")` writes
+  the network back as a bond loop plus `_httk_` items.
 
 ## Records, definitions, and identity
 

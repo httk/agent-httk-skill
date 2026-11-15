@@ -11,12 +11,16 @@ query into the user-facing lazy result set with `results()`. The query runs
 when the result set is first consumed (iteration, `len()`, `first()`,
 `one()`), not when `results()` is called, and the frozen set does not see
 conditions added afterwards. Variables of the
-same class self-join; reference fields chain (`v.reference.name`); weak and
+same class self-join; reference fields chain (`v.reference.name`); a field
+holding a tuple of stored records chains into their fields (`v.sites.symbol`,
+see [Chaining into child records](#chaining-into-child-records)); weak and
 strong links join through `v.links.<name>` (see
 [Relationships](db-relationships.md), e.g. `record.links.product_of == structure`);
 variable-length fields support the set operations (`has_any`, `has_only`), and
-`~` negates them as sets. String matching (`contains`, `startswith`,
-`endswith`) always takes **literal** text — `%` and `_` match themselves:
+`~` negates them as sets (see
+[One search object, one element](#one-search-object-one-element) for reusing
+one such object). String matching (`contains`, `startswith`, `endswith`) always
+takes **literal** text — `%` and `_` match themselves:
 
 ```python
 search = store.searcher()
@@ -52,6 +56,78 @@ as_vector = energies.to_fracvector()
 `.to_fracvector()` rejects floats, surds, strings, datetimes, and other
 non-rational projections. Variable-length CHILD-role projections are rejected
 when `results()` is declared; reference-path projections are supported.
+
+### Chaining into child records
+
+On the SQL and MongoDB backends, a field such as
+`sites: tuple[SiteRecord, ...]`, whose elements are stored records, chains into
+the element fields, with the same correlation rule on both. The condition holds
+when some element matches it:
+
+```python
+search = store.searcher()
+s = search.variable(SitesStructureRecord)
+search.add(s.sites.symbol == "Cl")  # some site is chlorine
+site = s.sites
+search.add((site.symbol == "Na") & (site.x > 0.4))  # one site is Na with x > 0.4
+search.add(~(s.sites.symbol == "Fe"))  # no site is iron
+```
+
+Conditions taken from one `s.sites` object apply to the same element. Each
+new `s.sites` access matches its own element, so
+`(s.sites.symbol == "Na") & (s.sites.x > 0.4)` can be met by two different
+sites. `~` negates over the whole set: a record without sites matches
+`~(s.sites.symbol == "Fe")`. The set operations work on element fields too,
+for example `s.sites.symbol.has_only("Na", "Cl")`. Only scalar and encoded
+element fields chain. Reference, child and tensor element fields raise
+`UnsupportedQueryError`, and so does using an element field as an output or a
+sort key.
+
+Both backends refuse with `UnsupportedQueryError` comparing an element field
+with `None` or with another field, and the mixed uses described in the next
+section. An element-sid condition such as `site.has_any(sid)` cannot share an
+element with a field condition on the same `s.sites` object, so that
+combination is refused too.
+
+### One search object, one element
+
+Every collection-valued search object follows one rule, on SQL and on MongoDB.
+These objects are a plain list field (`v.symbols`, `v.counts`), a child-record
+traversal (`v.sites`), and a link set (`v.links.projects`; strong links on SQL
+only):
+
+- Conditions taken from one object hold on the same element. Its `&` and `|`
+  combinations form one test per element, also across separate `add()` calls.
+- `~` of such a test means that no element satisfies it. A record with no
+  elements matches.
+- A root condition beside the test stays three-valued under `~`.
+- A fresh access (`v.counts` written again) is an independent set.
+- Using one object both in a selecting condition and in a negated, `has_only`
+  or root-`|` condition raises `UnsupportedQueryError`, which names the field
+  and the fresh-access rewrite.
+
+Each `search.add` below is an alternative query on its own searcher, since the
+conditions of one object also correlate across `add()` calls:
+
+```python
+t = v.counts
+search.add((t > 2) & (t < 5))  # some entry lies in (2, 5)
+# or: search.add(~((t > 2) & (t < 5)))  # no entry lies in (2, 5)
+# or: search.add(t.has_any(1, 2))  # one condition
+# or: search.add((v.counts > 2) & (v.counts < 5))  # fresh: one entry above 2, one below 5
+
+lk = v.links.projects
+search.add((lk.name == "P1") & (lk.note == "m"))  # one linked project has both
+# or: search.add(~((lk.name == "P1") & (lk.note == "m")))  # no linked project has both
+# or: search.add((lk == project) & (lk.note == "m"))  # identity and field on one target
+
+# Refused: s = v.symbols; s.has_any("O") & ~s.has_any("Ca") (a selecting and a negated use of one object).
+# With fresh accesses it is valid:
+# or: search.add(v.symbols.has_any("O") & ~v.symbols.has_any("Ca"))
+```
+
+The same expression object may be added more than once. With `e = v.tags ==
+"x"`, `search.add(e & e)` is the same as `search.add(e)`.
 
 ### Pandas-style slicer indexing
 
@@ -268,3 +344,27 @@ querying and indexing. Stored values therefore reconstruct exactly at
 arbitrary precision — but SQL comparisons (and sorting) on rational fields run
 on the float companions and are **documented approximate**. Content identity
 and deduplication always use the exact form.
+
+A `FracVector` tensor whose every element is the shortest decimal of its float
+companion (coordinates parsed from a CIF, say) stores the empty string as its
+exact text: the floats already determine it, and it reconstructs as that
+decimal, exactly as `httk.core.exactmath.any_to_fraction` reads a float. Other
+tensors (`1/3`, say) keep the full text, as do fixed-shape tensors of
+`by_value` records, whose deduplication compares every parent column, and
+fixed-shape tensors declared `Indexed` or `Unique`, whose index covers the exact
+column.
+
+### Plain floats
+
+A plain `float` field has no exact text companion: its `DOUBLE` column is the
+value, and comparisons on it follow the backend. `-0.0` is stored as `0.0`, so
+`-0.0 == 0.0` everywhere and signed zero never splits a `distinct_count`. `NaN`
+differs by backend:
+
+| Backend | `NaN` |
+| --- | --- |
+| SQLite | cannot be stored; saving one raises `ValueError` |
+| PostgreSQL, DuckDB | `NaN = NaN` in SQL, and `COUNT(DISTINCT ...)` folds them |
+| MongoDB stored-property evaluator (Python) | `NaN != NaN` |
+| MongoDB server queries (`$eq`) | expected `NaN == NaN`; not verified by the test suite |
+| ClickHouse | stored (the extended bulk suite ingests it); comparison semantics not verified |

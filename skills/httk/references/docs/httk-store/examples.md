@@ -69,6 +69,8 @@ Runnable scripts from the repository's `examples/` directory.
 ```{toctree}
 :maxdepth: 1
 
+custom_layout/build_sites_store
+custom_layout/sites_layout
 example
 optimade_filters
 searching
@@ -105,11 +107,13 @@ inside dotted relationship paths too: `refs._httk_custom_doi`, not `refs.doi`.
 The rules for names that do not resolve follow the OPTIMADE specification
 rather than being uniformly strict:
 
-- an unknown name *carrying* the prefix is an error
+- an unknown name *carrying* our prefix, or *no* prefix at all, is an error
   (`FilterTranslationError`, category `"unrecognized-property"`), because a
-  client asking for `_httk_bananas` has made a mistake worth reporting;
-- an unknown name *without* a prefix matches nothing, silently, because it may
-  be a standard property this implementation does not support.
+  client asking for `_httk_bananas` or `bananas` has made a mistake worth
+  reporting — unless the name is a standard property of the queried OPTIMADE
+  entry type that this store does not serve, which matches nothing;
+- an unknown name with *another* provider's prefix (`_exmpl_x`) matches
+  nothing, with a warning, because it belongs to a database we do not know.
 
 ## Operators
 
@@ -153,7 +157,7 @@ and *httk-serve*'s *how it works* guide).
 
 ```{literalinclude} ../../examples/optimade_filters.py
 :language: python
-:lines: 74-
+:lines: 76-
 ```
 
 <!-- examples/searching.md -->
@@ -312,6 +316,9 @@ The markers below are `typing.Annotated` metadata plus one class variable:
   nine columns of the parent table.
 - `Annotated[FracVector, Shape(0, 3)]` — a *variable* number of 3-vectors; `0`
   means "any length", so this becomes a child table with one row per vector.
+- `Annotated[tuple[tuple[float, ...], ...], Shape(3, 3)]` — a float matrix
+  (say, from a numpy array): nine plain `DOUBLE` columns, no exact text.
+  `float_matrix` turns nested sequences or arrays into this tuple form.
 - `list[str]` — likewise a child table. `Author | None` becomes a nullable
   foreign key, and the referenced `Author` is saved recursively first.
 - `Annotated[str, Skip()]` — not stored at all; it comes back as the field's
@@ -357,6 +364,6 @@ second `Backend`/`SqlStore` pair, and fetches the same sid back.
 
 ```{literalinclude} ../../examples/storable_records.py
 :language: python
-:lines: 67-
+:lines: 70-
 ```
 
