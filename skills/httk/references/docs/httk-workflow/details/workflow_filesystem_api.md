@@ -82,11 +82,11 @@ WORKSPACE/
 │   ├── requests/<job-uuid>.<request-uuid>.json
 │   ├── tmp/<owner-id>.<purpose>.<token>/   owner scratch
 │   ├── tmp/trash.<token>                   an entry being removed
-│   ├── tmp/push.<hex>/                     a remote install's or transfer's pushed copy
+│   ├── tmp/push.<hex>/                     a remote workflow install's pushed copy
 │   ├── quarantine/<epoch>-<token>/         {entry, reason.json}
 │   ├── exchange-jobs/<exchange-name>/      the exchange index
 │   ├── transfers/outgoing/<transfer-id>/   held bundles
-│   ├── transfers/incoming/<transfer-id>.<token>/   pushed bundles awaiting adoption
+│   ├── transfers/incoming/<transfer-id>.<token>/   unused since transfer sessions (see below)
 │   └── seal.json                           the workspace seal, when sealed
 ├── jobs/
 │   ├── ready/<placement>/<job-key>~p<NNN>~<t>/
@@ -102,6 +102,14 @@ WORKSPACE/
 Initialization creates the control directories `owners`, `requests`, `tmp`,
 `quarantine` and `exchange-jobs`, the eight state directories and `workflows/`;
 everything else appears on demand.
+
+`transfers/incoming/` is written by no current *httk-workflow*: since transfer
+sessions are required, a pushed bundle lands in its stage's owner scratch. A
+copy left there by an earlier version is still recognized as the transfer
+machinery's (adopting it discards a duplicate, an emptied landing is removed),
+and the hygiene check reports one older than seven days. Its jobs are still
+held on the source, so such a copy is safe to remove by hand; `job adopt` of
+it still works too.
 
 ### `format.json`
 
@@ -300,9 +308,13 @@ attempt's `launch/` directory, and a job's `logs/` while the job may be live.
 Another node's change may take up to the visibility deadline
 (`policy.visibility_deadline_seconds`) to become visible. A destructive or
 ownership decision that rests on absence MUST repeat its observation until the
-deadline has passed: `locate`/`locate_many` with `settle` re-list every 0.1 s
-across one deadline (tree members, presumed duplicates, vanished join children,
-jobs of stale requests); recovery waits one deadline and re-lists before it
+deadline has passed: `locate`/`locate_many` with `settle` re-list across one
+deadline, counted from the end of their first listing (tree members, presumed
+duplicates, vanished join children, jobs of stale requests). Jobs expected to
+appear are retried with pauses doubling from 0.1 s up to 1 s; jobs expected
+absent (`poll=False`) wait the whole deadline once. The final listing starts
+after the deadline and lists `owned/` before and after the unowned states, so
+a claim or release during it is seen. Recovery waits one deadline and re-lists before it
 removes a dead owner's directories; the death proof waits one deadline before
 it lists a dead owner's launches; the shared-memory sweep lists launch records
 twice, one deadline apart. Where a missed observation heals itself, callers
@@ -417,7 +429,42 @@ non-directory there). Every reader of job-written or client-written files uses
 `O_NOFOLLOW`, which removes symlinks without following them and repeats a pass
 over a directory that refilled (up to 8 passes). Owners pass their own `trash`
 scratch as `trash_dir`, so a crash mid-removal leaves an owner-named scratch;
-`gc` collects stray `tmp/trash.<t>` entries after a day.
+`gc` collects stray `tmp/trash.<t>` entries after a day. A durable move
+(`move_once`, `move_owned`, `deliver`, `publish_dir`) fsyncs the source's and
+the destination's directory, once when they are the same directory: the same
+anchoring descriptor (an anchored name's directory is its descriptor), or two
+plain paths whose parents are lexically equal.
+
+`Owner.discard_scratch(path, durable=False)` (and `discard_tree`) moves a
+scratch into the trash without fsyncing `tmp/`. Only three discards are made
+so, each of a step that completed: a hold's scratch after its bundle was
+delivered to `transfers/outgoing/` (never an eject's, whose copy across
+filesystems leaves the original in the scratch), an adoption's scratch after
+every member was published, and a release's scratch after its take. A crash
+may bring such a scratch back, whole or partly removed: a hold's is rolled
+forward (or discarded empty), a release's is discardable or republishes
+nothing, and the `adopt` reconciler discards an adoption's once a walk proves
+it an empty skeleton (nothing but directories, none a member, that is, named
+by a job key, old or rekeyed, and the adoption's records and `bundle.json`, as
+regular files; no `.partial`, nothing unreadable, at most `DEFAULT_LIMITS`
+entries, each directory listed incrementally from its descriptor and the walk
+stopped as soon as the bound is passed; every directory opened `O_NOFOLLOW`
+relative to its parent),
+whatever records are missing; an untrusted adoption's only once its records
+say the bundle is its own isolated copy (`plan.json`, or `source.json`
+recording `isolated`): before that the client may still change it, and it is
+rejected as before. Every other state resumes as before. An adoption copied
+from another filesystem removes its emptied `.partial/` once the copy is in
+place. `Owner.close` discards its trash durably, and that one `fsync(tmp/)`
+seals every earlier non-durable move out of `tmp/` before `owner.json` goes;
+the owner remembers a move out of `tmp/` that no fsync has sealed yet (a close
+that failed after the trash's rename, say), and its next close fsyncs `tmp/`
+itself before removing `owner.json`; recovering a dead owner, which may have
+died between such a rename and its fsync and left no scratch to take, fsyncs
+`tmp/` before removing that owner's record. Every other discard stays durable: a
+refusal's, a duplicate delivery's, the trash's at close, and a hold's whose
+delivery copied across filesystems (which leaves the original in its
+scratch).
 
 **`remove_file(target)`** unlinks a file or symlink; an absent one is done.
 **`remove_empty_dir(target)`** is `rmdir`, returning `False` for a non-empty
@@ -433,12 +480,402 @@ the root are returned as opaque leaves.
 **`copy_tree(src, dst, limits=None)`** copies a tree to a fresh name, possibly
 on another filesystem: regular files and directories, special files refused;
 durable mode fsyncs every file, directory and `dst`'s parent. A trusted copy
-recreates symlinks as symlinks (the only symlinks the protocol creates). With
+recreates symlinks as symlinks (with `extract_tar`, the only places the protocol creates symlinks). With
 `limits` (an untrusted source) it refuses symlinks and hard-linked files and
 enforces the entry, depth and byte bounds of `walk_untrusted`, counting bytes
 as they are read, so a file the source keeps growing ends the copy. It is not
 atomic: callers copy to a private or partial name and move or deliver it
 afterwards.
+
+**`copy_file(src, dst, durable, metadata=False)`** copies one regular file's
+bytes as `shutil.copyfile` does (`src`, a file its caller trusts, is opened
+following symlinks; `dst` is created or truncated, never through a symlink,
+and `shutil.SameFileError` is raised, nothing truncated, when it is `src`
+itself), and with `metadata` keeps its permission bits, times and extended
+attributes as `shutil.copy2` does (so it serves as the `copy_function` of
+`shutil.copytree`). Durable mode
+fsyncs the copy on the descriptor that wrote it, not its directory (a sync
+barrier's walk or the caller does that): job creation's staged files and the
+store's package and artifact copies under a barrier of strategy `fsync`.
+
+**`extract_tar(stream, target, rename=None, workers=1, durable=False)`** extracts an untrusted tar
+stream (a pull's local side, a transfer session's `stage` and `install`
+requests) without resolving any path by name. `target` is opened once,
+following a symlink there; every member below it is reached through directory
+descriptors opened component by component `O_DIRECTORY|O_NOFOLLOW` (at most 64
+kept open), so a symlink at any component, whether this stream wrote it or an
+earlier delivery left it, refuses the member. Names lose a leading `/` and
+their empty and `.` components; refused are a `..` component, a NUL, more than
+256 components, a name that with `target` and a separator reaches `PATH_MAX`
+(4096 bytes), a non-directory whose name ends in `/` or `/.`, devices, FIFOs,
+sparse members and other types. Regular files are opened `O_NOFOLLOW` and get
+tarfile's `data` filter mode (no high bits, no group/other write, exec bits
+only when owner-executable, owner read/write) and their time; an existing
+regular file at the name is written in place, so a hard link a trusted actor
+planted there is written through. Symlinks keep their link text (an empty one
+or one with a NUL is refused), replacing a non-directory entry without
+following it. A hard link must name a regular file this stream already wrote
+and is copied, never linked (one naming itself after its file, as GNU tar sends
+a name given twice, is a no-op); the copies may not write more than 8 times
+the stream's own file bytes so far plus 1 GiB. Directories keep the default mode,
+whatever their member says, and get their times back after the last member.
+Mode and time failures (including NaN or out-of-range times) are not fatal;
+without `durable` nothing is fsynced (the caller's `Barrier` makes the landing
+durable); with it (a barrier's strategy `fsync`), each regular file is fsynced
+on the descriptor that wrote it before it is closed, in the reading thread or
+the worker that wrote it, and after the last member and the directory times
+every directory the stream created or wrote into, deepest first, then
+`target`, a failed fsync being an `OSError`; it returns how many regular files
+it wrote. A refusal raises a `tarfile.FilterError` subclass and
+leaves what was written before it. A stream cut short, even exactly at a
+member boundary, is refused (`tarfile.ReadError`) after its last complete
+member; a damaged (non-zero, invalid) header after the members is not
+detected: tarfile ends the stream there, as before. With
+`rename=(member, name)` only that one regular member is accepted, written as
+`name`. With `workers` above 1 (a transfer session's `stage` and `install`
+requests pass the workspace's `io.workers`), regular members of at most
+1 MiB are read into memory by the reading thread and written by worker threads
+through duplicated directory descriptors, everything else staying in the
+reading thread, which waits for the writes in flight at, above or below a
+member's (case-folded, not Unicode-normalized) name and stops and drains them
+before raising; the failure raised is the first the reader or a worker met
+(rarely not the first in stream order, and a member a worker took just then
+is dropped), later members, symlink and hard-link replacements included, may
+already be applied (the caller discards the landing), and a `SIGINT` is acted
+on between members only (under a custom `SIGINT` handler that returns, a
+refusal of the reading thread may be raised before members already handed out
+are written, so it may be a later refusal than the sequential extraction's). The stream is untrusted; the landing is written only
+by trusted local actors (a directory moved by one during the extraction redirects its later
+members through a cached descriptor). Recorded differences from tarfile's
+`data`/`tar` filters:
+
+- refused: `..` inside the tree; a symlink at a directory component, even one
+  pointing inside; an existing symlink at a regular file's name (tarfile writes
+  through it); a hard link to a symlink, a directory, or a file this stream did
+  not write; more than 256 components; a non-directory named like a directory
+  (`a/`, `a/.`); a sparse member (tarfile writes it sparse at whatever size its
+  map claims); a symlink member tarfile cannot create (over a directory, named
+  `target`, or with an empty link text), which tarfile silently skips; hard-link
+  copies beyond 8 times the stream's own file bytes plus 1 GiB; a stream cut at
+  a member boundary;
+- accepted: a re-delivered symlink over an outside-pointing symlink (the old
+  link is removed, not followed); a hard link over an existing name; a hard
+  link naming itself after its file; an unusable time;
+- hard links arrive as copies: the names no longer alias and each takes its own
+  space.
+
+**`Barrier(anchor, setting, errors="fail", inline=False, quiet=False, prime=True, written=False, primed_devices=None, workers=1)`**, committed with
+`commit(count_hint=None, unit="file", tree=None)`, makes a landing
+durable once, before any of it is published: a job must not be renamed into
+`jobs/<state>/` before its files are on disk, and nothing is reported to
+another host before it is durable. It is used, in a durable workspace only, by
+the far side of a push (a transfer session's `stage`, not its `install`), the
+local side of a pull, and a local transfer whose holds are
+on another filesystem (by the `st_dev` of `transfers/outgoing/` and of the
+destination's control directory) or kept (`--keep`), which copies every hold
+into a landing scratch first. Payload written outside the transfer paths is
+synced quietly before it is published:
+
+- job creation (`job new` and campaigns through `new_jobs`): one barrier for
+  the whole command, anchored on the control `tmp/` that holds every job's
+  `submit` scratch, entered (and primed) before the first job's `build/` is
+  created, and committed once per batch. Each job's (and each `job submit`
+  copy's) scratch is made by `Owner.creation_scratch`, which leaves its entry
+  in `tmp/` unsynced: the batch's commit covers it (a `syncfs`, or one fsync of
+  `tmp/` after the commit under `fsync`) before any of them is named `job/`. A
+  job that moves inputs and a moved payload (`submit_payload(move=True)`,
+  `job submit --move`) take `Owner.scratch`, durable from the start, since
+  they move the only copy of something into it. `new_jobs(..., batch=1)`, the
+  library default, publishes each job before it asks for the next item (a
+  batch of one, N + 1 `syncfs`), so a loop feeding on its own results works;
+  `job new` and `campaign_submit_many`, whose inputs are materialized, pass
+  `_BATCH_JOBS` (256). Each job is staged in its own `submit` scratch (built,
+  hooks run, duplicate tag checked) into the open batch, which closes between
+  items, before the next one is asked for, at the batch size or once
+  `_BATCH_SECONDS` (10) have passed since its first staged job (cooperative: a
+  blocking input or a slow hook delays it), and at the end of the input. A job
+  that moves inputs (`--input-move-from-job`) has a batch of its own: the open
+  batch is published before it is staged, and it is published right after, so
+  no other job is published while a file is out of its origin, and at most one
+  job holding moved files and their origin descriptors is staged and not
+  published. The batch is committed once, then each job's `build/` is renamed
+  to `job/` and submitted and the job is yielded, in order (the scratch
+  reconciler publishes a `job/` after a crash, so only a durable payload is
+  ever named so; a committed `build/` is discarded like any other). Every
+  `syncfs` on the one descriptor reports a writeback error recorded since the
+  previous one, so each commit covers its batch's writes. Under `fsync` the
+  staged copies, prepared documents, embedded workflow and `job.json` are
+  fsynced on their writing descriptors, each `httk.core.save` output is
+  fsynced right after the save returns, and the commit walks each job's
+  scratch of the batch (`commit(tree=...)`) for what instantiate hooks wrote
+  and for the directories. Exactly the yielded jobs are submitted, and a job
+  already named `job/` when a failure struck (its rename, a parent fsync or
+  `_kernel.submit` failed after it): that one is committed, counts as
+  submitted (the owner's close or recovery publishes it), and keeps its moved
+  inputs. Closing the generator, `KeyboardInterrupt`, `SystemExit` or any
+  failure discards the other jobs staged and not published (files moved in
+  are moved back; a scratch holding one that cannot go back is kept with its
+  markers); the job being staged and every staged job are owned by that
+  cleanup at every point. A duplicate tag within the batch is found by a
+  reservation of the staged jobs' `(placement, tag)` beside the tag index:
+  `refuse` publishes the jobs staged before it and raises `DuplicateTagError`
+  naming the published one, `skip` drops the later job. An ordinary error
+  while staging a job or reading the input (a `None` item is one) publishes
+  the jobs staged before it, then is raised; when that commit fails,
+  `SyncFailed` is raised, chained to the error. A failed commit submits none
+  of its batch and stops the command; the message says how many jobs before
+  it were submitted and suggests `--duplicate-tag skip` to create the rest,
+  and, for a `syncfs` (whose error may be anyone's), `io.sync fsync` or
+  `io.sync_errors ignore` on a node where other users' writeback errors are
+  frequent; a failed walk of strategy `fsync` names its job instead. A failed
+  submission of one job of a committed batch discards the jobs after it, and
+  its error carries notes with the submitted count (and the staging error
+  that closed the batch early, if one did), which the CLI prints. A
+  non-durable workspace has no barrier, and each job is submitted as soon as
+  it is staged. `job submit` holds one barrier alike for its copies
+  (`copy_tree`, inline), staged into batches the same way (256 copies or 10
+  seconds) and committed once per batch, reporting in argument order: a
+  source that cannot be checked or copied is reported and skipped, a failed
+  submission of one copy is reported and the rest continue (one already named
+  `job/` is noted as submitted all the same), and a failed commit stops the
+  command with the batches before it submitted, while `job submit --move`
+  syncs all its payloads together first, as `job adopt PATH` does below (a
+  `submit_payload` call on its own takes a barrier on its scratch, or syncs
+  its moved payload). A marker of a moved input records absolute paths; the
+  reconciler finds the file by its place below the scratch-named component of
+  the recorded target, rejoined below the scratch the marker is in now (a
+  recoverer renames a dead owner's scratch first), so it works under another
+  mount point, a bind or a moved workspace. Fail safe: when the target cannot be placed so (or the
+  marker is unreadable or not absolute) and the source is not a regular file
+  at its recorded home, the scratch is kept for the operator;
+- the workflow store (`workflow install`, a transfer session's `install` and
+  transfer copies through `install_copy`, `workflow build`): a barrier anchored on the staged
+  `tree/` in the owner's `build` scratch around the package copy and
+  `install.json`, and for a build a second one, entered only after the build
+  command has run, anchored on `builds/` around the artifact copies and
+  `build.json`; both are committed before the rename into `workflows/` (and
+  before a replaced installation is moved aside), or a rebuild's into the
+  installation's `builds/`. Under `fsync` the copies and records are fsynced
+  as they are written and each commit walks its anchor (the build's own
+  working copy is outside both). A failed commit installs nothing; a store
+  copy so failed is reported `failed`, not `refused`;
+- `job adopt PATH` (and `job submit --move`) of operators' bundles (payloads)
+  on the workspace's filesystem: they were written before httk ran, so no
+  barrier could precede their first byte. Before anything is taken, one
+  barrier with `prime=False, written=True` anchored on the control directory
+  makes the whole batch durable (`sync_written`): one `syncfs` on a descriptor
+  opened now, or under `fsync` a walk of each bundle; where `syncfs` turns out
+  not to be supported at that commit, the bundles are walked instead (only
+  `written` allows that fallback). A bundle on
+  another filesystem is not synced here: the adoption copies it with inline
+  fsync. Best effort: a writeback error of their files is reported only while
+  nobody has seen it yet (one reported to someone else first, or lost with an
+  evicted inode, is not), and an unseen error of someone else on that
+  filesystem fails the batch too. An error cannot be attributed to one
+  bundle, so it fails every bundle of the batch (entries `failed`, nothing
+  taken), and since a reported error is seen and the failed pages may then
+  read back intact from memory while not on disk, a retry would not detect
+  the loss: the message says to re-create the bundles from their source
+  before trying again. When a walk cannot read an entry (its permissions or
+  type), no write error was reported: the message names the entry instead
+  (`SyncUnreadable`). A bundle path the sync cannot reach (`ENOTDIR`,
+  `EACCES`, ...) is skipped and reported by its own take; any other error of
+  the batch sync fails the batch. Transfers adopt only their own holds and
+  committed landings and say so (`adopt(..., synced=True)`); any other trusted
+  bundle that `adopt` is given, at a path or anchored below a directory
+  descriptor, is synced on its own first.
+
+The caller creates `anchor` durably and enters
+the barrier before the first byte lands; the barrier resolves its strategy
+with `resolve_sync(anchor, setting)`, `setting` being the `io.sync`
+application setting read afresh: `auto` (when unset) gives `syncfs` only on
+Linux 5.8 or later (whose `syncfs` reports a writeback error recorded on the
+filesystem since the descriptor was opened), with libc's `syncfs` available
+and working there, on a vetted filesystem type (`lustre`, `ext4`, `xfs`,
+`tmpfs`, read afresh from `/proc/self/mountinfo` by the `st_dev` of `anchor`,
+else by the longest mount point that is a path-component prefix of it);
+`syncfs` forces it on any filesystem type but still gives `fsync`, with a
+warning, below 5.8, off Linux or where `syncfs` is not available; `fsync`, and
+any invalid value (with a warning), give `fsync`.
+
+For `syncfs` the barrier opens `anchor` and calls `syncfs` once on that fresh
+descriptor, the *prime*: it flushes what was dirty already and consumes an
+unseen writeback error of someone else, so its error is logged and ignored;
+`ENOSYS`, `EPERM` or `EINVAL` there make the strategy `fsync` for that
+filesystem for the rest of the process. The landings of one transfer prime
+once per filesystem: a transfer session's `stage` landings (the
+set belongs to the connection), a pull's landings and a local transfer's
+landing copies (the set belongs to the command's transfer) pass one
+`primed_devices` set, and only a barrier whose filesystem's `st_dev` is not in
+it primes; a prime that completed without an error adds it (a prime that
+failed, or a probe that found `syncfs` unsupported, does not). The later
+barriers there open their descriptor without a prime: it samples the
+filesystem's error state at the open (0, or an error already seen), so any
+error recorded after the open fails their commit, and an error from before it
+can only fail it falsely, which the transfers' retry with inline fsync takes
+(below). Such an unprimed barrier fails on an unsupported `syncfs` at its
+commit exactly as a primed one does; only `written` (a tree written before
+the barrier) falls back to the walk. Job creation, `job submit`, the workflow
+store and an adapter pull (its retry included, a fresh barrier) always prime.
+`commit()` calls `syncfs` on the same
+descriptor, the *commit*: under the default `errors="fail"`, any error raises
+`SyncFailed` (an `OSError`) after one warning naming the strategy, and is never
+attributed to someone else.
+`errors` is the `io.sync_errors` application setting, read by the caller in
+the same settings read as `io.sync` (`Workspace.io_sync_policy()`: `fail`
+when unset, and with a warning when invalid or unreadable). Under `ignore` a
+commit error other than `ENOSYS`, `EPERM` or `EINVAL` is trusted: `syncfs` is
+called once more on the same descriptor (another full flush), one warning says
+`... reported a writeback error, which io.sync_errors=ignore trusts (a second
+flush reported no further error)` when that completes without reporting a further error (which does
+not prove that the pages whose writeback failed reached the disk), or `... the
+flush may be incomplete` when it fails too, adding for a barrier that did not
+prime that the error may predate the landing, and the commit returns, so the
+landing is published. Nothing else changes under `ignore`: the prime and its
+unsupported fallback, a `written` commit's unsupported fallback to the walk,
+an unsupported `syncfs` at any other commit (which fails), `SyncUnreadable`, and
+the walk and inline fsync errors of strategy `fsync` behave as under `fail`. It applies to every site
+above (and to `sync_written(..., errors=)`), except the workflow store, which
+always passes `fail`: a package with lost pages would run for every later job,
+and an installation is rare and cheap to redo.
+Under `fsync` an `inline` caller writes every file with fsync on its writing
+descriptor (`extract_tar(durable=True)`, `copy_tree` in durable mode) and the
+commit has nothing left to do; otherwise (a pull, which the adapter's process
+writes) the commit fsyncs every regular file and then every directory
+bottom-up through anchored no-follow opens, at most 256 levels deep; an entry
+it cannot list, open or fsync, or a deeper directory, fails the commit (a late
+opener can miss a writeback error already reported to someone else or lost
+with an evicted inode, an accepted limit of this case). With `workers` above 1
+(the workspace's `io.workers`), the tree is listed first by the committing
+thread, with the same checks, and its files and directories are then fsynced
+by up to that many threads (at most 64 files a task, a directory's own fsync
+in the task of its last chunk, after that chunk's files), each task through
+anchored `O_NOFOLLOW` descriptors of its own; `anchor` goes last, and a
+failure waits for the running fsyncs before it is raised. A durable
+`extract_tar` with `workers` above 1 pools its directory fsyncs too, one task
+per parent directory (its chain opened once, each child opened `O_NOFOLLOW`
+relative to it), after every write and every time restore, the target last;
+its descriptor cache is never shared with the pool. Unless quiet, the
+commit prints `syncing N landed file(s) to disk (syncfs: lustre, Linux 5.14)`
+before a `syncfs` or a walk, or `made N landed bundle(s) durable (fsync: ...)`
+for an inline landing. Once it has read an adoption that was not refused, the
+client of a push prints, prefixed with the destination and unless `-q`, only
+these lines of the far side's standard error: this progress line, lines
+beginning `warning:` (except the uninstalled-workflows warning, which the
+client reports itself), and the logged warnings of the barrier and of the sync
+settings (the far side prints a logged warning as its bare message, beginning
+`io.sync `, `io.sync_errors ` or `the sync barrier`, such as `io.sync_errors
+is 'x', not fail or ignore: using fail`); ssh warnings, login banners, module-system output,
+tracebacks and each bundle's own message are not relayed. A running `syncfs` cannot be interrupted: Ctrl-C waits for
+it.
+
+A failed commit publishes nothing of the landing. A failed `syncfs` commit of
+a barrier whose policy is `fail` is retried once by the transfers (under
+`ignore` a writeback error does not fail, and an unsupported `syncfs` at a
+transfer's commit, primed or not, which still fails, is not retried; job
+creation, `job submit`, `job adopt PATH` and the store have no retry):
+
+- a push's stage that commits before it answers (a relayed segment, or any
+  stage without `defer_commit`; a push from a local source defers its commit,
+  see *Deferred commits* below, whose late failure never takes anything back):
+  the far side refuses the stream (landing discarded, the refusal
+  document answered). When the barrier's `syncfs` commit itself raised
+  `SyncFailed` under `fail` (and for no other refusal), the refusal document
+  carries `"sync_failed": true`. The client (`_adopt_with_retry`, a
+  `bool`-validated marker, acted on only in a stage's refusal) stages the same bundles
+  once more on the same transfer session, from the same local directory (a
+  remote source's relay copy, not fetched again), with `sync: fsync`, which
+  forces the strategy `fsync` for that stage's barrier (inline fsync on the
+  writing descriptors in `extract_tar`, which no foreign error can fail; only a
+  strengthening, nothing in a non-durable workspace; the progress line says
+  `fsync: --sync fsync`); every later segment of the session then goes so too.
+  A stage's landing is always fresh (an owner scratch): `receive_tar` with
+  `force_fsync` refuses an existing one (or one created concurrently) before
+  anything is extracted or discarded, and in any case adopts only the
+  top-level names the stream itself carried (collected by
+  `extract_tar(top_level=)`). The second answer is the one answer the
+  transfer processes (take-back of the holds a local source made in this run
+  after a refusal of such a synchronous stage, release, and the destination's
+  `workspace_id`); it is never retried. A second answer reporting another `workspace_id` than the first
+  one reported keeps the holds for `--resume`: as an unreadable answer when it
+  is a refusal, and, when it is a stage, with a message saying that the
+  segment was staged by that workspace, not the expected one (nothing of it is
+  adopted). A push from a local source delivers the holds an earlier run left
+  and the holds of this run in separate segments (the earlier first; only
+  this run's holds are ever taken back), and each segment retries on its own.
+  Each answer naming a `workspace_id` is also checked against the one the
+  batch's earlier segment reported (the retry's against it when the first
+  attempt named none): a mismatch keeps the holds for `--resume` in the same
+  way;
+- a pull over a transfer session (`_pull_over_session`) whose landing's
+  deferred `syncfs` commit failed under `fail` at its adoption
+  (`_landing.CommitFailed`, `_adopt_local_stage`) discards the landing and,
+  only once that disposal succeeded, fetches that request's holds once more
+  (`_repull`) into a fresh landing with `receive_tar(force_fsync=True)`,
+  inline fsync on the writing descriptors, which no foreign error can fail,
+  and adopts it before any later stage; every later request of the session
+  then goes so too. A disposal that fails keeps the holds at the source,
+  names the cleanup's error and stops the pull (a lost owner is fatal); a
+  second failure (an inline fsync error, a `StreamRefused` naming no bundle)
+  stops the pull with that request's holds and every later one's kept at the
+  source (`--resume` delivers them again). A
+  remote-to-remote relay has no barrier (a temporary copy); its delivery
+  follows the push rule;
+- landing copies are discarded and made once more with an fsync of every file
+  (their sources are untouched), the chunk failing with its holds kept if that
+  fails, while any other copy error fails the chunk at once.
+
+Deferred commits (transfer protocol 3, plan WORKFLOW_TRANSFER_SESSION §7.11,
+T6c-lite). A push from a local source sends `defer_commit: true` with each
+`stage` it does not synchronize file by file (a relay never does: its retry
+goes from the same relay), and a pull defers its own landings the same way:
+`receive_tar(defer_commit=...)` hands the entered barrier, as a
+`_landing.DeferredCommit`, to the stage (`Stage.deferred`) once the extraction
+and the terminal are done, and the stage answers (the far side) or is queued
+(a pull) with the barrier still open. Only a barrier that resolved to
+`syncfs` is handed over: under `fsync` (`io.sync fsync`, or `auto` where it
+gives `fsync`, as on ZFS) every file was synced as it was written, the landing
+commits inline as before, and the stage holds no descriptor. The stage is
+`committed` once its first scan is taken, but `Stage.begin` refuses to adopt
+it until `Stage.sync` has committed that barrier successfully on the
+descriptor opened before the landing's first byte (`Stage.synced` records
+that success: a failed commit, or a barrier closed without one, never allows
+the adoption); the final scan then observes the ids the first scan missed after the
+commit, even at a zero visibility deadline (`scan_final(observe=True)`; its
+found-id shortcut stays). Abandoning or closing the stage closes the
+descriptor: up to 8 open landing descriptors per session. `primed_devices` is
+still recorded only by a clean prime at the barrier's entry, so a later stage
+on the same filesystem opens unprimed and samples the error state at its
+`stage`; its commit, about a deadline later, reports every writeback error
+recorded on the filesystem since. One such error therefore usually fails every
+deferred stage open at that moment (a cascade, each retried in turn). The far
+side's `adopt_staged` validates the token, workspace, ids and order before it
+consumes anything, then commits under the stall-exempt `sync` phase: a
+`CommitFailed` abandons the stage (its landing discarded) and only then releases
+its ids and bytes, answers the `sync_failed` refusal document, and leaves a
+retry slot (the consumed token and its ids) that only the very next request may
+use: a `stage` with `retry_of` that token, `sync: fsync`, no `defer_commit` and
+exactly those ids, staged at the head of the staging order; any other request
+drops it, and any other `retry_of` is refused before the upload is used. The
+client re-delivers such a segment through `_late_retry` (never through the
+pending-stage queue) and adopts it before any later stage, holding every
+answer that names a workspace to the pinned one (another is an unknown
+outcome that stops the pair); a failed retry keeps its holds (they were sent,
+so they are never taken back). A pull re-fetches (`_repull`) only once the
+failed landing was discarded, and adopts at once; an interrupt between a
+pulled stage's removal from the queue and its adoption (the modifiability
+check, the deferred commit, a failed commit's disposal, the progress line)
+gives the stage up (landing, descriptor, owner) before it propagates. Any other failure of a deferred commit is
+fatal on the far side and stops a pull here, the holds kept.
+
+`syncfs` also flushes other users' dirty data of that filesystem on this node,
+a writeback error of another process on it during the landing fails the
+landing under `fail` (retried once as above, then resumable), and tmpfs is
+never persistent.
+Inline per-file fsync remains for the other copies: the isolating copy of an
+exchange bundle, an eject or `job adopt PATH` across filesystems, and the
+cross-filesystem copy inside `adopt` itself (kept for equal-`st_dev` bind
+mounts).
 
 **`rename_probe(a, b)`** checks the rename semantics above between two
 directories: a non-empty directory moves keeping its inode, and a rename onto a
@@ -600,13 +1037,24 @@ what it needs first (an eject's `eject.json`).
 
 | Purpose | Holds | Reconciler |
 | --- | --- | --- |
-| `trash`, `build`, `landing`, `release`, `claim` | entries being removed, store installations, pulled landings, released holds, exchange-index staging | discard (`DISCARDABLE_PURPOSES`) |
+| `trash`, `build`, `landing`, `release`, `claim` | entries being removed, store installations, pulled, copied or staged landings (`landing/outgoing/<transfer id>`), released holds, exchange-index staging | discard (`DISCARDABLE_PURPOSES`) |
 | `submit` | a payload being submitted, complete once named `job/` | submit `job/` to `ready`; without it, discard |
 | `eject`, `hold` | a bundle being built and delivered, and `eject.json` once delivery starts | roll forward or back (§Moving jobs) |
 | `adopt`, `adopt-untrusted` | a bundle being adopted; the trust is in the purpose | resume adoption (§Moving jobs) |
 | `quarantine` | an entry won for quarantine | finish the move into `quarantine/` |
 
 There is no age-based collection of scratch: ownership decides.
+
+A staged segment of a transfer (plan WORKFLOW_TRANSFER_SESSION §7.10) is the
+one exception to an owner per step: its receiver owner (`_moving.Stage`) lives
+from the segment's reception until its adoption ends or the stage is given up,
+across requests (at most 8 such owners a session or transfer pair). Until its
+adoption begins it holds only its `landing` scratch, whose
+`landing/outgoing/<transfer id>` copies are discarded by its close or by
+recovery, never adopted unasked; once its adoption began, each bundle taken
+into an `adopt` scratch is reconciled as above. A local same-filesystem stage
+holds no scratch: its bundles are the original holds in SRC's
+`transfers/outgoing/`, which stay there until adoption takes them.
 
 ### Self-healing, clean exit and fail-stop
 
@@ -1450,8 +1898,8 @@ platform_tag, built_at}`.
   leaves only `.old.<t>`, which lookups use as the installation and which `gc`
   moves back into place; `gc` removes an `.old.<t>` tree only once the
   installation exists.
-- **Install a copy** (the receiving side of a transfer, hidden
-  `workflow install --workspace WS --from-store DIR…`) takes another
+- **Install a copy** (the receiving side of a transfer, a transfer session's
+  `install` request) takes another
   workspace's store entry: only `id`, `reference`, `calls` and `slots` from its
   `install.json` (a known id prefix, a git id pinned to a commit, `calls`
   naming the manifest's fixed-call aliases, `slots` its call slot aliases; a
@@ -1588,7 +2036,10 @@ never empty while a delivery is in doubt, so it always runs.
    whole tree also passes `walk_untrusted`, holds no symlink at all, holds only
    fresh jobs (no `state.json`, `seal.json`, `logs`, `attempts`,
    `workflow` or `.httk-job`) in state `ready`, and its root has no parent. A trusted root
-   may keep a parent outside the bundle.
+   may keep a parent outside the bundle. `bundle.json` takes at most 512 MiB
+   for a trusted bundle and 1 MiB for an untrusted one (about 5,000 jobs), and
+   its canonical form, which the adoption writes as `plan.json` (and, rekeyed,
+   as `bundle.json`), must fit the same bound.
 3. **Rekey** an untrusted bundle: each member gets the id whose first group
    (eight hex digits) is the client id's and whose rest is that of
    `uuid5(b480bb06-dc60-4d16-a78b-cc6b3af734b4, "<workspace-id>/<client-id>")`,
@@ -1650,9 +2101,10 @@ untrusted bundle and to nothing for a trusted one.
    locator. The jobs are now in neither state tree.
 2. **Copy and adopt.** On one filesystem DST adopts the hold directly (by
    move; a refusal moves it back). Across filesystems DST adopts by copy. To a
-   remote DST the bundle is pushed to DST's
-   `transfers/incoming/<transfer-id>.<t>` and adopted there by a remote
-   `job adopt`; from a remote SRC it is pulled into a `landing` scratch.
+   remote DST the bundle is sent over its transfer session into the `landing`
+   scratch of the segment's stage, adopted by a later `adopt_staged` request;
+   from a remote SRC it is fetched over SRC's transfer session into a
+   `landing` scratch, staged there the same way.
 3. **Release.** Only after DST adopted (or reported "already adopted") does
    SRC discard the hold (`take` into a `release` scratch, then discard); a hold
    already gone is fine.
@@ -1675,7 +2127,7 @@ does not have the jobs.
 | adopt, during the rekey | `rekey.json` | reconciler finishes the recorded rekey |
 | adopt, after `plan.json` | some members published | reconciler publishes the rest |
 | transfer, after the hold | `outgoing/<T>` | the next run or `--resume` re-drives it |
-| transfer, after a remote push | `incoming/<T>.<t>` on DST | re-driven; a stale copy is reported by hygiene |
+| transfer, staged on a remote DST | the stage's owner scratch on DST | the stage's owner is recovered there; the hold is re-driven |
 | transfer, adopted but not released | the jobs in DST, the hold in SRC | the re-drive finds "already adopted" and releases |
 
 **Delivery is at least once.** After a crash between a delivery and the source

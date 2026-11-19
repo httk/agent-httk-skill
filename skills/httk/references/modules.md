@@ -177,9 +177,10 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   ids (`--no-workflows` opts out; never via the workspace daemon). `job push`
   keeps an inert `away` copy in the source unless `--no-keep` (`job transfer
   --keep` likewise); `job pull` replaces it, `job recover` restores a lost job.
-  A push to a remote is one ssh connection and one remote `httk` start with no
-  probe (pull three/two, remote-to-remote four/three); custom remote adapters
-  must implement `deliver`; `job transfer --release T --keep` aids recovery.
+  Every transfer to or from a remote runs over one transfer session per remote
+  end (one ssh connection, one remote `httk` start), so both ends need the same
+  httk version; custom remote adapters must implement `session`;
+  `job transfer --release T --keep` aids recovery.
   `job push|pull|transfer` accept `--placement`.
 
 ## httk-analyse (`httk.analyse`) — analysis

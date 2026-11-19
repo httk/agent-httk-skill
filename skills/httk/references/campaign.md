@@ -250,11 +250,12 @@ per manager); each manager owns its allotment.
   `job push` (and `job transfer --keep`) keeps an inert `away` copy of each moved
   job in SRC unless `--no-keep`; `job pull` replaces away copies when the job
   returns, and `job recover JOB… | --all` returns a lost job's copy to the state
-  it left, to push again. A push to a remote is one ssh connection and one remote
-  `httk` start (bundles stream into `httk job adopt --stdin-tar`), with no probe
-  first; pull is three connections and two starts, remote-to-remote four and
-  three; shipping missing workflows adds one of each. A custom remote adapter
-  must implement `deliver` (seven base operations).
+  it left, to push again. Every transfer to or from a remote runs over one
+  transfer session per remote end (one ssh connection and one remote `httk`
+  start, whatever it ships, builds, retries or pages), so both machines must run
+  the same *httk* version: otherwise it stops before holding anything ("the httk
+  on REMOTE is too old (or too new) for this transfer"). A custom remote adapter
+  must implement `session` for transfers (six base operations plus `session`).
   A remote SRC needs canonical job UUIDs. `--tree` moves a job with its
   descendants (all paused or terminal); a job whose descendants are present is
   otherwise refused, and `job detach CHILD` makes a child independent. SRC/DST
