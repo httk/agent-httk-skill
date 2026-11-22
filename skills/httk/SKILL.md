@@ -23,8 +23,9 @@ scale. It is distributed as a family of packages sharing the `httk` namespace:
 
 `pip install httk2` installs the standard set, including serving. Simulation-code
 support is separate: `httk-workflow-{abinit,cp2k,gromacs,lammps,orca,phonopy,qe,vasp}`
-(namespace `httk.codes.<code>`; phonopy needs vasp), via `pip install
-httk-workflow-<code>` or `pip install "httk2[<code>]"` / `"httk2[codes]"`.
+(namespace `httk.codes.<code>`; phonopy needs vasp). Only vasp is on PyPI
+(`pip install httk-workflow-vasp` or `"httk2[vasp]"`); install the others with
+`pip install "httk-workflow-<code> @ git+https://github.com/httk/httk-workflow-<code>"`.
 Metapackage name is ASCII `httk2`; the project is written *httk₂* in prose.
 
 `workspace` and `job` are top-level CLI groups. Except for `workspace forget`
