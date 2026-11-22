@@ -16,10 +16,10 @@ You do not need to migrate every workflow at once.
 
 | Route | Workflow changes | Manager | Best use |
 | --- | --- | --- | --- |
-| Converted package | None, normally | normal `httk workflow run --pool POOL` | Establish an *httk₂* operational baseline quickly |
+| Converted package | None, normally | normal `httk run --pool POOL` | Establish an *httk₂* operational baseline quickly |
 | Mixed | Per job type | the normal manager on one workspace | Incremental migration with a direct fallback |
-| Native Bash | Replace `HT_TASK_*` and `VASP_*` calls | `httk workflow run` | Preserve a shell-oriented workflow |
-| Native Python | Replace the runner with Python calls | `httk workflow run` | New development and more structured logic |
+| Native Bash | Replace `HT_TASK_*` and `VASP_*` calls | `httk run` | Preserve a shell-oriented workflow |
+| Native Python | Replace the runner with Python calls | `httk run` | New development and more structured logic |
 
 Start with a converted package unless tests already describe the workflow's
 inputs, outputs, restart behavior and child tasks. A package run gives a
@@ -61,9 +61,9 @@ normal path:
 
 ```console
 httk workflow install --workspace workflow-workspace ./legacy-package
-httk job new --workspace workflow-workspace --workflow-dir ./legacy-package \
+httk job new --workspace workflow-workspace ./legacy-package \
   --placement migration/reference/silicon-relax
-httk workflow run --workspace workflow-workspace --pool vasp --workers 4
+httk run --workspace workflow-workspace --pool vasp --workers 4
 ```
 
 The old source paths remain available below the compatibility `HTTK_DIR`, so
@@ -129,9 +129,9 @@ Install it, then submit a one-shot job or a structure campaign:
 
 ```console
 httk workflow install --workspace WS ./silicon-relax
-httk job new --workspace WS --workflow-dir ./silicon-relax \
+httk job new --workspace WS ./silicon-relax \
   --input-from structure structures/*.cif --parameter encut=520
-httk workflow run --workspace WS --pool vasp
+httk run --workspace WS --pool vasp
 httk collect --workspace WS
 ```
 
@@ -166,7 +166,7 @@ httk config import-v1
 When no identity is configured, this creates a named identity from the legacy
 name and email, imports the public key into the core-owned `identity.json` and
 records where it came from. Otherwise, set up a fresh identity with
-`httk init`.
+`httk setup`.
 
 ### Project metadata
 
@@ -199,7 +199,7 @@ httk workspace init --name default cluster-a:/remote/path/to/workflow-workspace
 ```
 
 `workspace_root` is retired. `workspace init REMOTE:PATH` initializes and
-registers the remote workspace, and `workspace settings set REMOTE:NAME …`
+registers the remote workspace, and `workspace set -w REMOTE:NAME KEY=VALUE…`
 then sets its scheduler and application settings. `remote import-v1` does not
 create a workspace. It keeps the legacy Runs hint in the remote's
 `legacy_settings` so an operator can choose the path explicitly.
@@ -214,8 +214,8 @@ normal manager can serve both from the same *httk₂* workspace. Select the
 converted package's `taskset` with the manager pool:
 
 ```console
-httk workflow run --workspace workflow-workspace --pool vasp --workers 2
-httk workflow run --workspace workflow-workspace --workers 2
+httk run --workspace workflow-workspace --pool vasp --workers 2
+httk run --workspace workflow-workspace --workers 2
 ```
 
 The second manager serves the `default` pool, where native jobs land.
@@ -226,7 +226,7 @@ its workflow. Migrate one representative task first and compare it
 with the compatibility reference before moving a larger batch.
 
 Two v1 habits have *httk₂* counterparts. A v1 task directory sent to a
-computer was simply gone locally; `httk job push` leaves an `away` copy
+computer was simply gone locally; `httk push` leaves an `away` copy
 instead (`httk job list --state away`, `httk job recover JOB` if the remote
 job is lost). And v1's fixed task directory names made re-running an
 instantiate script create only what was missing; *httk₂* job keys are fresh
@@ -360,10 +360,10 @@ Install it, stage the static inputs into a job, and run it:
 ```console
 httk workspace init native-workspace
 httk workflow install --workspace native-workspace ./native-relax
-httk job new --workspace native-workspace --workflow-dir ./native-relax \
+httk job new --workspace native-workspace ./native-relax \
   --file POSCAR=POSCAR --file INCAR=INCAR --file vasp-options.json=vasp-options.json \
   --placement migration/native/silicon-relax --tag silicon-relax --priority 700
-httk workflow run --workspace native-workspace
+httk run --workspace native-workspace
 ```
 
 Staged files are below `HTTK_WORKFLOW_JOB_DIR` (a bare `--file` name lands in
@@ -798,7 +798,7 @@ Stop instantiating new converted jobs first. Let submitted v1 jobs reach a
 terminal state, or cancel them through recorded operator requests:
 
 ```console
-httk job request cancel --workspace workflow-workspace \
+httk job cancel --workspace workflow-workspace \
   --reason "replaced by validated native workflow" JOB_UUID
 ```
 

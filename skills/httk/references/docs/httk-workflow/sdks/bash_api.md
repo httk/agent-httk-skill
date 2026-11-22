@@ -109,7 +109,7 @@ an `adhoc:defects@<sha12>` workflow, and every job, parent and child, runs that
 installation:
 
 ```console
-httk job new --workspace workflow-workspace --from-runner defects.sh --step characterize \
+httk job new --workspace workflow-workspace defects.sh --start-step characterize \
     --parameter encut=520 --placement project/si-vacancies
 ```
 
@@ -151,7 +151,7 @@ and touches nothing on disk. `httk_workflow_main --describe` does the same. The
 step set is also recorded in the job's `state.json` as `runner_steps`, from the
 first outcome the job publishes.
 
-`job new --from-runner FILE` executes FILE in this describe mode to infer its
+`job new FILE` executes FILE in this describe mode to infer its
 workflow and initial step when it installs FILE as an `adhoc:` workflow. The file must call `httk_workflow_runner WORKFLOW
 STEP...` before any work, including before `httk_workflow_main`; a file that
 never registers fails deterministically with the file name and that missing-call
@@ -197,7 +197,8 @@ step composed lives in shell state, so the subshell costs a step nothing.
 | `$HTTK_WORKFLOW_STEP` | the step this attempt runs |
 | `$HTTK_WORKFLOW_WORKDIR`, `$HTTK_WORKFLOW_JOB_DIR`, `$HTTK_WORKFLOW_DATA_DIR` | absolute paths: the persistent `run/` workdir, the job directory, and its `data/`, which exists once a transaction put something there |
 | `$HTTK_WORKFLOW_DURABLE` | `1` on a storage-durable workspace, `0` otherwise |
-| `httk_workflow_context deadline`, `$HTTK_WORKFLOW_DEADLINE` | the epoch second at which the manager stops this attempt; only when the attempt has a `maxtime`, otherwise the call exits 1 and the variable is unset |
+| `httk_workflow_context deadline`, `$HTTK_WORKFLOW_DEADLINE` | the epoch second at which the manager stops this attempt: the earlier of its start plus its `maxtime` and the manager's drain start; with neither, the call prints nothing and the variable is unset |
+| `httk_workflow_context stop_warning`, `$HTTK_WORKFLOW_STOP_WARNING` | the epoch second from which this attempt should wind down: its deadline minus its `warntime`, at least 0; without a deadline or a `warntime`, the call prints nothing and the variable is unset |
 | `httk_workflow_context binding`, `$HTTK_WORKFLOW_NODELIST`, `$HTTK_WORKFLOW_NODEFILE`, `$HTTK_WORKFLOW_LAUNCH` | the nodes, nodefile and launch prefix the attempt was given: the context object (its `file` member names `binding.json`, which adds per-node `gpu_ids` and `cpus`), the comma-separated hosts, the nodefile path (one host line per processor slot), and the shell-quoted launch prefix (such as `srun ...`, or in a confined attempt the launch client that has the manager start the ranks; set only when one applies; run it with `eval` when it may hold quoted words); only when the manager has a node inventory, otherwise the call exits 1 and the variables are unset |
 
 A step starts in its workdir, so ordinary relative paths are workdir paths.
@@ -374,8 +375,8 @@ this attempt's.
 | `--placement PATH` | where the child is created; `<this job's placement>/<this job's key>.children` by default, or this job's placement with workspace setting `children.placement=flat` |
 | `--tag TAG`, `--name NAME` | override what the child is called |
 | `--priority N`, `--claim-pool POOL`, `--capability NAME` | override how the child is scheduled |
-| `--retry-on CODE`, `--max-attempts-per-activation N`, `--max-total-attempts N`, `--max-activations N` | the child's retry policy |
-| `--resources @FILE.json` | the child's requested resources (`maxtime` and `mintime` as Slurm duration strings) |
+| `--retry-on CODE`, `--max-attempts-per-activation N`, `--max-total-attempts N`, `--max-activations N` | the child's retry policy; with none of them, the spawning job's |
+| `--resources @FILE.json` | the child's requested resources (`maxtime`, `mintime` and `warntime` as Slurm duration strings) |
 | `--step-resources @FILE.json` | the child's per-step resource requirements (time labels as Slurm duration strings) |
 
 To start a different workflow, use `httk_workflow_call`.
@@ -421,8 +422,8 @@ When the condition can no longer be met the job advances to `--on-impossible` if
 one is named, and fails with `dependency_failure` otherwise. Add
 `--resource NAME=VALUE` one or more times to `httk_workflow_advance` or
 `httk_workflow_gather` to set the next activation's resource requirement. A
-value is an integer, except for the reserved time labels `maxtime` and
-`mintime`, which take a Slurm duration such as `--resource maxtime=1:30:00`
+value is an integer, except for the reserved time labels `maxtime`, `mintime`
+and `warntime`, which take a Slurm duration such as `--resource maxtime=1:30:00`
 (`M`, `M:S`, `H:M:S`, `D-H`, `D-H:M`, or `D-H:M:S`).
 
 ### Data and workdir changes
@@ -524,7 +525,12 @@ the program's output is forwarded live, in arrival order, to the inherited
 stdout or stderr while only bounded tails are retained in the report. Explicit
 output paths remain authoritative instead of being duplicated to the inherited
 streams. An explicit output file is truncated when the run starts, so a retry in a
-persistent workdir never inherits the previous run's output.
+persistent workdir never inherits the previous run's output. A `SIGTERM` or
+`SIGINT` the bridge receives stops the program's process group, and the bridge
+then ends by that signal without writing the report (status 128 + the signal
+number). A runner under `httk_workflow_main` waits for the command it is
+running, then ends by the same signal and publishes nothing, so a drained or
+cancelled runner ends without an outcome.
 
 A checker spec has format `httk-workflow-checker-spec`, format version 2, an
 `argv` string array, and optional `required` and `sources` fields. Each source
@@ -554,6 +560,7 @@ A simulation code's Bash API ships with its code-support distribution, not with
   `nbands`;
 - `run` and `diagnose`;
 - `remedy_plan` and `remedy_apply`;
+- `finalize` (OUTCAR cleaning, POTCAR summaries and output compression);
 - `preclean`, `clean_outcar`, `normalize_poscar`, `scale_poscar`,
   `rattle_poscar`, and the energy, volume, POTIM, plane-wave, and POTCAR
   summary extractors.

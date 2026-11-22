@@ -222,7 +222,10 @@ Compression is an orthogonal layer *below* the backends: it turns a compressed b
 an uncompressed one (and, for text, before decoding), independently of where the bytes come from.
 The same codecs therefore apply to filenames, open files, raw bytes, and remote responses, so a
 `data.json.gz` filename or a gzipped URL loads with no extra ceremony. The stdlib codecs `gzip`,
-`bzip2`, `xz`, and `lzma` are built in.
+`bzip2`, `xz`, and `lzma` are built in. Zstandard (`zstd`, `.zst`) is registered too; it reads
+through the stdlib `compression.zstd` module on Python 3.14+ and needs the `backports.zstd`
+package on older interpreters (installed with *httk-workflow*), otherwise opening `.zst` data
+raises `ModuleNotFoundError`.
 
 A `compression` hint (parallel to `kind`) selects how a codec is chosen:
 
@@ -278,6 +281,15 @@ register_compression(
 
 Archives (`.tar.*`, `.zip`), write-side compression, and HTTP `Content-Encoding` negotiation are
 out of scope for this layer.
+
+The registry also names the content of a compressed file on disk:
+`httk.core.digests.content_sha256_file(path)` returns the SHA-256 of the decompressed bytes when
+the name carries a registered suffix (`None` otherwise), and `FileRecord.from_file(path, url)`
+describes a stored file with its stored-bytes `size`, `sha256` and media type plus that
+`content_sha256`, which stays outside the record's content identity. Pass `max_bytes=` to
+`content_sha256_file` to bound the decompression of untrusted files. The new `core_file` column
+and index change a store's `entry_schemas` fingerprint, so an existing store holding files
+reopens only with `upgrade=True` (the change is additive) or after a rebuild.
 
 ## Loading files by type
 

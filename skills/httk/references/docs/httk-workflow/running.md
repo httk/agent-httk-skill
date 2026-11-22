@@ -6,8 +6,8 @@ they are done, look at what happened, and collect the results.
 
 ```console
 httk workflow install --workspace default 'git+https://github.com/httk/workflows-vasp#vasp-relax'
-httk job new --workflow vasp.relax --input structure=POSCAR --tag silicon
-httk workflow run
+httk job new vasp.relax --input structure=POSCAR --tag silicon
+httk run
 httk job list
 httk collect --into results.sqlite --id-base httk.campaign
 ```
@@ -21,19 +21,20 @@ come along:
 ```console
 httk workflow install --workspace default 'git+https://github.com/httk/workflows-vasp#vasp-relax'
 httk workflow install --workspace default ./my-workflow
-httk workspace workflows default
+httk workflow list -w default
 ```
 
-Without `--workspace`, `httk workflow install URI` only fetches the repository
-into this machine's cache. `httk job new` then instantiates jobs:
+`httk workflow fetch URI` only fetches the repository into this machine's
+cache, without installing it in a workspace. `httk job new` then instantiates jobs:
 
-| `--workflow` / option | Selects |
+| SOURCE / option | Selects |
 | --- | --- |
 | `vasp.relax` | an installed workflow by short name (or id) |
-| `--workflow 'git+…#vasp-relax' --install` | a workflow not installed yet, installed first |
-| `--workflow-dir ./my-workflow --install` | a local workflow package directory |
-| `--from-runner ./relax.py` | a runner file of your own, installed ad hoc |
-| `--from-runner flow.cwl` | a CWL, PWD or jobflow document ({doc}`workflow_compat`) |
+| `'git+…#vasp-relax' --install` | a workflow not installed yet, installed first |
+| `./my-workflow --install` | a local workflow package directory |
+| `./relax.py` | a runner file of your own, installed ad hoc |
+| `flow.cwl` | a CWL, PWD or jobflow document ({doc}`workflow_compat`) |
+| `--command 'my_executable {input}'` | a one-step runner generated from a command line |
 
 Declared **inputs** are files or entries the workflow stages into the payload
 (`--input structure=POSCAR`); **parameters** are plain values
@@ -43,8 +44,8 @@ managers and collects can address on its own; job directories never nest, so
 no placement component may look like a job key (`name--uuid`). Workflows decide
 their own data handling through parameters; the VASP workflows, for example,
 copy a curated set of results into `data/` only with
-`--parameter publish_data=true`. `httk workflow describe NAME` shows what a
-workflow declares before anything is created, and `httk workflow precheck`
+`--parameter publish_data=true`. `httk workflow show NAME` shows what a
+workflow declares before anything is created, and `httk job precheck`
 reports whether the workspace can run its jobs.
 
 A large output of a finished job, a trajectory too big to copy, is handed to
@@ -63,7 +64,7 @@ file back to its job by hand.
 Many jobs at once come from a directory of inputs, one job per file:
 
 ```console
-httk job new --workflow vasp.relax --input-from structure structures/ --parameter kpoint_density=30.0
+httk job new vasp.relax --input-from structure structures/ --parameter kpoint_density=30.0
 ```
 
 The same thing streams from Python, which is how a campaign of any size is
@@ -89,10 +90,10 @@ its `job.json`.
 ## Running managers
 
 ```console
-httk workflow run                      # serve ready jobs until nothing is left
-httk workflow run --idle               # keep serving; this is how a campaign runs
-httk workflow run --count 4 --workers 8
-httk workflow run --workspace kappa:runs --count 4
+httk run                      # serve ready jobs until nothing is left
+httk run --keep-running               # keep serving; this is how a campaign runs
+httk run --count 4 --workers 8
+httk run --workspace kappa:runs --count 4
 ```
 
 A manager claims jobs, runs their steps and records every transition. `--count`
@@ -109,7 +110,7 @@ through that workspace's own launcher and preludes.
 To keep jobs from writing anything but their own job directory, confine them:
 
 ```console
-httk workspace settings set --key manager.confine --value bwrap default
+httk workspace set -w default manager.confine=bwrap
 ```
 
 Each attempt then runs in a Bubblewrap sandbox that sees the workspace
@@ -138,11 +139,11 @@ the workdir, `data/` the results a job committed, and `logs/` its run log.
 Operator requests change a job's course without touching its files:
 
 ```console
-httk job request pause --reason "hold for quota" silicon
-httk job request continue --reason "quota restored" silicon
-httk job request restart --reason "redo this step" silicon
-httk job request cancel --reason "wrong structure" silicon
-httk job request set_budget --max-attempts-per-activation 3 --reason "flaky node" silicon
+httk job pause --reason "hold for quota" silicon
+httk job resume --reason "quota restored" silicon
+httk job restart --reason "redo this step" silicon
+httk job cancel --reason "wrong structure" silicon
+httk job set silicon budget.max_attempts_per_activation=3 --reason "flaky node"
 httk job delete silicon                # terminal or paused jobs only
 ```
 
@@ -162,7 +163,7 @@ the owners and their liveness, and when no probe can decide (a host that is
 gone), `workspace attest-dead OWNER --reason TEXT` declares the death; it
 refuses a provably live owner and needs `--force` for an undecidable one, and
 attesting a still-running owner can run work twice. `workspace status`
-summarizes the workspace, `workspace fsck` checks the job tree (only while
+summarizes the workspace, `workspace check` checks the job tree (only while
 nothing else uses the workspace, like `fsck` for a filesystem), and
 `workspace gc` frees what the retention policy allows.
 {doc}`details/taskmanager` explains each of them.
@@ -175,13 +176,13 @@ succeeded job home:
 
 ```console
 httk workflow install --workspace kappa:runs 'git+https://github.com/httk/workflows-vasp#vasp-relax'
-httk job push kappa:runs
-httk workflow run --workspace kappa:runs --count 4
-httk job pull kappa:runs
+httk push kappa:runs
+httk run --workspace kappa:runs --count 4
+httk pull kappa:runs
 ```
 
-`httk job push [SRC] DST` moves every `ready` job (created, waiting to start)
-and `httk job pull SRC [DST]` every `succeeded` one, each root together with
+`httk push [SRC] DST` moves every `ready` job (created, waiting to start)
+and `httk pull SRC [DST]` every `succeeded` one, each root together with
 its children. The end left out is the workspace the command runs in, else the
 default workspace (the per-user one is created on first use). `--job JOB`,
 `--state STATE` or `--step STEP` replaces that implicit state (`--step` without
@@ -189,15 +190,15 @@ default workspace (the per-user one is created on first use). `--job JOB`,
 the selection to one campaign. A root is never split from its children: one
 with children still running (a parent that an `any_terminal`, `any_succeeded`
 or `at_least` join let finish first) is refused and stays until they finish.
-Both are forms of `httk job transfer SRC DST`, the general verb, which needs an
+Both are forms of `httk job move SRC DST`, the general verb, which needs an
 explicit selection and moves a selected job with its descendants only with
 `--tree`.
 
-`job push` keeps an *away copy* of every job it moves: an inert job in the
+`push` keeps an *away copy* of every job it moves: an inert job in the
 state `away` that never runs, is not collected and records where it went.
 `httk job list --state away` shows what you are still waiting for, and
-`job pull` of the finished jobs replaces the copies (`--no-keep` keeps none;
-plain `job transfer` moves, `job transfer --keep` keeps). A job lost on the
+`pull` of the finished jobs replaces the copies (`--no-keep` keeps none;
+plain `job move` moves, `job move --keep` keeps). A job lost on the
 remote is returned to the state it left with `httk job recover JOB` (or
 `--all`), to push again; nothing checks that it is dead there, so recovering
 one that still runs and pushing it elsewhere runs it twice. See
@@ -205,8 +206,8 @@ one that still runs and pushing it elsewhere runs it twice. See
 
 A transfer holds the jobs on the source, copies them to the destination,
 adopts them there and only then releases the hold; an interrupted transfer is
-finished by running it again or with `httk job transfer --resume`, and
-`httk transfer status` lists the holds.
+finished by running it again or with `httk job move --resume`, and
+`httk workspace status` lists the holds.
 
 Without a registered workspace at either end, `job eject` and `job adopt` move
 jobs through a plain directory:
@@ -241,8 +242,8 @@ Workflow packages may ship curated scripts that run against a finished job's
 files, such as the relaxation plot of the VASP workflows:
 
 ```console
-httk workflow postprocess --script relaxation-plot
-httk workflow postprocess --script relaxation-plot silicon
+httk postprocess relaxation-plot
+httk postprocess relaxation-plot silicon
 ```
 
 Output lands under `<workspace>/postprocess/`, never in the payload, so a
@@ -256,7 +257,7 @@ output into the same store:
 
 ```console
 httk collect WS --into results.sqlite --id-base mydb
-httk workflow postprocess --workspace WS --script relaxation-plot
+httk postprocess relaxation-plot --workspace WS
 httk collect WS --postprocess relaxation-plot --into results.sqlite --id-base mydb
 ```
 
@@ -271,15 +272,16 @@ and projects are sealed on top, bottom-up, and unsealed top-down:
 
 ```console
 httk job seal silicon                  # a succeeded job that has no seal yet
+httk job verify silicon                # check it against its seal
 httk workspace seal
 httk project seal
-httk seal verify
+httk project verify
 httk project unseal
 ```
 
 A succeeded job is never changed until `job unseal` releases it (or, for debugging,
 `job unlock` puts it in debug mode, see {doc}`restarting_jobs`), and a sealed
-workspace refuses modifying commands; reading, `fsck`, `gc` and postprocessing
+workspace refuses modifying commands; reading, `workspace check`, `gc` and postprocessing
 still work, and a seal travels with its job. {doc}`details/sealing` covers key refs, verdicts and what each level
 records.
 

@@ -48,14 +48,14 @@ END
 ## The eight commands
 
 ```console
-$ httk init --name "Your Name" --email you@example.org
+$ httk setup --name "Your Name" --email you@example.org
 $ httk project init --name quickstart .
 $ httk workspace init --name default workspace
-$ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --install --input structure=POSCAR --tag silicon
-$ httk workspace settings set --key vasp.command --value "$PWD/examples/mock_vasp.py" default
-$ httk workflow run
+$ httk job new 'git+https://github.com/httk/workflows-vasp#vasp-relax' --install --input structure=POSCAR --tag silicon
+$ httk workspace set -w default vasp.command="$PWD/examples/mock_vasp.py"
+$ httk run
 $ httk collect --into results.sqlite --id-base httk.quickstart
-$ httk workflow postprocess --script relaxation-plot
+$ httk postprocess relaxation-plot
 ```
 
 On a VASP machine, set `vasp.command` to the bare program, such as
@@ -98,7 +98,7 @@ silicon--0c4f…	/…/workspace/jobs/ready/silicon--0c4f…~p500~…
 A job's directory moves with its state (`jobs/ready/`, `jobs/owned/…`,
 `jobs/succeeded/`), so name a job by its key or UUID, not by its path.
 
-**`settings set`** stored workspace state that travels with the job wherever it
+**`workspace set`** stored workspace state that travels with the job wherever it
 runs. The manager exports scalar settings into each attempt environment, so
 `vasp.command` becomes `HTTK_VASP_COMMAND`; a real VASP machine can set it to
 `vasp_std`. The setting names only the program; the manager supplies the
@@ -107,7 +107,7 @@ from the job's resources. A real environment variable remains a deployment
 override and wins over the workspace setting.
 
 **`run`** ran a task manager until nothing was ready, driving the job through
-`prepare`, `run`, and `publish`, and sealed it when it succeeded. With `--idle` the same manager keeps serving
+`prepare`, `run`, and `publish`, and sealed it when it succeeded. With `--keep-running` the same manager keeps serving
 the workspace, which is how a campaign is run.
 
 **`collect --into`** printed one JSON summary per finished job and stored its
@@ -124,7 +124,7 @@ under the workspace root. Postprocess output never lands in the payload, so a
 finished job can be sealed and still be postprocessed; change the root with the
 `postprocess.directory` setting or `--output-dir`. To postprocess one job
 instead of every succeeded job, pass its id:
-`httk workflow postprocess --script relaxation-plot <job-id>`.
+`httk postprocess relaxation-plot <job-id>`.
 
 ## Looking at a job
 
@@ -157,7 +157,7 @@ Point `--input-from structure` at a *directory* and every readable structure
 file in it becomes one job, each tagged after its file:
 
 ```console
-$ httk job new --workspace default --workflow vasp.relax --input-from structure structures/ \
+$ httk job new --workspace default vasp.relax --input-from structure structures/ \
       --parameter kpoint_density=30.0 --placement project/screening
 ```
 
@@ -195,7 +195,7 @@ cycle in full.
   remotes, and creating, running, inspecting, transferring and sealing jobs.
 - {doc}`vasp_runners`: the VASP workflows of the workflows-vasp repository.
 - {doc}`runtime_helpers`: writing a runner of your own, which
-  `job new --from-runner ./my_runner.py` installs into the workspace ad hoc;
+  `job new ./my_runner.py` installs into the workspace ad hoc;
   {doc}`sdks/bash_api` is the same protocol from Bash.
 - {doc}`workflow_packages`: packaging a workflow with its manifest and hooks.
 - {doc}`workflow_compat`: running CWL, PWD, jobflow and httk v1 workflows as jobs.

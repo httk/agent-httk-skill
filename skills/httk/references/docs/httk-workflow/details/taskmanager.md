@@ -34,8 +34,7 @@ and {doc}`/campaigns` for spreading a very large run across many workspaces.
 
 Protocol publications are synchronized to storage by default. `--no-durable`
 skips the `fsync` calls for throwaway workspaces: submission and transitions get
-faster, but a node crash may lose the latest publications. `--durable` is still
-accepted and has no effect, since it is the default.
+faster, but a node crash may lose the latest publications.
 
 ### Workspaces on a cluster
 
@@ -43,19 +42,19 @@ Manager launch is a property of the workspace. On the cluster, install the
 packaged Slurm launcher and configure the workspace it owns:
 
 ```console
-httk launcher add --template slurm --global cluster
+httk launcher add --kind slurm --global cluster
 httk workspace init --name runs /scratch/rar/httk/runs
-httk workspace settings set --key manager.launch --value cluster runs
-httk workspace settings set --key slurm.partition --value batch runs
-httk workspace settings set --key vasp.command --value vasp_std runs
-httk workflow run --workspace runs --count 4
+httk workspace set -w runs manager.launch=cluster
+httk workspace set -w runs slurm.partition=batch
+httk workspace set -w runs vasp.command=vasp_std
+httk run --workspace runs --count 4
 ```
 
 From a desk, the same operations reach that workspace through a remote as
 `kappa:runs`; `run --workspace kappa:runs` invokes
-`httk workflow manager run --workspace runs --count 4 --detach` on kappa, which
+`httk run --workspace runs --count 4 --detach` on kappa, which
 uses the owning workspace's launcher. Move jobs there and back with
-`job transfer` ({doc}`remotes`).
+`job move` ({doc}`remotes`).
 
 ### Workspace policy
 
@@ -64,10 +63,10 @@ manager, CLI and independent implementation attaching it agrees on them. They
 live in `.httk-workspace/format.json`:
 
 ```console
-httk workspace policy show WORKSPACE
-httk workspace policy set --key visibility_deadline_seconds --value 30 \
-  --key retention.attempt_control_days --value 14 WORKSPACE
-httk workspace policy unset --key retention.trash_days WORKSPACE
+httk workspace show -w WORKSPACE policy.visibility_deadline_seconds policy.retention
+httk workspace set -w WORKSPACE policy.visibility_deadline_seconds=30 \
+  policy.retention.attempt_control_days=14
+httk workspace unset -w WORKSPACE policy.retention.trash_days
 ```
 
 | Key | Default | Meaning |
@@ -78,8 +77,11 @@ httk workspace policy unset --key retention.trash_days WORKSPACE
 | `retention.owner_tombstone_days` | `30.0` | Age after which `gc` removes the tombstone of a recovered owner. |
 | `retention.daemon_history_days` | `30.0` | Age after which the [workspace daemon](workspace_daemon.md#quotas) retires settled requests and ended manager starts, freeing their quota; the daemon applies it, not `gc`, and never before a request's signed lifetime plus clock skew has passed. |
 
-Values are JSON, validated on write; `null` or `"keep"` keeps a retention
-category forever, and an unknown key is refused. A policy write is a
+On the command line each key carries a `policy.` prefix (`policy.retention`
+sets the whole object, `policy.retention.MEMBER` merges one member), and
+`workspace unset` restores a key's default. Values are JSON, validated on
+write; `null` or `"keep"` keeps a retention category forever, and an unknown
+key is refused. A policy write is a
 read-modify-write of `format.json`, verified by re-reading it and redone when
 a concurrent writer replaced it in between; writers are not serialized, so the
 last writer of a key wins. Managers read the policy when
@@ -97,8 +99,8 @@ they enter that snapshot. The manager launch profile is also a workspace
 setting, so each workspace carries its own scheduler requirements.
 
 ```console
-httk workspace settings set --key vasp.command --value vasp_std WORKSPACE
-httk workspace settings show WORKSPACE
+httk workspace set -w WORKSPACE vasp.command=vasp_std
+httk workspace show -w WORKSPACE
 ```
 
 The `slurm.*` settings become batch directives of the workspace's Slurm
@@ -162,8 +164,8 @@ workflow it calls. Install once, then create jobs by id or short name:
 ```console
 httk workflow install --workspace WORKSPACE 'git+https://github.com/httk/workflows-vasp#vasp-relax'
 httk workflow install --workspace WORKSPACE ./my-workflow
-httk workspace workflows WORKSPACE
-httk job new --workspace WORKSPACE --workflow vasp.relax --input structure=POSCAR
+httk workflow list -w WORKSPACE
+httk job new --workspace WORKSPACE vasp.relax --input structure=POSCAR
 ```
 
 `job new --install` installs a missing workflow first, and a runner file,
@@ -175,12 +177,12 @@ and builds a `[workflow.build]` package for this platform (unless
 platform, and `httk workflow uninstall --workspace WORKSPACE SELECTOR` removes
 one; `--check` warns about unfinished jobs that still use it.
 
-`job transfer` (and `job push`/`job pull`) installs the workflows its jobs need
+`job move` (and `push`/`pull`) installs the workflows its jobs need
 in the destination when it lacks them and the source has them, never replacing
 an installation (see {doc}`remotes`). Otherwise a job ejected, adopted, or
 transferred with `--no-workflows` into a workspace that lacks its workflow
 stays `ready` and unclaimed until the workflow is installed there; `job adopt`
-and `job transfer` warn about it, and `job why` and `workflow precheck` name
+and `job move` warn about it, and `job why` and `job precheck` name
 it. Do not reinstall a workflow that unfinished jobs
 use: an id is one workflow, and the installed digest is recorded at each launch
 (`workflow_pin`), not enforced. Nothing refuses a reinstall, but each
@@ -190,8 +192,8 @@ new one); the manager logs a warning when a job's next launch runs a different
 tree than its last; `job why` reports a `workflow pin` check when the installed
 tree differs from the last launch's pin; and `httk collect` refuses such a job
 with both digests and the remedies: reinstall the tree it ran with, or rerun
-the job on the installed tree (`httk job request restart --reason TEXT JOB`
-for a failed or paused job, or `continue --tree` when it failed waiting on
+the job on the installed tree (`httk job restart --reason TEXT JOB`
+for a failed or paused job, or `job resume --tree` when it failed waiting on
 failed children; a succeeded job is deleted with `httk job delete` and created
 again).
 To edit the runner for one job only, unlock the job and edit its own copy of
@@ -222,8 +224,8 @@ refuse such a placement (spawned children default to a nested
 Run the read-only precheck before starting managers:
 
 ```console
-httk workflow precheck --workspace WORKSPACE
-httk workflow precheck --workspace WORKSPACE --json
+httk job precheck --workspace WORKSPACE
+httk job precheck --workspace WORKSPACE --json
 ```
 
 For `ready`, `waiting` and `paused` jobs it reports environment entries and
@@ -248,14 +250,14 @@ answers what serves the workspace without a `job why` on an arbitrary job.
 ### Starting a manager
 
 ```console
-httk manager run --workspace WORKSPACE --workers 8
-httk manager run --workspace WORKSPACE --pool vasp --capability gpu --workers 4
+httk run --workspace WORKSPACE --workers 8
+httk run --workspace WORKSPACE --pool vasp --capability gpu --workers 4
 ```
 
 Without pool configuration, a manager advertises the reserved `default` pool;
 `--pool` replaces it, so `--pool vasp` alone does not claim `default` jobs.
 By default it runs until idle, which suits batch invocations and tests; pass
-`--idle` to keep serving. Idle means no attempt running and no job it could
+`--keep-running` to keep serving. Idle means no attempt running and no job it could
 claim; a manager that serves the workspace's exchange also waits while the
 inbox holds an entry it may still adopt or a finished exchange tree of its
 pools can be (or was asked to be) returned, and does not exit as idle within
@@ -284,7 +286,7 @@ every launch it made have been reaped, and never follows a symlink there.
 
 ### Launching managers
 
-`run` and `manager run` launch managers through the launcher bundle that the
+`run` launches managers through the launcher bundle that the
 workspace's `manager.launch` setting selects: the built-in `process` launcher
 starts detached local processes, and a named bundle, such as the Slurm launcher
 `cluster` above, starts them as it defines. `manager.count`, `manager.workers`,
@@ -344,7 +346,7 @@ available again. A workspace with the exchange extension requires
 
 ### Startup banner and idle summary
 
-`run` and `manager run` print one startup line (manager id, workspace, log
+`run` prints one startup line (manager id, workspace, log
 file, pools, capabilities, resources) and, on exiting idle, one summary line:
 
 ```text
@@ -391,7 +393,7 @@ keeps committing their outcomes for up to `--drain-timeout` seconds (sending
 `SIGKILL` to any attempt still running 10 s into the drain), gives back the
 jobs it still holds, and exits successfully. Three things start a drain:
 
-- `SIGTERM` or `SIGINT`, which batch systems send at walltime, for an `--idle`
+- `SIGTERM` or `SIGINT`, which batch systems send at walltime, for an `--keep-running`
   manager;
 - `SIGTERM` (not `SIGINT`, which still stops at once) for a manager running
   until idle;
@@ -402,9 +404,16 @@ A signal during a drain the deadline started, or a second signal during a
 signal drain, kills the attempts and exits immediately; the jobs it still holds
 are recovered once its death is proven. An attempt the drain stopped that
 published no outcome fails with `owner_lost` (an unclean restart, retried only
-if `retry_policy.retry_on` lists it), unless it had already exceeded its
+if `retry_policy.retry_on` lists it; a package declares it in
+[`[workflow.retry_policy]`](workflow_packages.md#workflowretry_policy)), unless it had already exceeded its
 `maxtime`, which stays `timeout`; an outcome the runner publishes on `SIGTERM`
-wins as usual. After a drain the manager prints
+wins as usual. A runner whose program runs under `ProcessSupervisor` (the
+`httk.codes.<code>` run helpers, `httk_workflow_run`) ends by the `SIGTERM`
+itself once the program is stopped, so it publishes none. During a stop (a
+drain, a cancel, a `maxtime` stop) the manager waits for the attempt's whole
+process group, also after the runner itself has exited, until the stop's grace
+ends and it sends `SIGKILL`; the attempt is committed only once the group is
+gone. After a drain the manager prints
 `drained (<reason>): N attempt(s) left for recovery` instead of the idle
 summary.
 
@@ -471,7 +480,7 @@ Managers may advertise integer resource capacities, such as
 CPUs and 128000 MB:
 
 ```console
-httk manager run --workspace WORKSPACE --workers 4 \
+httk run --workspace WORKSPACE --workers 4 \
   --worker-resource procs 32 --worker-resource mem 128000
 ```
 
@@ -518,7 +527,7 @@ resources = { procs = 1, mem = 2000, matlab_license_slots = 1 }
 and is served by:
 
 ```console
-httk workflow run --workers 4 \
+httk run --workers 4 \
   --worker-resource procs 32 --worker-resource mem 128000 \
   --worker-resource matlab_license_slots 2
 ```
@@ -528,8 +537,9 @@ two at a time because of the two `matlab_license_slots`.
 
 ### Time requirements
 
-`maxtime` (the time limit of one attempt) and `mintime` (the least remaining
-allocation time needed to start one) are reserved labels. Jobs declare them as
+`maxtime` (the time limit of one attempt), `mintime` (the least remaining
+allocation time needed to start one) and `warntime` (how long before its
+deadline an attempt should wind down) are reserved labels. Jobs declare them as
 Slurm `--time` strings, such as `maxtime = "24:00:00"` in a manifest,
 `resources={"maxtime": "2:00:00"}` from the SDK, or `--resource maxtime=2:00:00`
 from the Bash bridge; `job.json` and the attempt context hold seconds. They are
@@ -540,7 +550,9 @@ Each time label resolves on its own (dynamic requirement, then step, then
 job). A manager enforces `maxtime`: an attempt still running `maxtime` seconds
 after its launch gets `SIGTERM`, then `SIGKILL` after the cancellation grace
 (10 s), and fails with the reserved code `timeout` unless it published an
-outcome meanwhile; `retry_policy.retry_on` can list `timeout`. The attempt is
+outcome meanwhile; `retry_policy.retry_on` (declared in
+[`[workflow.retry_policy]`](workflow_packages.md#workflowretry_policy)) can list
+`timeout`. The attempt is
 told when the `SIGTERM` comes: the context member `deadline`,
 `HTTK_WORKFLOW_DEADLINE` and `Attempt.deadline`. A spawned child never inherits
 `mintime`, and its `maxtime` is capped at the spawning attempt's.
@@ -557,6 +569,24 @@ instead; see {doc}`launchers`.
 `workspace owners` and `job why` show each manager's time left. At the drain
 point the manager [drains](#draining) and exits. An allocation end that has
 passed is never evidence of death on its own.
+
+### Winding down before the deadline
+
+A step that can stop early and resume later declares `warntime`, for example
+`[workflow.steps.run.resources] warntime = "5:00"`. Each attempt with a
+deadline (the earlier of its start plus `maxtime` and the drain point) and a
+resolved `warntime` above zero gets a stop warning: the deadline minus
+`warntime`, at least 0, as the context member `stop_warning`,
+`HTTK_WORKFLOW_STOP_WARNING`, `Attempt.stop_warning` and
+`httk_workflow_context stop_warning`. It may already be in the past at launch.
+Without a known allocation end and without `maxtime` there is no deadline and
+no warning. The manager sends no signal and does nothing else with it: the
+step polls it, for example from a
+[supervisor monitor](runtime_helpers.md#running-processes), and
+a step that stops in time publishes `advance` (optionally with a `mintime`, so
+a manager about to drain does not pick it up) for a later manager to resume. A
+step still running at its deadline is stopped as before: `timeout` at its
+`maxtime`, `owner_lost` at the drain point. `warntime` never gates a start and is never counted against capacity.
 
 ### Allocations
 
@@ -652,8 +682,8 @@ allocation; it is split like shell words, and the placeholders are substituted
 in each word:
 
 ```console
-httk workspace settings set --key manager.launch_template \
-  --value 'mpirun -np {procs} --hostfile {nodefile}' WORKSPACE
+httk workspace set -w WORKSPACE \
+  manager.launch_template='mpirun -np {procs} --hostfile {nodefile}'
 ```
 
 A template naming any other placeholder fails the attempt's preparation with
@@ -690,7 +720,7 @@ locally, so the manager also binds it to its devices:
   counts such as `OMP_NUM_THREADS` are not set.
 
 ```console
-httk workspace settings set --key manager.bind_cpus --value true WORKSPACE
+httk workspace set -w WORKSPACE manager.bind_cpus=true
 ```
 
 Placement is in memory only: a replacement manager places its own attempts on
@@ -744,9 +774,9 @@ Of two managers that try, exactly one wins; the other moves on.
 Placement prefixes restrict what a manager scans:
 
 ```console
-httk manager run --workspace WORKSPACE \
-  --placement-prefix project-a \
-  --placement-prefix project-b/2026
+httk run --workspace WORKSPACE \
+  --placement project-a \
+  --placement project-b/2026
 ```
 
 The flag is repeatable, and every scheduling scan is confined to those
@@ -766,7 +796,7 @@ httk workspace status --json WORKSPACE
 
 `status` prints the job counts per state, whether the workspace is sealed, and
 the owners with their liveness; an owner it proves dead gets its tombstone, for
-the next manager tick or `workspace gc` to recover. `httk workflow monitor`
+the next manager tick or `workspace gc` to recover. `httk monitor`
 gives an interactive view of the same counts, with pages, details and controls;
 see {doc}`monitor`.
 
@@ -847,29 +877,29 @@ releases it; a job a manager is running gets a `cancel` at once and every other
 request at the next attempt boundary.
 
 ```console
-httk job request pause --workspace WORKSPACE --reason "inspection" JOB
-httk job request override_step --override-step relax --reason "redo relax" JOB
-httk job request set_priority --priority 100 --reason "urgent" JOB
-httk job request set_budget --max-attempts-per-activation 3 --reason "flaky node" JOB
-httk job request set_workflow --workflow relax@v1.3.0 --state ready --reason "bump"
+httk job pause --workspace WORKSPACE --reason "inspection" JOB
+httk job set JOB step=relax --reason "redo relax"
+httk job set JOB priority=100 --reason "urgent"
+httk job set JOB budget.max_attempts_per_activation=3 --reason "flaky node"
+httk job set workflow=relax@v1.3.0 --state ready --reason "bump"
 ```
 
-| Action | Applies to | Effect |
+| Action (command) | Applies to | Effect |
 | --- | --- | --- |
-| `cancel` | any non-terminal job | `cancelled`; a running attempt is stopped first |
-| `pause` | a job not terminal, paused or waiting | `paused`, at the next boundary when running |
-| `continue` | a failed or paused job (a succeeded one when unlocked) | `waiting` with the retained join when the job failed at its wait on children (no new attempt); otherwise `ready`, the failure cleared and a new attempt; the declared retry allowance is restored first unless `--keep-budget` |
-| `restart` | a failed or paused job (a succeeded one when unlocked) | `ready`; the failure is cleared, a retained join is dropped, and a new attempt is recorded; the declared retry allowance is restored first unless `--keep-budget` |
-| `override_step` | a failed or paused job (a succeeded one when unlocked) | `ready` with a new activation of `--override-step`; a retained join is dropped; the declared retry allowance is restored first unless `--keep-budget` |
-| `set_priority` | any job | the new `--priority` (0 is highest) |
-| `set_budget` | any job not succeeded (unless unlocked) or cancelled | the retry budgets raised or lifted per `--max-*` option; merged into `state.json` `budget_override`, state and priority unchanged; a limit set below what the job has used ends it at the next budget check |
-| `set_workflow` | any job not succeeded (unless unlocked) or cancelled whose workflow `--workflow` may replace | the job runs the installed `--workflow` from its next attempt; recorded as `state.json` `workflow_override`, `runner_steps` cleared, state and priority unchanged; refused naming the failed compatibility rule (see {doc}`/restarting_jobs`) |
-| `detach` | a spawned job | independent of its parent, permanently |
-| `unlock` | a job that is not already unlocked with its copy (a succeeded job only once unsealed) | debug mode: the one-way `state.json` `unlocked` marker, a copy of the installed package at `workflow/` in the job directory the runner is launched from (unless `--no-copy`), and the integrity rules relaxed; see {doc}`/restarting_jobs` |
-| `eject` | a quiescent job | moved out as a bundle to `--destination` (not into an exchange inbox when unlocked) |
-| `delete` | a terminal or paused job; a succeeded one only after `unseal` (not for an unlocked job); no waiting parent | removed |
-| `seal` | a succeeded job without a seal (refused for an unlocked job) | sealed |
-| `unseal` | a sealed succeeded job | released from its seal |
+| `cancel` (`job cancel`) | any non-terminal job | `cancelled`; a running attempt is stopped first |
+| `pause` (`job pause`) | a job not terminal, paused or waiting | `paused`, at the next boundary when running |
+| `continue` (`job resume`) | a failed or paused job (a succeeded one when unlocked) | `waiting` with the retained join when the job failed at its wait on children (no new attempt); otherwise `ready`, the failure cleared and a new attempt; the declared retry allowance is restored first unless `--keep-budget` |
+| `restart` (`job restart`) | a failed or paused job (a succeeded one when unlocked) | `ready`; the failure is cleared, a retained join is dropped, and a new attempt is recorded; the declared retry allowance is restored first unless `--keep-budget` |
+| `override_step` (`job set step=STEP`) | a failed or paused job (a succeeded one when unlocked) | `ready` with a new activation of `STEP`; a retained join is dropped; the declared retry allowance is restored first unless `--keep-budget` |
+| `set_priority` (`job set priority=N`) | any job | the new priority `N` (0 is highest) |
+| `set_budget` (`job set budget.*=N`) | any job not succeeded (unless unlocked) or cancelled | the retry budgets raised or lifted per `budget.*` key; merged into `state.json` `budget_override`, state and priority unchanged; a limit set below what the job has used ends it at the next budget check |
+| `set_workflow` (`job set workflow=W`) | any job not succeeded (unless unlocked) or cancelled whose workflow `W` may replace | the job runs the installed `W` from its next attempt; recorded as `state.json` `workflow_override`, `runner_steps` cleared, state and priority unchanged; refused naming the failed compatibility rule (see {doc}`/restarting_jobs`) |
+| `detach` (`job detach`) | a spawned job | independent of its parent, permanently |
+| `unlock` (`job unlock`) | a job that is not already unlocked with its copy (a succeeded job only once unsealed) | debug mode: the one-way `state.json` `unlocked` marker, a copy of the installed package at `workflow/` in the job directory the runner is launched from (unless `--no-copy`), and the integrity rules relaxed; see {doc}`/restarting_jobs` |
+| `eject` (`job eject`) | a quiescent job | moved out as a bundle to its destination (not into an exchange inbox when unlocked) |
+| `delete` (`job delete`) | a terminal or paused job; a succeeded one only after `unseal` (not for an unlocked job); no waiting parent | removed |
+| `seal` (`job seal`) | a succeeded job without a seal (refused for an unlocked job) | sealed |
+| `unseal` (`job unseal`) | a sealed succeeded job | released from its seal |
 
 Requests apply once, in posting order. A request that does not apply where the
 job now is is dropped and recorded in the job's `state.json` history with the
@@ -878,7 +908,7 @@ job cannot be found, is moved to quarantine by `gc` after a day. `continue`,
 `restart` and `override_step` of a child that a parent's observations name are
 refused unless `--force` is given. The exception is a child that its parent's
 join still names: the parent failed at its wait with a retained join, or waits
-on the child again. Fixing the child and continuing it needs no `--force`. `continue --tree PARENT` resumes such a parent's failed
+on the child again. Fixing the child and continuing it needs no `--force`. `job resume --tree PARENT` resumes such a parent's failed
 descendants, deepest first, before the parent itself. `restart` of a job that
 recorded a failed or cancelled child, which its rerun spawning step would
 reuse, is refused unless `--force` is given; see {doc}`/restarting_jobs`.
@@ -893,16 +923,16 @@ limits in history; `--keep-budget` keeps the limits as they are, so a job that
 failed for lack of budget then needs `set_budget` first. Automatic retries never
 raise a limit; see {doc}`/restarting_jobs`.
 
-`job request` posts the files and, as a short-lived CLI owner, applies each
+Each request verb (`job cancel`, `pause`, `resume`, `restart`, `set`) posts the files and, as a short-lived CLI owner, applies each
 request at once to a job no owner holds. A job held by an owner (a manager, or
 a dead one until `gc` or reconciliation) gets it at that owner's next
 boundary, and its outcome prints `queued`. It exits `1` when a request is
-refused or uncertain. `--wait` (only for `pause`) waits until each job was
+refused or uncertain. `job pause --wait` waits until each job was
 observed `paused`, and exits `1` when a pause was superseded, dropped or timed
-out (`--timeout SECONDS`). `override_step` is checked against the steps the
+out (`--timeout SECONDS`). `job set step=` is checked against the steps the
 runner recorded after its first attempt; `--force` publishes anyway.
 
-When the operator has an identity from `httk init`, the request carries an
+When the operator has an identity from `httk setup`, the request carries an
 Ed25519 signature over its canonical JSON; it is attribution, not
 authorization. See [the command guide](workflow_cli.md#operator-identity).
 
@@ -933,11 +963,11 @@ never changed by the protocol until it is released from its seal with
 `httk job unseal`, so delete it with:
 
 ```console
-httk job unseal --force JOB
-httk job delete --force JOB
+httk job unseal --yes JOB
+httk job delete --yes JOB
 ```
 
-A child that a non-terminal parent still waits on is refused. `--force` skips
+A child that a non-terminal parent still waits on is refused. `--yes` skips
 only the confirmation. Cancel a running or ready job first. Never delete a job
 directory with `rm -r`: a manager may hold it at that moment.
 
@@ -949,11 +979,11 @@ accumulates is collected by `workspace gc`, explicitly or from a long-lived
 manager:
 
 ```console
-httk workspace policy set --key retention.attempt_control_days --value 14 WORKSPACE
+httk workspace set -w WORKSPACE policy.retention.attempt_control_days=14
 httk workspace gc --dry-run WORKSPACE
 httk workspace gc WORKSPACE
 httk workspace gc --category requests --category tmp_entries WORKSPACE
-httk manager run --workspace WORKSPACE --gc-interval 3600
+httk run --workspace WORKSPACE --gc-interval 3600
 ```
 
 | Category | What goes |
@@ -977,36 +1007,36 @@ by hand. A manager with `--gc-interval` collects every category but
 
 ## Checking a workspace
 
-`workspace fsck` walks `jobs/` and reports what the kernel cannot read or
+`workspace check` walks `jobs/` and reports what the kernel cannot read or
 resolve on its own:
 
 ```console
-httk workspace fsck WORKSPACE
-httk workspace fsck --json WORKSPACE
-httk workspace fsck --repair WORKSPACE
+httk workspace check WORKSPACE
+httk workspace check --json WORKSPACE
+httk workspace repair WORKSPACE
 ```
 
 Like `fsck` for a filesystem, run it only while no other actor uses the
 workspace: no managers, CLI operations, daemon or transfers. Findings from a
-busy workspace may be transient. `--repair` is refused unless the workspace is
+busy workspace may be transient. `workspace repair` is refused unless the workspace is
 quiescent: every owner must be proven dead, and every dead owner recovered, so
 no owned jobs or dead-owner scratch remain. Stop the managers, run
-`httk workspace gc` (which recovers dead owners), then rerun. `--repair` also
+`httk workspace gc` (which recovers dead owners), then rerun. `repair` also
 asks "Make sure no other operations are ongoing in this workspace. Continue?";
-`--yes` answers it, and without a terminal `--repair` needs `--yes`.
+`--yes` answers it, and without a terminal `repair` needs `--yes`.
 
 | Finding | Meaning and remedy |
 | --- | --- |
-| `unparsable_name` | an entry that is neither a placement directory nor a job name of its position; `--repair` moves it to quarantine |
+| `unparsable_name` | an entry that is neither a placement directory nor a job name of its position; `repair` moves it to quarantine |
 | `duplicate_job` | one job UUID in two places, after a cross-filesystem crash, a duplicate delivery or two concurrent adoptions; inspect both and delete one |
 | `orphan_owned` | `jobs/owned/<id>/` without its owner's directory; resolve it with `workspace attest-dead` |
 | `tombstoned_owner_with_jobs` | a recovered owner holds jobs, launches or scratch again; `workspace gc` recovers it |
 | `unreadable_state` | a `state.json` that exists but does not decode; the next claimant fails the job with `protocol_error` |
 | `foreign_owner` | a job directory another account owns, which managers skip |
-| `stale_exchange_index` | an exchange index entry whose job is not in the workspace (a job removed by hand), which blocks the client's resubmission of that name; `--repair` removes it |
-| `unindexed_exchange_job` | an exchange root without its exchange index entry; `--repair` recreates the entry |
+| `stale_exchange_index` | an exchange index entry whose job is not in the workspace (a job removed by hand), which blocks the client's resubmission of that name; `repair` removes it |
+| `unindexed_exchange_job` | an exchange root without its exchange index entry; `repair` recreates the entry |
 
-Without `--repair` nothing is written. The command exits `0` when nothing is
+`workspace check` writes nothing. The command exits `0` when nothing is
 left for an operator and `1` otherwise. `httk project repair` adds the
 workspace health checks: dead owners not yet recovered, scratch of unknown
 owners, old temporaries, and holds or incoming copies older than seven days.
@@ -1014,7 +1044,7 @@ owners, old temporaries, and holds or incoming copies older than seven days.
 ## The foreground debug runner
 
 ```console
-httk job debug --workspace WORKSPACE --step relax PAYLOAD
+httk job debug --workspace WORKSPACE --start-step relax PAYLOAD
 httk job debug --workspace WORKSPACE --follow-children JOB
 ```
 

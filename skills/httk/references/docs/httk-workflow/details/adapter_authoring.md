@@ -190,7 +190,7 @@ Request members beyond the envelope:
 
 | Member | Type | Meaning |
 | --- | --- | --- |
-| `settings` | object | the **pending** `--set KEY=VALUE` values, not yet stored anywhere |
+| `settings` | object | the **pending** `KEY=VALUE` values of `httk remote set`, not yet stored anywhere |
 
 Pending settings are passed separately because they are stored only after this
 operation succeeds; an adapter that looked only at `remote_settings` could
@@ -256,9 +256,12 @@ did.
 | --- | --- | --- |
 | `argv` | array of nonempty strings, required | the command |
 | `cwd` | string, optional | the directory to run it in |
-| `share_connection` | boolean, optional | the caller polls (`workflow monitor`): keep one connection open across calls instead of logging in for each |
+| `share_connection` | boolean, optional | the caller polls (`monitor`): keep one connection open across calls instead of logging in for each |
 
-An adapter that has no connection to share ignores `share_connection`.
+An adapter that has no connection to share ignores `share_connection`. The
+`ssh` template honors it only while `connection_reuse` is absent from
+`remote_settings`; a `connection_reuse` value, the remote's own or the
+per-user default, takes precedence.
 
 ```json
 {"argv": ["httk", "workflow", "workspace", "status", "/scratch/me/runs", "--json"],
@@ -275,7 +278,7 @@ An adapter that has no connection to share ignores `share_connection`.
 **A nonzero `returncode` is still `ok: true`.** The operation succeeded: it ran
 the command and reports the outcome. `ok: false` means the adapter could not
 run the command at all. Callers check `returncode` themselves; every remote
-command in `httk job transfer …` does so and raises on a nonzero value.
+command in `httk job move …` does so and raises on a nonzero value.
 
 If `argv[0]` is the literal `httk`, the adapter must apply the remote's
 `httk_command` setting; see
@@ -381,7 +384,7 @@ does not install software or validate compute-node confinement.
 
 ## The `session` operation
 
-A caller that polls, such as `workflow monitor`, would otherwise pay one login
+A caller that polls, such as `monitor`, would otherwise pay one login
 and one remote `httk` start per read. `session` instead starts one long-lived
 far-side process and talks to it over the adapter's own pipes, as rsync does.
 The monitor starts `httk workflow session` (text lines); every job transfer to
@@ -425,12 +428,12 @@ then stops).
 
 ## Settings and credentials
 
-`httk remote configure --set KEY=VALUE NAME` sorts every assignment by
+`httk remote set NAME KEY=VALUE...` sorts every assignment by
 key:
 
 - Keys in {py:data}`httk.workflow.adapters.PERSISTABLE_REMOTE_SETTINGS`
-  (`check_connectivity`, `host`, `httk_command`, `interactive_auth`,
-  `legacy_settings`, `port`,
+  (`check_connectivity`, `connection_reuse`, `host`, `httk_command`,
+  `interactive_auth`, `legacy_settings`, `port`,
   `username`, the mount settings, `exchange` and the three `daemon_*` identity settings documented in
   {doc}`/details/remotes`, `vasp_command` and `vasp_pseudo_library`) are written
   into the flat `settings` object of the shareable, signable `remote.json`.
@@ -439,7 +442,10 @@ key:
 
 {py:func}`httk.workflow.adapters.remote_settings` merges the two back together,
 `remote.json` first and `credentials.json` over it. That single object arrives
-as the request's `remote_settings`. **An adapter never sees the split:** it
+as the request's `remote_settings`, with one addition: when neither file nor a
+pending `settings` value sets `connection_reuse` and the per-user configuration
+does (`httk config set connection_reuse=yes`), that value is filled in, so an
+adapter never reads user configuration. **An adapter never sees the split:** it
 reads one flat settings object and must not depend on which file a value came
 from. `httk remote show NAME` reports which file each setting came
 from, and shows only the *name* of each credential, never its value.

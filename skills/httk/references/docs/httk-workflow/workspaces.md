@@ -9,13 +9,13 @@ sets all of that up; {doc}`running` then creates and runs jobs in it.
 ## Project and workspace
 
 ```console
-httk init --name "Your Name" --email you@example.org
+httk setup --name "Your Name" --email you@example.org
 httk project init --name campaign .
 httk workspace init --name default workspace
 httk workspace status
 ```
 
-`httk init` creates your per-user operator identity, used to attribute and
+`httk setup` creates your per-user operator identity, used to attribute and
 sign what you publish; it is idempotent. `project init` writes the project
 anchor `httk_project/`. `workspace init` creates a workspace and registers it
 under a name in the per-user registry, so every later command can address it
@@ -43,21 +43,32 @@ A workspace carries a flat map of *application settings*, small values a
 runner resolves at run time, such as the VASP command:
 
 ```console
-httk workspace configure default --set vasp.command=vasp_std
-httk workspace show default
-httk workspace configure default --unset vasp.command
+httk workspace set -w default vasp.command=vasp_std
+httk workspace show -w default
+httk workspace show -w default vasp.command
+httk workspace unset -w default vasp.command
 ```
 
-One `configure` call applies every `--set` and `--unset` in one validated
-write; for a workspace on a remote it is one forwarded command, so one ssh
-connection.
+`workspace show`, `set` and `unset` address one key namespace: application
+settings under their dotted names, the [policy](details/taskmanager.md#workspace-policy) as
+`policy.visibility_deadline_seconds` and `policy.retention.MEMBER`, and the
+[per-workflow preludes](#environment-preludes) as `prelude.WORKFLOW_ID`; an application
+setting cannot start with `policy.` or `prelude.`. A setting an older release
+stored under such a name is not reachable through these verbs: remove it by
+editing the workspace's `.httk-workspace/format.json`, and store its value
+under a key outside those namespaces. One `set` or `unset` validates every
+change and stores them all in one write, or none; for a workspace on a remote
+each verb is one forwarded command, so one ssh connection. `show` with no key prints every key,
+one `key<TAB>value` line each (values as JSON, so a prelude's newlines appear
+as `\n`, and application settings get a third column, below); one key prints
+its bare value; `--json` prints one flat object.
 
 The manager exports each scalar setting into the attempt environment under its
 `HTTK_` name, so `vasp.command` becomes `HTTK_VASP_COMMAND`. A real
 environment variable is a deployment override and wins over the workspace
 setting; a job's own parameter of the same name wins over both.
 
-`httk workspace settings show` marks each setting by who reads it:
+`httk workspace show` marks each setting by who reads it:
 *recognized* (by *httk-workflow*, an installed code-support package, or a
 workflow installed in the workspace whose manifest declares the key; see
 {doc}`details/workflow_packages`), *unrecognized* (in a namespace
@@ -67,7 +78,7 @@ effect; an unknown `confine.` key even stops managers from starting), or
 still read it without declaring it, or a future workflow may):
 
 ```console
-$ httk workspace settings show default
+$ httk workspace show -w default
 foo.bar	1	undeclared: nothing installed declares reading it; a workflow may still read it without declaring it, or a future workflow may
 mywf.threshold	0.5	recognized by workflow mywf
 slurm.account	"proj"	recognized by httk-workflow
@@ -89,7 +100,7 @@ setting override, counts.
 
 `io.workers` (an integer from 1 to 32, default 8) sets how many jobs a batch
 command works on at once in this workspace: holding, adopting and releasing
-jobs in `job push`, `job pull`, `job transfer` and `job adopt`, writing the
+jobs in `push`, `pull`, `job move` and `job adopt`, writing the
 small files (up to 1 MiB) of a tar stream pushed into the workspace, and
 reading the rows and per-state counts of `job list`. Each job's own steps
 still run in order, and the output is the same as with one worker. The
@@ -102,8 +113,8 @@ one-at-a-time processing. A value outside 1..32 is refused when set, and the
 end of a transfer uses its own workspace's value:
 
 ```console
-httk workspace settings set --key io.workers --value 16 default
-httk workspace settings set --key io.workers --value 4 cluster:default
+httk workspace set -w default io.workers=16
+httk workspace set -w cluster:default io.workers=4
 ```
 
 `io.sync` (`auto`, the default, `syncfs` or `fsync`) sets how jobs that a
@@ -116,13 +127,14 @@ once, which also flushes what was pending before) before the first file lands;
 it flushes other users' pending writes on that filesystem too, and Ctrl-C
 waits for it to finish. `fsync` synchronizes every file on its own, which
 costs one round trip a file on a shared filesystem. `auto` uses `syncfs` on
-Linux 5.8 or later for Lustre, ext4, XFS and tmpfs, and `fsync` elsewhere
-(older kernels report no write errors through `syncfs`); `syncfs` forces it on
-any filesystem type you vouch for, still falling back to `fsync` below Linux
-5.8 or where the call is not available (found by the first call on a
-filesystem, made before anything lands). tmpfs is never persistent, whatever
-the setting. A value other than the three is refused when set, and one stored
-otherwise counts as `fsync`; the setting is read afresh at every landing, so a
+Linux 5.8 or later for Lustre, ext4, XFS and tmpfs, on ZFS only with Linux
+5.17 or later and OpenZFS 2.4.0 or later, and `fsync` elsewhere (older kernels
+report no write errors through `syncfs`); `syncfs` forces it on any filesystem
+type you vouch for, still falling back to `fsync` below Linux 5.8 or where the
+call is not available (found by the first call on a filesystem, made before
+anything lands). tmpfs is never persistent, whatever the setting. A value
+other than the three is refused when set, and one stored otherwise counts as
+`fsync`; the setting is read afresh at every landing, so a
 running daemon sees a change at once, and a `--no-durable` workspace
 synchronizes nothing. Job creation (`job new`, campaigns, `job submit`),
 workflow installation and builds, and `job adopt PATH` of a bundle on the
@@ -133,7 +145,13 @@ a batch closes at 256 jobs, once 10 seconds have passed since its first job
 (checked between jobs, so a slow instantiate hook delays it), and at the end of
 the input, and a job that moves inputs (`--input-move-from-job`) has a batch of
 its own. Creating N jobs thus costs one `syncfs` per batch plus one (600 jobs
-cost 4 when each batch fills within 10 seconds). The library's `new_jobs`
+cost 4 when each batch fills within 10 seconds) for the payloads; where `syncfs`
+is trusted for the workspace's own protocol steps (a vetted local filesystem,
+`io.sync` not `fsync`), a batch of eight jobs or more is then named complete
+and submitted with one more `syncfs` each (plus one per command), instead of
+three fsyncs per job. Once a batch's jobs start being named complete, each of
+them is submitted even when it is not reported (an error or interrupt names
+those by id). The library's `new_jobs`
 publishes each job before it asks for the next item (N + 1 `syncfs`) unless
 it is given `batch=`. Bundles and `job submit --move` payloads that were
 written before httk ran are synced together as they are, so a write error
@@ -142,10 +160,43 @@ seen it yet; when one is reported, nothing is taken, and the files may not be
 intact on disk: re-create them from their source before trying again, since a
 retry would not notice the loss.
 
-The command that runs `job transfer`, `job push` or `job pull` prints the
+ZFS was first left to `fsync`: it never records a write error where `syncfs`
+looks for one (the filesystem's error sequence). A `syncfs` on ZFS always
+committed the dataset's whole intent log; from OpenZFS 2.4.0 it also returns
+that commit's error itself, which Linux passes on from 5.17 (5.8 to 5.16 take
+another, untraced path). On a suspended pool it then fails with `EIO`, where
+`fsync` waits until the pool returns (`failmode=wait`, the default). A
+command with no retry (`job new`, `job submit`, `job adopt PATH`, workflow
+installation) then fails where it used to wait and succeed, once the removal
+of what it staged, which also waits for the pool, is done. A transfer refuses
+that landing, removes it (waiting for the pool) and delivers it once more with
+every file synchronized on its own, so it can still succeed once the pool is
+back. OpenZFS
+2.1.16, 2.2.8 and 2.3.0 return success on a suspended pool, and 2.3.4 fails
+only when the pool is suspended already when it is called (a suspension
+during its commit is waited out and reported as success), so `auto` keeps
+`fsync` below 2.4.0, and also when `/sys/module/zfs/version` cannot be read
+or parsed; do not force `syncfs` on ZFS below that gate. The version is
+compared by its leading `major.minor.patch`, so a distribution build such as
+`2.4.1-1ubuntu5.1` counts as 2.4.1 (its own patches are not verified) and any
+later release is trusted as well. On ZFS a failed `syncfs` is always this
+landing's own failure, so `io.sync_errors ignore` (below) does not apply
+there. A ZFS `syncfs` also misses a failed write of pages written through
+`mmap` (a quota or a full pool), which `fsync` reports, so on ZFS `auto`
+synchronizes bundles and payloads written before httk ran file by file;
+files that an instantiate hook writes through `mmap` during `job new` are
+the accepted exception. When such a synchronization fails on ZFS because
+the pool was suspended, the message's advice to re-create the files is more
+than needed: ZFS keeps the data of a suspended pool and writes it once the
+pool is back. A
+`syncfs` covers only the filesystem it is called on: whatever is mounted inside
+a synced tree from another filesystem, a directory or a single file, is
+synchronized file by file.
+
+The command that runs `job move`, `push` or `pull` prints the
 strategy on standard error, unless `-q`: `syncing 120 landed file(s) to disk
 (syncfs: lustre, Linux 5.14)`, or `made 3 landed bundle(s) durable (fsync:
-zfs is not vetted for auto)` when every file was synchronized as it was
+zfs 2.2.2 is below 2.4.0)` when every file was synchronized as it was
 written. For a push, that is the destination's line, relayed with its name in
 front. When the synchronization fails, nothing of that landing is adopted.
 Where the landing was synchronized with one `syncfs` and `io.sync_errors` is
@@ -168,7 +219,7 @@ everyone on it:
   segment then waiting at the destination (up to 8), each delivered once more
   in turn; every segment staged afterwards is synchronized file by file at
   once. If a segment's second delivery is refused too, its jobs stay held at
-  the source for `job transfer --resume` (they were sent, so they are never
+  the source for `job move --resume` (they were sent, so they are never
   taken back);
 - a push from a remote workspace (remote to remote) synchronizes each segment
   as it lands, and a failure is delivered once more from its relayed local
@@ -176,23 +227,23 @@ everyone on it:
   destination's transfer session, per segment (the segment is staged once
   more, before anything of it is adopted), and every later segment is then
   synchronized file by file at once. If that delivery is refused too, its jobs
-  stay held at the source (`job transfer --resume`);
+  stay held at the source (`job move --resume`);
 - a pull synchronizes each landing here only when it adopts it, as a push
   does; when that fails, the landing is discarded and fetched once more at once
   into a fresh landing, with every file synchronized as it is written here (as
   every later fetch of the session then is), and adopted before any later
   landing. If that fails too, the pull stops there (that segment and every
   later one stay held at the source, and no later page of the selection is
-  held); their jobs stay held at the source, and `job transfer --resume`
+  held); their jobs stay held at the source, and `job move --resume`
   delivers them again.
 
 A failure is not retried otherwise. A destination (or, for a pull, this
 workspace) on `io.sync fsync`, whose per-file errors are exact, fails at once:
 a push from a local workspace takes the jobs it held itself back into the
 source (`not_moved`; run the transfer again), and a push from a remote
-workspace keeps the jobs held at the source for `job transfer --resume`; a pull
+workspace keeps the jobs held at the source for `job move --resume`; a pull
 stops (that segment and every later one stay held at the source), resumable
-with `job transfer --resume`. A hold an earlier run left is never taken back, since an earlier
+with `job move --resume`. A hold an earlier run left is never taken back, since an earlier
 delivery may have adopted it (see {doc}`details/workflow_cli`). Job
 creation (`job new`, campaigns), `job submit` of copies and workflow
 installation have no retry either: the command fails, and for job creation
@@ -208,15 +259,15 @@ another filesystem whose `syncfs` failed are made once more with every file
 synchronized as it is written, and the chunk fails (jobs held at the source)
 only if that fails too. The retried delivery or fetch runs under the same
 `--adapter-timeout` as the first one; when it times out, its outcome is
-unknown and the jobs stay held at the source, and `job transfer --resume`
+unknown and the jobs stay held at the source, and `job move --resume`
 then reports those that arrived as `already_adopted` and releases them.
 
 ```console
-httk workspace settings set --key io.sync --value fsync default
+httk workspace set -w default io.sync=fsync
 ```
 
 `io.sync_errors` (`fail`, the default, or `ignore`) sets what a write error
-that a `syncfs` reports does. `syncfs` cannot tell whose write failed: on a
+that a `syncfs` reports does, except on ZFS, where such an error always fails. `syncfs` cannot tell whose write failed: on a
 busy shared login node another user's late quota error (`EDQUOT`) on the same
 filesystem fails our landing too, which `fail` handles by the retries above.
 `ignore` trusts the writes that returned successfully: the landing is still
@@ -242,13 +293,13 @@ refused when set, and one stored otherwise counts as `fail` (with a warning);
 like `io.sync`, it is read afresh at every landing.
 
 ```console
-httk workspace settings set --key io.sync_errors --value ignore default
+httk workspace set -w default io.sync_errors=ignore
 ```
 
 Engine tunables (the visibility deadline of a shared filesystem and the
 retention limits of `gc`) are *workspace policy*, kept apart from application
-settings and edited with `workspace policy show|set`; see
-{doc}`details/taskmanager`.
+settings and addressed as the `policy.*` keys of `workspace show|set|unset`;
+see {doc}`details/taskmanager`.
 
 ## Installed workflows
 
@@ -257,11 +308,11 @@ once per workspace, locally or on a remote:
 
 ```console
 httk workflow install --workspace default 'git+https://github.com/httk/workflows-vasp#vasp-relax'
-httk workspace workflows default
+httk workflow list -w default
 ```
 
-`job new --install` installs a missing workflow on the fly. A job transfer
-(`job push`, `job pull`, `job transfer`) installs the workflows its jobs need
+`job new --install` installs a missing workflow on the fly. A transfer
+(`push`, `pull`, `job move`) installs the workflows its jobs need
 in the destination when it lacks them (see {doc}`details/remotes`).
 
 ## Environment preludes
@@ -272,8 +323,8 @@ prelude, not in the command setting. There are two layers, both run under
 it in a half-configured environment:
 
 ```console
-httk workspace settings set --key environment.prelude --value "module load httk" default
-httk workspace workflow-prelude set --workflow vasp.relax --value "module load VASP/6.4.2" default
+httk workspace set -w default environment.prelude="module load httk"
+httk workspace set -w default prelude.vasp.relax="module load VASP/6.4.2"
 ```
 
 `environment.prelude` applies to every job of the workspace and runs before
@@ -290,17 +341,16 @@ launcher once, then select it per workspace together with the scheduler
 directives it should use:
 
 ```console
-httk launcher add --template slurm --global cluster
+httk launcher add --kind slurm --global cluster
 httk launcher check cluster
-httk workspace settings set --key manager.launch --value cluster \
-  --key slurm.partition --value batch --key slurm.time_limit --value 02:00:00 default
-httk workflow run --count 4 --workspace default
+httk workspace set -w default manager.launch=cluster \
+  slurm.partition=batch slurm.time_limit=02:00:00
+httk run --count 4 --workspace default
 ```
 
-`--key` and `--value` repeat in pairs, the i-th `--key` taking the i-th
-`--value`; every pair is validated before any is stored, in one write.
+Every pair is validated and all of them are stored in one write, or none is.
 
-`httk workflow run --count 4` now submits four managers through Slurm and
+`httk run --count 4` now submits four managers through Slurm and
 prints their scheduler job ids. `--inline` runs one manager in the current
 process regardless of the launcher, which is the way to see manager output
 while debugging; `--launcher NAME` picks another launcher for one invocation.
@@ -318,9 +368,8 @@ A remote reaches another machine: it moves files and runs `httk` there. It
 does not schedule anything; the destination workspace's launcher does that.
 
 ```console
-httk remote add --template ssh kappa
-httk remote configure --set host=login.example.org --set username=me kappa
-httk remote configure --set cli_prelude='module load Python/3.13' kappa
+httk remote add kappa --kind ssh host=login.example.org username=me
+httk remote set kappa cli_prelude='module load Python/3.13'
 httk remote check kappa
 ```
 
@@ -333,18 +382,18 @@ remote is created and addressed by writing the remote name before it:
 
 ```console
 httk workspace init --name runs kappa:/scratch/me/httk/runs
-httk workspace settings set --key manager.launch --value cluster kappa:runs
+httk workspace set -w kappa:runs manager.launch=cluster
 httk workspace status kappa:runs
-httk workflow run --workspace kappa:runs --count 4
+httk run --workspace kappa:runs --count 4
 ```
 
 `NAME:WORKSPACE` is a binding, not a path. Jobs are created locally, pushed
-with `httk job push kappa:runs` (every job waiting to start) after
+with `httk push kappa:runs` (every job waiting to start) after
 `httk workflow install --workspace kappa:runs …` installed their workflow
-there, and the finished ones brought back with `httk job pull kappa:runs`
+there, and the finished ones brought back with `httk pull kappa:runs`
 (every succeeded job); the end left out is the workspace the command runs in,
 else the default workspace. A push leaves an `away` copy of each job in its
-source until the pull brings the job back. `httk job transfer SRC DST` is the
+source until the pull brings the job back. `httk job move SRC DST` is the
 general form; see {doc}`running`. A transfer to or from a remote runs over one
 transfer session, so the remote's `httk` must be the same version as this
 machine's: otherwise the transfer stops before anything is held, with "the httk
@@ -363,7 +412,7 @@ the adapter bundle, and {doc}`details/workspace_daemon` the confined broker.
 A project directory is self-describing. Copy the whole tree, including its
 workspaces, and run `httk project repair` inside it: every member workspace is
 registered under the name recorded in `httk_project/members.json`, and
-`httk workflow run`, `--workspace NAME` and the rest work without a new
+`httk run`, `--workspace NAME` and the rest work without a new
 `init`. It is idempotent and refuses to overwrite a name that already points
 elsewhere.
 
@@ -371,7 +420,7 @@ elsewhere.
 
 - {doc}`details/taskmanager` covers workspace policy, durability and
   filesystem requirements, resources and scheduling, owners and recovery, and
-  maintenance with `fsck` and `gc`.
+  maintenance with `workspace check`, `workspace repair` and `gc`.
 - {doc}`details/workflow_cli` is the complete command reference, including
   the `workspace`, `launcher`, `remote`, `config` and `project` groups.
 - {doc}`campaigns` spreads one very large run across several workspaces.

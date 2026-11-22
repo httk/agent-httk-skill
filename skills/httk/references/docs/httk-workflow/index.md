@@ -59,12 +59,12 @@ One workspace, one job of a ready-made VASP workflow referenced by its git URI,
 and one manager that runs it:
 
 ```console
-httk init --name "Your Name" --email you@example.org
+httk setup --name "Your Name" --email you@example.org
 httk project init --name quickstart .
 httk workspace init --name default workspace
-httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --install --input structure=POSCAR --tag silicon
-httk workspace settings set --key vasp.command --value "$PWD/examples/mock_vasp.py" default
-httk workflow run
+httk job new 'git+https://github.com/httk/workflows-vasp#vasp-relax' --install --input structure=POSCAR --tag silicon
+httk workspace set -w default vasp.command="$PWD/examples/mock_vasp.py"
+httk run
 httk collect
 ```
 

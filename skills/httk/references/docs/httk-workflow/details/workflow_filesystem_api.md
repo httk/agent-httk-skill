@@ -27,7 +27,7 @@ Timestamps are UTC ISO 8601, except epoch seconds in signed exchange requests.
 | Actor | Trust | Writes |
 | --- | --- | --- |
 | Manager (`TaskManager`, owner kind `manager`) | trusted | everything below the workspace, but inside a job only while it owns it |
-| CLI owner (owner kind `cli`) | trusted | as a manager; `job new`, `job submit`, `job delete`, `job seal`, `job unseal`, `job eject`, `job adopt`, `job debug`, `workflow install`, `workflow build`, `workflow uninstall`, `workspace gc` and `workspace fsck --repair` register one for their duration |
+| CLI owner (owner kind `cli`) | trusted | as a manager; `job new`, `job submit`, `job delete`, `job seal`, `job unseal`, `job eject`, `job adopt`, `job debug`, `workflow install`, `workflow build`, `workflow uninstall`, `workspace gc` and `workspace repair` register one for their duration |
 | Operator | trusted | request files, tombstones by attestation, the workflow store |
 | Workspace daemon | trusted | its private state in `.httk-workspace/daemon/`, and its own documents in `exchange/`; owner kind `daemon` is reserved for it |
 | Attempt and its launch ranks | **untrusted**, confined when `manager.confine=bwrap` | its own job directory, minus the trusted entries |
@@ -161,7 +161,7 @@ dotted names to JSON scalars; the protocol reads `seal.succeeded`, `seal.keys`,
 | `failed` | Ended with a failure; `continue`, `restart` and `override_step` revive it; a parent failed at its wait keeps `join` and `continue` reopens it. |
 | `succeeded` | Ended successfully; never changed by the protocol until `job unseal`, or unless the job is unlocked (§Unlocked jobs). |
 | `cancelled` | Cancelled by a request. |
-| `away` | An inert away copy of a job that `job push` or `job transfer --keep` moved elsewhere; never runs, only `job delete` or `job recover` act on it. |
+| `away` | An inert away copy of a job that `push` or `job move --keep` moved elsewhere; never runs, only `job delete` or `job recover` act on it. |
 
 `succeeded`, `failed` and `cancelled` are terminal (`TERMINAL_STATES`); the seven
 states other than `owned` are the unowned states (`UNOWNED_STATES`).
@@ -601,7 +601,32 @@ synced quietly before it is published:
   published. The batch is committed once, then each job's `build/` is renamed
   to `job/` and submitted and the job is yielded, in order (the scratch
   reconciler publishes a `job/` after a crash, so only a durable payload is
-  ever named so; a committed `build/` is discarded like any other). Every
+  ever named so; a committed `build/` is discarded like any other). A batch
+  of at least eight jobs (`_BATCH_MIN`), none moving inputs, under a `syncfs`
+  barrier and the protocol predicate (`syncfs` mode after the prime of one
+  `_fs.Commit` per command, `errors="fail"`) is published in phases instead:
+  every check that can refuse a submit (the `build/` present, the `job.json`
+  header, `check_placement`, the target's name and parent; tags were checked
+  as each job was staged) for the whole batch, then every `build/`→`job/`
+  rename and one commit (P1), then every rename into `jobs/ready/` and one
+  commit (P2), and only then the yields; the scratches' `rmdir` follows P2.
+  Both directories of every rename, and `tmp/` for the `rmdir`, are owner
+  obligations from before it (the owner is marked batched). A refusal falls
+  back to the per-job publication, which publishes the jobs before the
+  refused one and raises as without batching. A failed P1 leaves the `job/`
+  entries to the owner's close (`_finish_submit`); a failed P2 is resealed
+  directory by directory, once (each submit's destination directory and its
+  ancestors are registered again right after its rename, so a placement
+  pruned and recreated meanwhile is sealed as the new directory); a failed
+  reseal latches the owner at once, keeps `owner.json` and reports the jobs
+  unresolved. `OwnerLost` (a recoverer took a scratch), in the check or after
+  P1, is no refusal: publication stops, the owner latches, and its close is
+  skipped, leaving everything to recovery. Once a batch's renames to
+  `job/` have started, every job of it named `job/` is submitted, yielded or
+  not; an error, interrupt, closed generator or error thrown in at a yield
+  reports by id the jobs submitted but not yielded, named but not published,
+  and unresolved. `batch=1`, a job that moves inputs, smaller batches and
+  fsync mode keep the per-job publication unchanged. Every
   `syncfs` on the one descriptor reports a writeback error recorded since the
   previous one, so each commit covers its batch's writes. Under `fsync` the
   staged copies, prepared documents, embedded workflow and `job.json` are
@@ -664,7 +689,8 @@ synced quietly before it is published:
   barrier could precede their first byte. Before anything is taken, one
   barrier with `prime=False, written=True` anchored on the control directory
   makes the whole batch durable (`sync_written`): one `syncfs` on a descriptor
-  opened now, or under `fsync` a walk of each bundle; where `syncfs` turns out
+  opened now, or under `fsync` a walk of each bundle (on ZFS, `auto` gives
+  `fsync` for such a barrier: see below); where `syncfs` turns out
   not to be supported at that commit, the bundles are walked instead (only
   `written` allows that fallback). A bundle on
   another filesystem is not synced here: the adoption copies it with inline
@@ -676,9 +702,12 @@ synced quietly before it is published:
   taken), and since a reported error is seen and the failed pages may then
   read back intact from memory while not on disk, a retry would not detect
   the loss: the message says to re-create the bundles from their source
-  before trying again. When a walk cannot read an entry (its permissions or
-  type), no write error was reported: the message names the entry instead
-  (`SyncUnreadable`). A bundle path the sync cannot reach (`ENOTDIR`,
+  before trying again (after a suspended pool on ZFS, which keeps the dirty
+  data of a suspended pool and writes it once the pool is back, that advice
+  is more than needed, but the message is the same). When a walk cannot read
+  an entry (its permissions, its type, or under `syncfs` a depth over 256
+  levels while it searches for mounts without a mount table), no write error
+  was reported: the message names the entry instead (`SyncUnreadable`). A bundle path the sync cannot reach (`ENOTDIR`,
   `EACCES`, ...) is skipped and reported by its own take; any other error of
   the batch sync fails the batch. Transfers adopt only their own holds and
   committed landings and say so (`adopt(..., synced=True)`); any other trusted
@@ -693,14 +722,99 @@ Linux 5.8 or later (whose `syncfs` reports a writeback error recorded on the
 filesystem since the descriptor was opened), with libc's `syncfs` available
 and working there, on a vetted filesystem type (`lustre`, `ext4`, `xfs`,
 `tmpfs`, read afresh from `/proc/self/mountinfo` by the `st_dev` of `anchor`,
-else by the longest mount point that is a path-component prefix of it);
+else by the longest mount point that is a path-component prefix of it), or on
+`zfs` past its gate (below);
 `syncfs` forces it on any filesystem type but still gives `fsync`, with a
 warning, below 5.8, off Linux or where `syncfs` is not available; `fsync`, and
 any invalid value (with a warning), give `fsync`.
 
+ZFS was left out at first because it records no writeback error on the
+superblock (`errseq`), which is what `syncfs` reports on the other types (a
+`syncfs` on ZFS has always committed the dataset's intent log; what 2.4.0
+adds is returning that commit's error).
+`auto` gives `syncfs` on `zfs` only on Linux 5.17 or later (`_SYNCFS_ZFS_KERNEL`)
+with an OpenZFS module of at least 2.4.0 (`_SYNCFS_ZFS_VERSION`), read afresh
+from `/sys/module/zfs/version` and compared by its leading `major.minor.patch`
+(`2.4.1-1ubuntu5.1` is 2.4.1); an unreadable or unrecognized version, an older
+one or an older kernel gives `fsync`, with the reason (`fsync (zfs 2.2.2 is
+below 2.4.0)`, `fsync (zfs on Linux 5.15 is below 5.17)`). On the gated
+versions `syncfs` reaches `zfs_sync`, which commits the dataset's whole
+intent log with `zil_commit_flags(..., ZIL_COMMIT_NOW)` and returns its error,
+and Linux 5.17 and later return the `sync_fs` error from `syncfs` (below 5.17
+OpenZFS records it with `errseq_set` instead, a path not traced). On a
+suspended pool that commit returns `EIO`, so the barrier fails and nothing is
+published (on ZFS whatever `io.sync_errors` says, see below), where `fsync`
+(`ZIL_COMMIT_FAILMODE`) under the default `failmode=wait` blocks until the
+pool returns. A command without a retry (job creation, `job submit`, `job
+adopt PATH`, the store) then fails, after its discard (which waits for the pool
+too), where it used to wait and succeed. A transfer's failed commit is
+answered by its retry: the landing is discarded once the pool lets it, and the
+fresh delivery with inline fsync (which waits for the pool) can succeed after
+the pool recovers. OpenZFS 2.1.16, 2.2.8 and
+2.3.0 return 0 on a suspended pool; 2.3.4 returns `EIO` only when the pool
+is suspended already when `syncfs` is called, and a suspension during its
+commit (`zil_commit`, `failmode=wait`) is waited out and returns 0. Traced:
+2.4.0 and 2.4.1 have identical `zfs_vfsops.c` (`zfs_sync`), `zpl_super.c`
+(`zpl_sync_fs`), `zil.c` (`zil_commit_flags`, `zil_commit_impl`) and `txg.c`
+(`txg_wait_synced_flags`). Accepted: a minimum version also trusts every
+later release, and a distribution's patches (Ubuntu's) are not verified. A
+forced `io.sync syncfs` on ZFS below the gate gets none of this: do not force
+it there.
+
+Two rules of the barrier hold on ZFS whenever its strategy is `syncfs`
+(`Barrier.filesystem` is `zfs`). The error of a ZFS `syncfs` is the result of
+this commit itself, never someone else's, so `errors` becomes `fail` at the
+entry: `io.sync_errors ignore` does not apply, and job creation does not
+suggest it after a failed commit. A ZFS `syncfs` does not report a failed
+writeback of pages dirtied through `mmap` (a quota or a full pool), which an
+`fsync` does (`zpl_fsync`, and `zfs_putpage` with `for_sync`), so under `auto`
+a `written` barrier (`sync_written`: operators' bundles, `job submit --move`
+payloads, trees another program wrote) takes `fsync` there and walks its
+trees file by file, as before; a forced `syncfs` keeps `syncfs`. Landings
+httk writes with `write()` keep `syncfs`. Accepted limit: files an
+instantiate hook writes in a job-creation batch are committed by that batch's
+`syncfs`, so a hook that writes through `mmap` on a dataset at its quota is
+not caught.
+
+A `syncfs` covers only the filesystem of the barrier's descriptor
+(`Barrier.device`, set only inside the context; a bind mount of the same
+filesystem has its `st_dev` and is covered, and the `EXDEV` backstop of renames
+stays). After its `syncfs`, `sync_written` therefore looks for what is
+mounted inside each tree from another filesystem. The mount table is used
+only where it provably describes the tree: the tree's path (`/proc/self/fd` of
+its open descriptor) must lead back to the same inode (`lstat`), not be
+deleted, and lie in a mount whose `major:minor` is the tree's own `st_dev`;
+`/proc/self/mountinfo` is then read (as bytes, split on LF alone, since a mount
+point may hold VT, CR or U+2028 literally, and mount points decoded as for the
+filesystem type; one record that does not parse makes the whole table
+uncertain), and the path and inode are checked again at the end. Each mount
+point below the tree's path whose `major:minor` is not the barrier's,
+directory or single file, is reached
+component by component with `O_NOFOLLOW` relative to the tree's descriptor,
+and when the opened object is on another filesystem, a directory is walked
+(`fsync_landing`) and a file fsynced once checked to be a regular file, each
+through fresh descriptors (the late walk's limit). A mount not reachable that
+way (hidden by a later mount, gone, or below a symlink) holds nothing of the
+tree; one below a directory that cannot be searched fails the sync
+(`SyncUnreadable`). A tree whose own root turns out to be on another
+filesystem when opened is walked whole. Whenever the table proves nothing
+(unreadable, uncertain, a path that changed meanwhile or leads elsewhere),
+every directory of the tree is listed instead, and each directory and regular file
+has its `st_dev` compared: a directory that cannot be listed, or a depth over
+256 levels, then fails the sync. A late walk under `fsync` covers what is
+mounted as any other entry. For L3, `_fs._off_device(paths, barrier)` groups
+the existing directories about to be written in (paths, anchored locations or
+descriptors, examined through symlinks as the barrier's anchor is) by the
+`st_dev` of those the barrier does not cover, with `None` for those that
+cannot be examined; it raises `ValueError` outside the barrier's context.
+`_fs._resolve_sync` also returns the filesystem type it read, for the protocol
+predicate.
+
 For `syncfs` the barrier opens `anchor` and calls `syncfs` once on that fresh
 descriptor, the *prime*: it flushes what was dirty already and consumes an
-unseen writeback error of someone else, so its error is logged and ignored;
+unseen writeback error of someone else, so its error is logged and ignored (on
+gated ZFS it has no such error to consume, but it still flushes: a commit of
+the dataset's intent log, about 16 ms on a local pool);
 `ENOSYS`, `EPERM` or `EINVAL` there make the strategy `fsync` for that
 filesystem for the rest of the process. The landings of one transfer prime
 once per filesystem: a transfer session's `stage` landings (the
@@ -771,7 +885,7 @@ it.
 
 A failed commit publishes nothing of the landing. A failed `syncfs` commit of
 a barrier whose policy is `fail` is retried once by the transfers (under
-`ignore` a writeback error does not fail, and an unsupported `syncfs` at a
+`ignore` a writeback error does not fail, except on ZFS, and an unsupported `syncfs` at a
 transfer's commit, primed or not, which still fails, is not retried; job
 creation, `job submit`, `job adopt PATH` and the store have no retry):
 
@@ -834,7 +948,8 @@ goes from the same relay), and a pull defers its own landings the same way:
 and the terminal are done, and the stage answers (the far side) or is queued
 (a pull) with the barrier still open. Only a barrier that resolved to
 `syncfs` is handed over: under `fsync` (`io.sync fsync`, or `auto` where it
-gives `fsync`, as on ZFS) every file was synced as it was written, the landing
+gives `fsync`, as on ZFS below its gate) every file was synced as it was
+written, the landing
 commits inline as before, and the stage holds no descriptor. The stage is
 `committed` once its first scan is taken, but `Stage.begin` refuses to adopt
 it until `Stage.sync` has committed that barrier successfully on the
@@ -846,9 +961,13 @@ found-id shortcut stays). Abandoning or closing the stage closes the
 descriptor: up to 8 open landing descriptors per session. `primed_devices` is
 still recorded only by a clean prime at the barrier's entry, so a later stage
 on the same filesystem opens unprimed and samples the error state at its
-`stage`; its commit, about a deadline later, reports every writeback error
-recorded on the filesystem since. One such error therefore usually fails every
-deferred stage open at that moment (a cascade, each retried in turn). The far
+`stage`; on a filesystem that records writeback errors on its superblock
+(errseq: ext4, XFS, Lustre), its commit, about a deadline later, reports every
+writeback error recorded on the filesystem since, so one such error usually
+fails every deferred stage open at that moment (a cascade, each retried in
+turn). On ZFS each commit reports only the result of its own commit of the
+intent log: a stage committed while the pool is suspended fails, and one
+committed after the pool returned succeeds, with no earlier error replayed. The far
 side's `adopt_staged` validates the token, workspace, ids and order before it
 consumes anything, then commits under the stall-exempt `sync` phase: a
 `CommitFailed` abandons the stage (its landing discarded) and only then releases
@@ -1016,6 +1135,50 @@ placement).
    `owner.json`, `heartbeat.json` and leftover write temporaries. `dead.json`
    stays. Otherwise it repeats from step 1, up to 8 rounds.
 
+Before step 1, recovery in a durable workspace seals what the dead owner may
+have renamed or unlinked without a commit point yet: it fsyncs `requests/`,
+`owned/<dead>/`, every job directory held there (a batched state replace may be
+unsealed in it), the dead owner's `tmp/<dead>.*` scratch directories and
+`tmp/`, at a cost proportional to the jobs it held. Only for an owner that
+wrote its batched marker (`owners/<id>/.batched`, durably, before its first
+batched mutation) does it also fsync each unowned state's directory and every
+placement directory below it; a serial owner seals its moves inline. Where the
+protocol predicate holds (`_fs.protocol_mode`: `io.sync` is `auto` or `syncfs`,
+`auto` resolves to `syncfs` there, and the filesystem is not Lustre), one
+`syncfs` per filesystem replaces the fsyncs. A directory that is gone stands for
+its nearest existing ancestor; any other error inspecting or syncing a
+directory fails the seal, and with it the recovery, which then returns,
+reconciles and removes nothing: managers, `gc` and the daemon keep the dead
+owner and retry at their next probe. A failure after recovery began to move
+things (a returned job's fsync, say) propagates as it always has. So no successor writes on top of a rename
+a machine crash could still undo. The live owner keeps the same discipline for
+batched steps: each step that renames or unlinks without its fsync first
+registers an obligation on the directories it may change, of one of two kinds:
+one that gates `owner.json` (moves out of `owned/<O>/`, their destinations,
+the trash, `tmp/`) or one that gates the job's exposure (its state replace, its
+request unlinks). Only a seal that starts after the step finished clears it,
+and a seal is all or nothing. `Owner.close` seals every obligation as its first
+step, before self-healing, the `rmdir` of `owned/<O>/` and the trash's
+reconcile; a failed seal keeps `owner.json`. A job with an unsealed exposure
+obligation never leaves `owned/<O>/` (`give_back`, the move out and `extract`
+refuse), and an owner holding such a job is latched: an exception or interrupt
+inside its context seals every obligation (all or nothing) and gives nothing
+back, leaving every job for recovery. The serial paths register no obligation,
+and a workspace that is not durable registers and syncs nothing. The batched
+steps serve local request-verb (`job cancel` and its siblings), `job detach` and `job delete` runs of at least eight jobs
+whose request ends in a release, a drop or a delete, in `syncfs` mode only (`removal._Batching`): one
+collector per batch of up to 256 jobs, primed before its first write, and one
+commit point per phase (the posts' data, their renames, the claims, the run-log
+lines and state temporaries, the state replaces, the request unlinks, the
+release moves); the claims' placement pruning waits until after the moves.
+Local deletes batch too: after the release phases of the jobs whose delete is
+dropped, the discarded jobs' trash moves (`OwnedJob.move_to_trash`, `owner`
+obligations of `owned/<O>/` and the trash scratch) end at their own commit
+point, and only then are the trashed trees removed, the handles retired
+(`retire_discarded`) and the jobs' request files unlinked (`owner` obligations
+of `requests/`), at a last commit point. Exchange-origin deletes, every other
+action and fsync mode stay serial.
+
 `recoverable_owners` lists every owner with a readable `owner.json`, plus
 every tombstoned owner that again holds jobs, launches or scratch (a falsely
 attested owner that kept working). Managers probe up to three of them, at
@@ -1095,7 +1258,7 @@ exchange bundle rewrites the client's ids and `claim.pool` before publication
 | `priority` | `0`–`999` | The submitted priority. |
 | `claim` | `{pool, required_capabilities}` | Eligibility labels; pool `default` needs no routing. A pool `exchange-<16 hex>` is an exchange pool (§Adopt). |
 | `retry_policy` | `{maximum_attempts_per_activation?, maximum_total_attempts?, maximum_activations?, retry_on?}` | Budgets (absent is unbounded) and the manager-detected failure codes that are retried. |
-| `resources`, `step_resources` | objects | Requirements per job and per step; `maxtime`/`mintime` are seconds. |
+| `resources`, `step_resources` | objects | Requirements per job and per step; `maxtime`/`mintime`/`warntime` are seconds. |
 | `parameters`, `declarations`, `declared`, `environment` | objects | Workflow inputs and metadata, opaque to the protocol. |
 | `parent` | `{workspace_id, job_id, job_key, placement, activation_id, spawn_id}` or `null` | The spawning job. |
 | `seal_succeeded` | boolean or `null` | Whether a succeeded job is sealed; `null` defers to the `seal.succeeded` setting. |
@@ -1618,7 +1781,7 @@ runs, only a `cancel` acts at once: the attempt and its launches are stopped
 (`SIGTERM`, then `SIGKILL` after the cancel grace) and the job commits as
 `cancelled`; other requests wait for the boundary. An unowned job, located at
 the request's placement, is claimed, reconciled (which applies the requests)
-and released. `job request`, `job delete`, `job seal`, `job unseal`, `job detach` and
+and released. The request verbs, `job delete`, `job seal`, `job unseal`, `job detach` and
 `job unlock` apply their requests at once, as a CLI owner, when the job is
 unowned.
 
@@ -1713,7 +1876,7 @@ from `applied_requests` at the next write.
 
 ### Unlocked jobs
 
-An `unlock` request (`httk job unlock`, `httk job request unlock`) puts a job
+An `unlock` request (`httk job unlock`) puts a job
 in debug mode: it lifts the provenance-integrity rules for that job and marks
 it so that collection will not store it by accident. It is a request like the
 others (applied by the owner, exactly once), except that the workspace daemon
@@ -1726,7 +1889,7 @@ protocol does not carry it.
   into the first `state.json` of every child that an unlocked parent
   publishes; such a child has no runner copy. The CLI also posts a
   marker-only `unlock` (`no_copy: true`) to every ancestor of a selected job,
-  nearest first; `job request unlock` on a local workspace does the same. Through an
+  nearest first. Through an
   ssh remote's request envelope `unlock` is refused for a spawned job.
 - **The runner copy.** Applying `unlock` without `no_copy` copies the effective
   installation's `package/` to `<payload>/workflow/`, the way the
@@ -1758,7 +1921,7 @@ protocol does not carry it.
   with a top-level `workflow/` is refused as carrying a trusted entry. Unlocked jobs are never sealed, so the seal covering `workflow/` matters only
   for the layout. The operator edits it in place. An untrusted exchange bundle
   may not carry it (§Adopt: exchange jobs run only pre-installed
-  workflows); trusted bundles (`job transfer`, `job adopt`, `job eject`) carry it
+  workflows); trusted bundles (`job move`, `job adopt`, `job eject`) carry it
   along.
 - **Relaxed.** A different `job.json` digest is pinned again (§`job.json`);
   `continue`, `restart`, `override_step`, `set_budget` and `set_workflow`
@@ -1846,7 +2009,7 @@ definition URI is `embedded.source` when set, else none. See
 
 A job references a workflow by id, and that workflow, and the transitive
 closure of its `[workflow.calls]`, must be installed before a manager starts
-the job. A job transfer installs the workflows its jobs need in the
+the job. A job move installs the workflows its jobs need in the
 destination when it lacks them, as copies of the source's store entries (see
 **Install a copy** below); the exchange never does.
 
@@ -1952,7 +2115,7 @@ is the submitting operator's canonical `ed25519:<base64>` public key written
 by `job eject`; it is unsigned. Only untrusted (exchange) adoption uses it. With `--operator IDENTITY`, eject uses
 that identity and fails without moving the job if it has no key. Otherwise it
 uses the configured default identity when keyed, and omits the member when it
-is not. Holds, `job transfer`, manager ejects and exchange returns never write
+is not. Holds, `job move`, manager ejects and exchange returns never write
 it; `--operator` with `--hold` is refused. When omitted, `bundle.json` retains
 exactly its previous bytes. Untrusted adoption refuses a non-canonical key.
 
@@ -2094,7 +2257,7 @@ untrusted bundle and to nothing for a trusted one.
 
 ### Holds and transfer
 
-`job transfer --job JOB... SRC DST` is hold + copy + adopt + release:
+`job move --job JOB... SRC DST` is hold + copy + adopt + release:
 
 1. **Hold.** SRC ejects each job (with `--tree`, its tree) into its own
    `transfers/outgoing/<transfer-id>/`, recording DST as the destination
@@ -2152,7 +2315,7 @@ WORKSPACE/exchange/
 └── daemon.json, managers.json, launchers/<handle>.log    the workspace daemon's documents
 ```
 
-`httk workspace exchange enable` creates the directories by descriptor, writes
+`httk daemon init` (through `enable_exchange`) creates the directories by descriptor, writes
 `exchange.json`, proves with a rename probe that bundles move between
 `exchange/` and `.httk-workspace/tmp/`, and only then adds `"exchange"` to
 `extensions`; there is no disable. Every trusted access to `exchange/` is
@@ -2315,11 +2478,11 @@ There is no age-based collection of scratch, held bundles or quarantine.
 
 ### Workspace check
 
-`httk workspace fsck` MUST run only while no other actor uses the workspace: no
+`httk workspace check` MUST run only while no other actor uses the workspace: no
 manager, CLI operation, daemon or transfer. It is the one maintenance operation
 that relies on this, like `fsck` for a filesystem; `gc`, recovery and the
 managers stay safe concurrently. Findings from a busy workspace may be
-transient. `--repair` is refused unless the workspace is quiescent: every owner
+transient. `httk workspace repair` is refused unless the workspace is quiescent: every owner
 other than fsck's own proven dead (as `workspace delete` requires) and
 `recoverable_owners` empty, so no owned jobs and no dead-owner scratch remain;
 `gc` recovers dead owners. The CLI asks for confirmation before repairing
@@ -2328,14 +2491,14 @@ CLI owner of its own. The check walks `jobs/` and reports:
 
 | Finding | Meaning |
 | --- | --- |
-| `unparsable_name` | An entry that is neither a placement directory nor a job name of its position. With `--repair` it is quarantined. |
+| `unparsable_name` | An entry that is neither a placement directory nor a job name of its position. A repair quarantines it. |
 | `duplicate_job` | One job UUID in two places (a cross-filesystem crash, a duplicate delivery or two concurrent trusted adoptions). |
 | `orphan_owned` | `jobs/owned/<id>/` without `owners/<id>/`; resolved by `attest-dead`. |
 | `tombstoned_owner_with_jobs` | A recovered owner that holds jobs, launches or scratch again; `gc` recovers it. |
 | `unreadable_state` | A `state.json` that exists but does not decode. |
 | `foreign_owner` | A job directory another uid owns. |
-| `stale_exchange_index` | An exchange index entry whose job one settled lookup does not find (the settle covers the visibility of writes that finished before fsck started). A held job is not looked for: a delivered hold has left the index already. With `--repair` it is removed under the nonce it was read with. |
-| `unindexed_exchange_job` | An unowned job with `origin: exchange`, no parent, and the job id this workspace rekeys its `exchange_name` to (an exchange root), without `exchange-jobs/<exchange_name>/`. Children, whose `exchange_name` is their own client id or their root's, and exchange jobs adopted from another workspace are not roots here. With `--repair` the entry is recreated by `claim_exchange_name` under a fresh adoption nonce, without `owner_key`; the root is then no longer daemon-controllable. |
+| `stale_exchange_index` | An exchange index entry whose job one settled lookup does not find (the settle covers the visibility of writes that finished before fsck started). A held job is not looked for: a delivered hold has left the index already. A repair removes it under the nonce it was read with. |
+| `unindexed_exchange_job` | An unowned job with `origin: exchange`, no parent, and the job id this workspace rekeys its `exchange_name` to (an exchange root), without `exchange-jobs/<exchange_name>/`. Children, whose `exchange_name` is their own client id or their root's, and exchange jobs adopted from another workspace are not roots here. A repair recreates the entry by `claim_exchange_name` under a fresh adoption nonce, without `owner_key`; the root is then no longer daemon-controllable. |
 
 Everything but unparsable entries and stale or missing exchange index entries
 is left to the operator.
@@ -2424,7 +2587,7 @@ and a workspace of another format version or profile with:
 ```text
 workspace at <root> uses httk-workflow-filesystem format version <v> (profile '<p>'); this version of
 httk-workflow reads only format 3 (core-v3). There is no migration: remove old per-user state with
-`httk system reset` and recreate the workspace with `httk workspace init`.
+`httk setup --reset` and recreate the workspace with `httk workspace init`.
 ```
 
 Bundles of the old transfer format and old remotes are refused likewise.

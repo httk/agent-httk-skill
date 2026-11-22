@@ -2,75 +2,94 @@
 
 This is the complete command reference, from workspaces and jobs to projects,
 signed manifests, and remotes. Installing *httk-workflow* registers lazy
-`workflow`, `workspace`, `job`, `launcher`, `remote`, `manager`, `campaign`,
-`config`, `seal`, `transfer`, `v1`, and `collect` commands with *httk-core*:
+`config` (Setup); `workspace`, `remote`, `launcher`, `daemon` and `campaign`
+(Organize); `workflow`, `job`, `run`, `monitor`, `push`, `pull` and `manager`
+(Run); `collect` and `postprocess` (Results); and `v1` (Legacy) commands with
+*httk-core*, which lists them under those headings in `httk --help`:
 
 ```console
 httk workflow --help
 ```
 
-`httk workflow …` covers workflow installation and execution; workspace and job
-management are the top-level trees `httk workspace …` and `httk job …`, and
-collecting results is `httk collect`. Every group and command answers `--help`,
+`httk workflow …` covers workflow installation, inspection and building;
+workspace and job management are the top-level trees `httk workspace …` and
+`httk job …`, running managers is `httk run`, and collecting results is
+`httk collect`. Every group and command answers `--help`,
 and a mistyped action is reported by its group. {doc}`taskmanager` explains
 what the commands do to a workspace.
+
+Short forms: `-w` is `--workspace`, `-s` is `--state`, `-n` is `--dry-run`,
+`-p` is `--parameter` and `-i` is `--input`, wherever the long option exists.
+`--yes` pre-confirms a command that would otherwise ask on the terminal (a
+`delete`, `remove` or `unseal`, `workspace repair`); `--force` always
+overrides a safety check instead.
 
 ## The command tree
 
 ```text
-httk workspace          show | configure | init | adopt | list | default | move | forget | delete | status | owners (managers) | attest-dead | workflows | settings show|set|unset | workflow-prelude show|set|unset | policy show|set|unset | fsck | gc | seal | unseal | verify | exchange enable | daemon init|configure|show|check|run
-httk job                new | submit | request | delete | seal | unseal | detach | unlock | eject | adopt | list | show | log | why | debug | push | pull | transfer
-httk collect            [PATH] [--workspace WORKSPACE] [--into PATH] [--dry-run] …
-httk workflow list      [--workspace WORKSPACE] [--json]
-httk workflow describe  TARGET… [--workspace WORKSPACE] [--json]
+httk workspace          show | set | unset | init | register | list | default | move | forget | delete | status | owners (managers) | attest-dead | check | repair | gc | seal | unseal | verify
+httk job new            SOURCE | --command TEMPLATE [--campaign [--partition NAME] [--campaign-index N]] [job options]
+httk job                new | submit | cancel | pause | resume | restart | set | delete | seal | unseal | detach | unlock | eject | adopt | list | show | log | why | precheck | debug | verify | move
+httk push               [SRC] DST [--job JOB] [--state STATE] [--step STEP] [--placement P] [--no-keep] [--no-workflows] [--json]
+httk pull               SRC [DST] [--job JOB] [--state STATE] [--step STEP] [--placement P] [--no-workflows] [--json]
+httk collect            [PATH] [--workspace WORKSPACE] [--into PATH] [--dry-run] …   (--campaign [--partition NAME]…: the campaign's partitions)
+httk workflow list      [--workspace WORKSPACE] [--available] [--json]
+httk workflow show      TARGET… [--workspace WORKSPACE] [--json]
 httk workflow install   SOURCE… [--workspace WORKSPACE] [--no-calls] [--no-build] [--json]
 httk workflow uninstall SELECTOR… [--workspace WORKSPACE] [--check] [--json]
 httk workflow build     [--workspace WORKSPACE] [--list] WORKFLOW…
-httk workflow precheck  [--workspace WORKSPACE] [--placement P] [--json]
-httk workflow run       [--workspace WORKSPACE]  (the recommended spelling of `manager run`)
-httk manager            run
-httk launcher           list | add | configure | show | check | remove
-httk workflow monitor   [--workspace WORKSPACE …] [--refresh SECONDS]
-httk workflow postprocess
+httk workflow fetch     URI… [--json]
+httk workflow forget    SELECTOR… [--json]
+httk run                [--workspace WORKSPACE] [manager options]   (--campaign [--partition NAME]…: a manager per partition; a mount-daemon workspace: --configuration NAME [--time-limit D] [--request-id ID] [--wait-seconds S])
+httk manager            status | log | cancel   (the managers a mount-daemon remote's daemon started)
+httk daemon             init | set | unset | show | check | run | reload   (the confined workspace daemon, on its host)
+httk launcher           list | add | set | unset | show | check | remove
+httk monitor            [--workspace WORKSPACE …] [--refresh SECONDS]
+httk postprocess        SCRIPT [JOB…] [--workspace WORKSPACE]
 httk v1                 collect
-httk remote             list | add | configure | check | import-v1 | show | remove | daemon
-httk config             show | configure | set | unset | import-v1
-httk seal               verify [PATH] [--json] [--trusted-key KEY] [--shallow]
-httk campaign           init | show | configure | remove | submit | collect | start-managers
-httk transfer           status
-httk init | identity    (core-owned: per-user configuration and named operator identities)
-httk project            init | show | import-v1 | export | repair | adopt | manifest create | manifest verify | seal | unseal | verify-seal   (core-owned)
+httk remote             list | add | set | unset | check | import-v1 | show | remove | take-back
+httk config             show | set | unset | import-v1
+httk campaign           init | show | set | unset | remove   (job new, collect and run take --campaign)
+httk setup | identity    (core-owned: per-user configuration and named operator identities)
+httk project            init | show | import-v1 | export | check | repair | manifest | verify | seal | unseal   (core-owned)
 ```
 
 ### Configuration conventions
 
 Concept groups live directly below `httk`: `httk launcher`, `httk remote`,
-`httk manager`, `httk campaign`, `httk config`, and `httk seal`. `workflow`
-retains workflow installation, inspection, building and execution.
+`httk campaign` and `httk config`. `workflow` retains workflow installation,
+inspection and building, and follows the workspace default like every other
+command (`list` and `show` never create it); only `list --available`, `fetch`
+and `forget` address this machine.
 
-Use `show [--json]` to inspect configuration and `configure` to change it.
-Repeat `--set KEY=VALUE` to add or replace a value and `--unset KEY` to remove
-an override. Supported list settings also offer `--add KEY=VALUE` and
-`--remove KEY=VALUE`; these change individual members, whereas `--unset`
-removes the whole override. Workspace, launcher and remote configuration
-removes overrides before setting new values; user, campaign and daemon
-configuration applies flags in argument order.
+Use `show [--json]` to inspect configuration. Workspaces, launchers, remotes,
+the per-user configuration and campaigns change it with `set KEY=VALUE...`, which
+adds or replaces values, and `unset KEY...`, which removes overrides. Supported
+list settings also take `--add KEY=VALUE` and `--remove KEY=VALUE` on `set`;
+these change individual members, whereas `unset` removes the whole override.
+One `set` applies its pairs, then `--add`, then `--remove`, and saves only when
+every change is valid. A workspace's `show`, `set` and `unset` take the
+workspace with `-w/--workspace` and address one key namespace: application
+settings, `policy.*` members and `prelude.WORKFLOW_ID` preludes. The daemon
+configuration follows the same grammar with the daemon's workspace path as its
+object: `daemon set WORKSPACE KEY=VALUE... [--add K=V] [--remove K=V]` and
+`daemon unset WORKSPACE KEY...`.
 
 | Configuration | Inspect | Modify | Remove the definition |
 | --- | --- | --- | --- |
-| Workspace application settings | `workspace show [NAME...]` | `workspace configure [NAME...] --set KEY=VALUE --unset KEY` | `workspace forget NAME` keeps files; `workspace delete --force NAME` deletes them |
-| Workspace policy | `workspace policy show` | `workspace policy set --key KEY --value JSON` (pairs repeat; one write); `workspace policy unset --key KEY` restores the default | Required format members cannot be deleted |
-| Workflow preludes | `workspace workflow-prelude show` | `workspace workflow-prelude set` / `unset` | Unset a workflow's prelude |
-| Installed workflows | `workspace workflows`, `workflow list --workspace` | `workflow install --workspace` | `workflow uninstall --workspace` |
-| Launcher | `launcher show NAME` | `launcher configure NAME --set KEY=VALUE --unset KEY`; `--add` / `--remove` for confinement path lists | `launcher remove NAME` |
-| Remote | `remote show NAME` | `remote configure NAME --set KEY=VALUE --unset KEY`, including private credentials | `remote remove NAME` |
-| User configuration | `config show` | `config configure --set KEY=VALUE --unset KEY`; `--add` / `--remove` for `machine_names` | Unset its configurable keys |
-| Campaign | `campaign show` | `campaign configure --set partitions.NAME=WORKSPACE --unset partitions.NAME`; set or unset `assignment` | `campaign remove` clears the map, keeping jobs and workspaces |
-| Workspace daemon | `workspace daemon show PATH` | `workspace daemon configure PATH --set KEY=VALUE --unset KEY`; `--add` / `--remove` for launchers and authorized keys | Enrollment removal is not provided |
+| Workspace application settings | `workspace show [KEY...]` | `workspace set KEY=VALUE...`, `workspace unset KEY...` | `workspace forget NAME` keeps files; `workspace delete NAME` deletes them after confirmation |
+| Workspace policy | `workspace show policy.KEY` | `workspace set policy.KEY=JSON...`; `workspace unset policy.KEY` restores the default | Required format members cannot be deleted |
+| Workflow preludes | `workspace show prelude.WORKFLOW_ID` | `workspace set prelude.WORKFLOW_ID=TEXT\|@FILE`, `workspace unset prelude.WORKFLOW_ID` | Unset a workflow's prelude |
+| Installed workflows | `workflow list`, `workflow show` | `workflow install` | `workflow uninstall` |
+| Launcher | `launcher show NAME` | `launcher set NAME KEY=VALUE...`, `launcher unset NAME KEY...`; `set --add` / `--remove` for confinement path lists | `launcher remove NAME` |
+| Remote | `remote show NAME` | `remote set NAME KEY=VALUE...`, `remote unset NAME KEY...`, including private credentials | `remote remove NAME` |
+| User configuration | `config show` | `config set KEY=VALUE...`, `config unset KEY...`; `set --add` / `--remove` for `machine_names` | Unset its configurable keys |
+| Campaign | `campaign show` | `campaign set partitions.NAME=WORKSPACE`, `campaign unset partitions.NAME`; set or unset `assignment` | `campaign remove` clears the map, keeping jobs and workspaces |
+| Workspace daemon | `daemon show PATH` | `daemon set PATH KEY=VALUE...`, `daemon unset PATH KEY...`; `set --add` / `--remove` for launchers and authorized keys | Enrollment removal is not provided |
 
-Local workspace batches validate before writing; remote workspace batches use
-single-key operations sequentially, so a transport failure can leave earlier
-changes applied. Removing daemon enrollment or disabling the exchange is not
+A workspace `set` or `unset` validates every change and stores them in one
+write of the workspace's `format.json`, so either all of them apply or none
+does; on a remote workspace it is one forwarded command. Removing daemon enrollment or disabling the exchange is not
 offered: exchange clients, running managers and retained submission state must
 be settled first.
 
@@ -91,10 +110,10 @@ The registry is machine-owned and stores only absolute local paths, in
 `$XDG_CONFIG_HOME/httk/workspaces.json`. When a command reaches a remote
 workspace, the far side resolves the plain name in its own registry.
 
-Remote-capable commands (workspace status, settings, `gc`, `fsck`, `job list`,
-`show`, `log`, `why`, `request` and `delete`, `workflow install`, `build` and
-`run`) go through the adapter. Jobs are created locally, moved with
-`job push` and brought back with `job pull` (or `job transfer` in general).
+Remote-capable commands (workspace status, settings, `gc`, `check`, `repair`,
+`job list`, `show`, `log`, `why`, `request` and `delete`, `workflow list`,
+`show`, `install`, `uninstall` and `build`, and `run`) go through the adapter. Jobs are created locally, moved with
+`push` and brought back with `pull` (or `job move` in general).
 
 ## Workspaces
 
@@ -102,34 +121,25 @@ Remote-capable commands (workspace status, settings, `gc`, `fsck`, `job list`,
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `workspace init [OPTIONS] PATH...` | create a workspace in a new or empty directory of its own, or adopt an existing one, registering each name (basename or `--name`) and recording it in the project's `members.json` | `--name` (one path only), `--setting KEY=VALUE`, `--no-durable` |
-| `workspace exchange enable [WORKSPACE]` | enable the `exchange/` extension of a workspace (idempotent) | |
-| `workspace daemon init WORKSPACE` | approve global `slurm` launchers, enable the exchange when needed and enroll the workspace, then check the sandbox | `--set KEY=VALUE`, `--add KEY=VALUE` |
-| `workspace daemon configure WORKSPACE` | change the daemon configuration, activated by `reload` or when the daemon next starts | `--set`, `--add`, `--unset`, `--remove` |
-| `workspace daemon show WORKSPACE` | describe the enrollment and its daemon configuration | `--json` |
-| `workspace daemon check WORKSPACE` | activate the configuration and check the real sandbox and scheduler clients | |
-| `workspace daemon run WORKSPACE` | activate the configuration and run the confined Slurm broker | `--once` |
-| `workspace daemon reload WORKSPACE` | activate the changed configuration and launcher bundles; a running daemon restarts on it | |
+| `workspace init PATH [KEY=VALUE...]` | create a workspace in a new or empty directory of its own (`REMOTE:PATH` on a remote), or adopt an existing one, registering its name (basename or `--name`) and recording it in the project's `members.json`; the pairs seed application settings | `--name`, `--no-durable` |
 | `workspace list [--json] [REMOTE:]` | list local or owning-machine workspaces | |
 | `workspace default [--unset] [NAME]` | read or record this project's default name | |
-| `workspace adopt [PATH...]` | register copied workspaces on this machine under the names their project's `members.json` records | `--name` (one path only), `--json` |
+| `workspace register [PATH...]` | register copied workspaces on this machine under the names their project's `members.json` records | `--name` (one path only), `--json` |
 | `workspace move NAME DEST_DIR` | move a local workspace and update its registry path | `--no-durable` |
 | `workspace forget NAME...` | deregister names, leaving workspaces on disk | |
-| `workspace delete --force NAME...` | destroy workspaces and deregister them | |
-| `workspace status [NAME...]` | job counts by state, the seal, and the owners with their liveness (remote: over the adapter) | `--json` |
+| `workspace delete NAME...` | destroy workspaces and deregister them, after confirmation | `--yes` skips the confirmation |
+| `workspace status [NAME...]` | job counts by state, the seal, the owners with their liveness, and the held transfers (transfer id, root job, members, destination, age; `transfers` in `--json`; a hold whose manifest cannot be read is named, `transfers_unreadable` in `--json`, without changing the exit status) (remote: over the adapter) | `--json` |
 | `workspace owners [NAME...]` | list the owners (managers, CLI processes, daemons) with their liveness; `managers` is an alias | `--kind manager\|cli\|daemon`, `--json` |
 | `workspace attest-dead OWNER [NAME] --reason TEXT` | declare an owner and its launches ended, so the next manager tick or `workspace gc` recovers its jobs | `--operator NAME`, `--force` |
-| `workspace workflows [NAME...]` | list the workflows installed in a workspace | `--json` |
-| `workspace show [NAME...]` | print application settings, each marked recognized, unrecognized or undeclared | `--key KEY`, `--json` |
-| `workspace configure [NAME...]` | set and unset application settings in one write (remote: one forwarded command) | `--set KEY=VALUE`, `--unset KEY` (repeatable), `--json` |
-| `workspace settings show\|set\|unset` | print, store or remove application settings; `show` adds a column marking each key recognized, unrecognized or undeclared, `set` takes repeated `--key`/`--value` pairs in one write, warning about unrecognized keys and noting undeclared ones, and `unset` takes repeated `--key` in one write and prints the removed keys as a JSON list | `--key KEY`, `--value VALUE` |
-| `workspace workflow-prelude show\|set\|unset` | print, store or remove one workflow's prelude | `--workflow WORKFLOW`, `--value VALUE` (`@FILE` reads a file) |
-| `workspace policy show\|set\|unset` | print, store or reset policy members (remote: one forwarded command each); `set` takes repeated `--key`/`--value` pairs in one write | `--key KEY`, `--value JSON`, `--json` |
-| `workspace fsck [NAME...]` | check the job tree for what the kernel cannot resolve; only while nothing else uses the workspace | `--repair` (quiescent workspace only, asks first), `--yes`, `--json` |
+| `workspace show [KEY...]` | print every key (application settings with a column marking each recognized, unrecognized or undeclared, then `policy.*`, then `prelude.*`), or the selected keys; one KEY prints its bare value | `-w`, `--json`, `--adapter-timeout` |
+| `workspace set KEY=VALUE...` | store application settings, policy members and preludes in one validated write, printing the changed keys as one JSON object; warns about unrecognized settings and notes undeclared ones (remote: one forwarded command) | `-w`, `--no-durable`, `--adapter-timeout` |
+| `workspace unset KEY...` | remove application settings and preludes and restore policy defaults in one write, printing the keys as a JSON list (remote: one forwarded command) | `-w`, `--no-durable`, `--adapter-timeout` |
+| `workspace check [NAME...]` | check the job tree, read-only, for what the kernel cannot resolve; only while nothing else uses the workspace | `--json` |
+| `workspace repair NAME...` | check like `workspace check`, then quarantine unparsable entries and fix the exchange index, after confirmation; quiescent workspace only | `--yes`, `--json` |
 | `workspace gc [NAME...]` | collect what the retention policy allows and recover dead owners (remote: over the adapter) | `--dry-run`, `--category CATEGORY` (repeatable), `--json` |
 | `workspace seal [NAME...]` | record every job's seal digest under one signed workspace seal, listing the unsealed jobs | `--keys REFS` |
-| `workspace unseal [NAME...]` | remove a workspace's seal, refused while its project is sealed | `--force` skips the confirmation |
-| `workspace verify [NAME...]` | verify a workspace seal and list the jobs that drifted since it; drift exits `1` | `--trusted-key`, `--json` |
+| `workspace unseal [NAME...]` | remove a workspace's seal, refused while its project is sealed | `--yes` skips the confirmation |
+| `workspace verify [NAME...]` | verify a workspace seal and list the jobs that drifted since it; drift exits `1` | `--trusted-key`, `--json`, `--deep` (also verify each recorded job seal), `--content` (implies `--deep`, also checks uncompressed digests) |
 
 ### Creating, moving, and removing workspaces
 
@@ -167,29 +177,29 @@ commands; managers and jobs do not check it.
 
 Application settings are a flat map of small dotted values a runner resolves
 when it runs, such as `vasp.command`; a value that parses as JSON is stored as
-that scalar, a bare word as a string. `workspace init --setting KEY=VALUE` seeds
+that scalar, a bare word as a string. `workspace init PATH KEY=VALUE...` seeds
 them, and a workspace bound to a remote is also seeded from that remote's
 whitelisted settings (a cluster's `vasp_command` becomes `vasp.command`). They
 are snapshotted into each attempt, so never store credentials there; see
 [application settings](taskmanager.md#application-settings).
 
 ```console
-httk workspace settings set --key vasp.command --value vasp_std \
-  --key environment.prelude --value "module load httk" my-workspace
-httk workspace workflow-prelude set --workflow relax-vasp --value @prelude.sh my-workspace
-httk workspace workflow-prelude show --json my-workspace
+httk workspace set -w my-workspace vasp.command=vasp_std \
+  environment.prelude="module load httk" prelude.relax-vasp=@prelude.sh
+httk workspace show -w my-workspace prelude.relax-vasp
 ```
 
-`environment.prelude` applies to every job and `workflow-prelude` only to the
+`environment.prelude` applies to every job and `prelude.WORKFLOW_ID` only to the
 jobs of one workflow id, after it; both run under `set -e`. A workflow prelude
-`VALUE` is stored verbatim, and `@FILE` reads it from a file. Preludes are
+value is stored verbatim, never parsed as JSON, and `@FILE` reads it from a file
+(on the far side for a remote workspace, which receives the pairs as given). Preludes are
 workspace-local: a transferred job runs under the destination's preludes. See
 [environment preludes](../workspaces.md#environment-preludes).
 
 ### Policy, owners, and checks
 
-The workspace policy (`visibility_deadline_seconds` and the `retention.*`
-limits) is stored in `format.json`; see
+The workspace policy (`policy.visibility_deadline_seconds` and the
+`policy.retention.*` limits) is stored in `format.json`; see
 [workspace policy](taskmanager.md#workspace-policy). `workspace owners` lists
 who holds jobs, with the liveness the read-only death proof gives from this
 host. An owner whose death no probe can prove is declared dead by the operator:
@@ -203,11 +213,11 @@ decide needs `--force`. Attesting an owner that is still running can apply a
 request twice and run work twice, so attest only after confirming that the owner
 process and every launch it started are gone; see
 [owners, death and recovery](taskmanager.md#owners-death-and-recovery).
-`workspace fsck` must run only while no manager, CLI operation, daemon or
-transfer uses the workspace; its findings from a busy workspace may be
-transient, and `--repair` is refused until every owner is proven dead and
-recovered by `workspace gc`. `--repair` asks for confirmation first; `--yes`
-answers it, and is required without a terminal. `workspace fsck` and
+`workspace check` and `workspace repair` must run only while no manager, CLI
+operation, daemon or transfer uses the workspace; findings from a busy
+workspace may be transient, and `repair` is refused until every owner is proven
+dead and recovered by `workspace gc`. `repair` asks for confirmation first;
+`--yes` answers it, and is required without a terminal. Checking and
 `workspace gc` are described in
 [checking a workspace](taskmanager.md#checking-a-workspace) and
 [freeing disk](taskmanager.md#freeing-disk).
@@ -219,12 +229,14 @@ in `workflows/<slug>--<h16>/` and are selected by id, short name (the most
 recently installed one of that name) or `NAME@REF` (see
 [Short names](workflow_uris.md#short-names)).
 
-### `install` and `uninstall`
+### `install`, `uninstall`, `fetch` and `forget`
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `workflow install SOURCE...` | install into a workspace: a package directory, a git URI, a runner file or workflow document (installed ad hoc), or a workflow name known here; a git URI without `#SUBDIR` whose repository root carries `httk_plugin.toml` installs every workflow that plugin lists; declared calls are installed too (call slot defaults never are: a `notice:` names each one not installed) and a `[workflow.build]` package is built | `--workspace`, `--no-calls`, `--no-build`, `--format`, `--json`, `--adapter-timeout` |
+| `workflow install SOURCE...` | install into a workspace: a package directory, a git URI, a runner file or workflow document (installed ad hoc), or a workflow name known here; a git URI without `#SUBDIR` whose repository root carries `httk_plugin.toml` installs every workflow that plugin lists; declared calls are installed too (call slot defaults never are: a `notice:` names each one not installed) and a `[workflow.build]` package is built | `--workspace`, `--no-calls`, `--no-build`, `--language`, `--json`, `--adapter-timeout` |
 | `workflow uninstall SELECTOR...` | remove installed workflows by id, short name or `NAME@REF`; a selector several installations share is refused | `--workspace`, `--check` (warn about unfinished jobs using it), `--json` |
+| `workflow fetch URI...` | fetch git workflows into this machine's cache, without a workspace | `--json` |
+| `workflow forget SELECTOR...` | forget fetched git workflows on this machine (a pinned URI removes that commit, an unpinned URI or a short name its whole lineage) | `--json` |
 
 ```console
 httk workflow install --workspace WORKSPACE 'git+https://github.com/httk/workflows-vasp#vasp-relax'
@@ -235,19 +247,28 @@ httk workflow install --workspace kappa:runs ./my-workflow
 The command prints `ID<TAB>NAME` per installed workflow. A git source is
 installed under its canonical URI pinned to the full commit. A `REMOTE:WS`
 workspace gets the source pushed through the remote's adapter (a git source is
-fetched there by its pinned URI). Without `--workspace`, `install` only fetches
-a git URI into this machine's cache and `uninstall` forgets fetched git
-workflows (a pinned URI removes that commit, an unpinned URI or a short name its
-whole lineage). See {doc}`/details/workflow_uris`.
+fetched there by its pinned URI). Without `--workspace`, `install`,
+`uninstall` and `build` use the default workspace like every other command,
+creating the per-user default when it is missing (as `job new` does); when the
+project's recorded default does not resolve, `install` names `workflow fetch`
+and `workspace init`. See {doc}`/details/workflow_uris`.
 
-### `list` and `describe`
+### `list` and `show`
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `workflow list` | without `--workspace`, the workflows a name selects on this machine (registered, plugin, pip-installed workflow repositories, fetched git workflows); with it, the workflows installed in that workspace | `--workspace`, `--json` |
-| `workflow describe TARGET...` | describe a registered id or alias, git URI, runner file or package directory; with `--workspace`, an installation there | `--workspace`, `--format`, `--json` |
+| `workflow list` | the workflows installed in the workspace; with `--available`, the workflows a name selects on this machine (registered, plugin, pip-installed workflow repositories, fetched git workflows) | `--workspace`, `--available`, `--json` |
+| `workflow show TARGET...` | describe a target's installation in the workspace; a target the workspace does not hold (or every target, when there is no workspace) as resolved on this machine: a registered id or alias, git URI, runner file or package directory | `--workspace`, `--language`, `--json` |
 
-As a report, `describe` runs a directory package's runner entry with
+`list` and `show` are inspections and never create a workspace: without
+`--workspace` they use the enclosing workspace, the project's default, or the
+per-user default only when it already exists. With none of them, `list` fails
+with a hint naming `workflow list --available` and `workspace init`, and `show`
+describes every target as this machine resolves it.
+
+Each description starts with `described from: workspace WS` or
+`described from: this machine` (`described_from` and `workspace` in `--json`).
+As a report, `show` runs a directory package's runner entry with
 `--describe`. When the manifest's declared `steps` disagree with what the
 runner reports, it prints a prominent `WARNING: step drift` line
 (`manifest_step_drift` in `--json`), but still exits `0`. Package authoring is
@@ -279,26 +300,29 @@ manager's platform stays `ready` and unclaimed there.
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `job new [OPTIONS]` | scaffold and submit jobs of an installed workflow | `--workspace`, exactly one of `--workflow`, `--workflow-dir`, `--from-runner`, `--from-command`; `--install`, `--embed-workflow`, `--call`, `--call-parameter`, `--parameter`, `--environment`, `--format`, `--input`, `--input-move-from-job`, `--input-from`, `--file`, `--files`, `--tag`, `--name`, `--placement`, `--priority`, `--step`, `--json` |
+| `job new SOURCE\|--command TEMPLATE` | scaffold and submit jobs of a workflow | `--workspace`, `--campaign` (with `--partition`, `--campaign-index`), `--install`, `--embed-workflow`, `--call`, `--call-parameter`, `--parameter`, `--environment`, `--language`, `--input`, `--input-move-from-job`, `--input-from`, `--file`, `--files`, `--tag`, `--placement`, `--priority`, `--start-step`, `--duplicate-tag`, `--json` |
 | `job submit SOURCE...` | submit prepared payload directories | `--workspace`, `--move`, `--json` |
-| `job request ACTION JOB_ID...` | post one operator request per job (remote: signed envelope or typed daemon command) | `--workspace`, `--operator`, required `--reason`, `--state`, `--step`, `--placement`, `--priority`, `--override-step`, `--destination`, `--max-attempts-per-activation`, `--max-total-attempts`, `--max-activations`, `--force`, `--keep-budget`, `--tree`, `--wait`, `--timeout`, `--adapter-timeout`, daemon-only `--request-id` |
-| `job delete JOB...` | delete terminal or paused jobs (remote: over the adapter) | `--workspace`, `--force`, `--adapter-timeout` |
-| `job seal JOB...` | seal succeeded jobs that carry no seal | `--workspace` |
-| `job unseal JOB...` | release succeeded jobs from their seal, so they may be deleted | `--workspace`, `--force` skips the confirmation |
-| `job detach JOB...` | make spawned jobs independent of their parents, permanently | `--workspace` |
-| `job unlock [--no-copy] JOB...` | put jobs, and every ancestor of them, in debug mode (one-way) and, unless `--no-copy`, give each selected job its own copy of the runner to edit | `--workspace`, `--no-copy`, `--reason TEXT` (default `job unlock`) |
-| `job eject JOB [DEST]` | move a quiescent job out into the bundle `DEST/<job-key>` | `--workspace`, `--tree`, `--wait`, `--timeout`, `--hold`, `--destination-id`, `--operator`, `--json` |
+| `job cancel\|pause\|resume\|restart JOB...` | post one `cancel`, `pause`, `continue` or `restart` request per job (remote: signed envelope or typed daemon command) | `--workspace`, `--state`, `--step`, `--placement`, `--operator`, `--reason` (default: the command), `--adapter-timeout`, daemon-only `--request-id`; `pause`: `--wait`, `--timeout`; `resume`: `--tree`; `resume`, `restart`: `--force`, `--keep-budget` |
+| `job set JOB... KEY=VALUE...` | change jobs through requests: `workflow=`, `budget.max_attempts_per_activation=`, `budget.max_total_attempts=`, `budget.max_activations=`, `priority=`, `step=` | as the request verbs; `--force`, `--keep-budget` with `step=` |
+| `job delete JOB...` | delete terminal or paused jobs (remote: over the adapter; a workspace daemon: a signed request) | `--workspace`, `--yes`, `--operator`, `--adapter-timeout`, daemon-only `--request-id` |
+| `job seal JOB...` | seal succeeded jobs that carry no seal | `--workspace`, `--operator`, `--adapter-timeout`, daemon-only `--request-id` |
+| `job unseal JOB...` | release succeeded jobs from their seal, so they may be deleted | `--workspace`, `--yes` skips the confirmation, `--operator`, `--adapter-timeout`, daemon-only `--request-id` |
+| `job detach JOB...` | make spawned jobs independent of their parents, permanently | `--workspace`, `--operator`, `--adapter-timeout`, daemon-only `--request-id` |
+| `job unlock [--no-copy] JOB...` | put jobs, and every ancestor of them, in debug mode (one-way) and, unless `--no-copy`, give each selected job its own copy of the runner to edit | `--workspace`, `--no-copy`, `--reason TEXT` (default `httk job unlock`), `--operator`, `--adapter-timeout` |
+| `job eject JOB [DEST]` | move a quiescent job out into the bundle `DEST/<job-key>` (remote: an eject request; for a workspace daemon `DEST` is under its outbox, the outbox itself when omitted) | `--workspace`, `--tree`, `--wait`, `--timeout`, `--operator`, `--json`, `--adapter-timeout`, daemon-only `--request-id` |
 | `job adopt BUNDLE...` | move ejected bundles into the workspace, in turn | `--workspace`, `--move`, `--json` |
 | `job list` | list jobs a page at a time (remote: over the adapter) | `--workspace`, `--state`, `--step`, `--placement`, `--limit`, `--after`, `--tag-contains`, `--counts`, `--json` |
 | `job show JOB...` | describe jobs from their documents (remote: over the adapter) | `--workspace`, `--no-children`, `--json` |
 | `job log JOB...` | print run logs (remote: over the adapter) | `--workspace`, `--limit`, `--json` |
 | `job why JOB...` | explain why jobs are not progressing (remote: over the adapter) | `--workspace`, `--json` |
-| `job debug JOB` | drive one job to a terminal state in the foreground | `--workspace`, `--step`, `--placement`, `--follow-children`, `--timeout`, `--log-level` |
-| `job push [SRC] DST` | move the `ready` jobs (as `job transfer --tree --state ready`); the omitted SRC is the enclosing or default workspace | `--job`, `--state`, `--step`, `--placement`, `--json`, `-q`/`--quiet`, `--adapter-timeout` |
-| `job pull SRC [DST]` | move the `succeeded` jobs (as `job transfer --tree --state succeeded`); the omitted DST is the enclosing or default workspace | `--job`, `--state`, `--step`, `--placement`, `--json`, `-q`/`--quiet`, `--adapter-timeout` |
-| `job transfer SRC DST` | move jobs between two workspaces | `--job`, `--state`, `--step`, `--placement`, `--tree`, `--resume`, `--release`, `--hold`, `--destination-id`, `--json`, `-q`/`--quiet`, `--adapter-timeout` |
+| `job precheck` | check pending jobs before they start, without changing the workspace | `--workspace`, `--placement`, `--json` |
+| `job debug JOB` | drive one job to a terminal state in the foreground | `--workspace`, `--start-step`, `--placement`, `--follow-children`, `--timeout`, `--log-level` |
+| `job verify JOB...` | verify job seals against their payloads; a JOB that is a payload directory (holding `job.json`) is verified where it is, also outside any workspace | `--workspace`, `--content`, `--trusted-key`, `--json` |
+| `httk push [SRC] DST` | move the `ready` jobs (as `job move --tree --state ready`); the omitted SRC is the enclosing or default workspace | `--job`, `--state`, `--step`, `--placement`, `--json`, `-q`/`--quiet`, `--adapter-timeout` |
+| `httk pull SRC [DST]` | move the `succeeded` jobs (as `job move --tree --state succeeded`); the omitted DST is the enclosing or default workspace | `--job`, `--state`, `--step`, `--placement`, `--json`, `-q`/`--quiet`, `--adapter-timeout` |
+| `job move SRC DST` | move jobs between two workspaces | `--job`, `--state`, `--step`, `--placement`, `--tree`, `--resume`, `--release`, `--destination-id`, `--json`, `-q`/`--quiet`, `--adapter-timeout` |
 
-When giving more than one `JOB_ID`, name the workspace explicitly.
+When giving more than one `JOB`, name the workspace explicitly.
 
 ### Selecting jobs
 
@@ -314,40 +338,52 @@ lowercase job UUIDs only; resolve keys and prefixes locally first.
 
 ### Creating jobs
 
-`job new` scaffolds and submits jobs of a workflow installed in the workspace.
-See {doc}`/quickstart`.
+`job new SOURCE` scaffolds and submits jobs of a workflow installed in the
+workspace; `job new --command TEMPLATE` generates the workflow instead of
+SOURCE. See {doc}`/quickstart`.
 
 ```console
 httk workflow install --workspace WORKSPACE 'git+https://github.com/httk/workflows-vasp#vasp-relax'
-httk job new --workspace WORKSPACE --workflow vasp.relax --input structure=POSCAR --tag silicon
-httk job new --workspace WORKSPACE --workflow vasp.relax --input-from structure structures/ --parameter kpoint_density=30.0 --placement project/screening
-httk job new --workflow vasp.relax --input structure=POSCAR --parameter publish_data=true
-httk job new --from-runner ./my_runner.py --step characterize --parameter sites=8
-httk job new --from-command 'my_executable {input}' --file input=input_files/a.dat --tag a
+httk job new --workspace WORKSPACE vasp.relax --input structure=POSCAR --tag silicon
+httk job new --workspace WORKSPACE vasp.relax --input-from structure structures/ --parameter kpoint_density=30.0 --placement project/screening
+httk job new vasp.relax --input structure=POSCAR --parameter publish_data=true
+httk job new ./my_runner.py --start-step characterize --parameter sites=8
+httk job new --command 'my_executable {input}' --file input=input_files/a.dat --tag a
 ```
 
-`--workflow` names an installed workflow by id or short name (the most
-recently installed one of that name), or as `NAME@REF` by the tag, branch or
-commit prefix it was installed from (see
-[Short names](workflow_uris.md#short-names)). A workflow that
-is not installed is refused, unless `--install` installs it first (with its
-calls): a git URI `git+https://HOST/PATH[@REF][#SUBDIR]`, a package directory
-(`--workflow-dir`, installed again when the directory's sources differ from
-the installed ones, compared by the installed digest's rules), or a workflow name known on this machine. A runner file,
-command template or bare workflow document is always installed ad hoc, as
-`adhoc:<name>@<digest>`. The job records the installed workflow's id, pinned to
-the full commit for a git workflow.
+SOURCE is told apart as `httk workflow install SOURCE` tells its kinds apart,
+in this order: an existing runner file, workflow document or package directory
+(holding `httk_workflow.toml`), then a git URI
+`git+https://HOST/PATH[@REF][#SUBDIR]`, then a name. A directory without
+`httk_workflow.toml` is read as a name (unless `--language` names a directory
+format), so a directory that happens to share a workflow's name where the job
+is created does not hide the workflow; give `./NAME/` a manifest, or another
+name, to mean the directory. A name is an installed workflow's id or short name
+(the most recently installed one of that name), `NAME@REF` by the tag, branch
+or commit prefix it was installed from (see
+[Short names](workflow_uris.md#short-names)), or a registered or packaged
+workflow name. A workflow that is not installed is refused, unless `--install`
+installs it first (with its calls); a package directory is installed again when
+its sources differ from the installed ones, compared by the installed digest's
+rules. A runner file, command template or bare workflow document is always
+installed ad hoc, as `adhoc:<name>@<digest>`. The job records the installed
+workflow's id, pinned to the full commit for a git workflow.
 
-A runner supplied with `--from-runner` is run in describe mode to infer its
-workflow and initial step, so it must call `httk_workflow_runner WORKFLOW
-STEP...` before any work.
+A runner file given as SOURCE is run in describe mode to infer its workflow and
+initial step, so it must call `httk_workflow_runner WORKFLOW STEP...` before
+any work. Give SOURCE before `--input-from` (or after `--`): `--input-from` takes
+every word up to the next option, so a SOURCE after it is read as an input
+file, and `job new` then names that word. A SOURCE that looks like a path (it
+holds `/` or ends in `.py`, `.sh`, `.bash`, `.cwl`, `.json`, `.yaml` or `.yml`)
+but does not exist is refused as `workflow install` refuses it, not looked up
+as a name.
 
 Other options:
 
 - `--embed-workflow` embeds the workflow in the job's `<job>/workflow/` instead
   of naming an installation (see {doc}`workflow_packages`, *Embedded workflows*).
-  It works with `--workflow`, `--workflow-dir`, `--from-runner` and
-  `--from-command`, installs nothing, and is refused together with `--install`.
+  It works with every SOURCE and with `--command`, installs nothing, and is
+  refused together with `--install`.
   The job's workflow id is `embedded:<name>@<sha12>`. Language realizations,
   `[workflow.build]` packages and uninstalled fixed callees are refused, and the
   tree must hold no symlink, special file, hard-linked file or `__pycache__`.
@@ -363,9 +399,9 @@ Other options:
   default; `--call-parameter ALIAS NAME=VALUE` gives the bound workflow one
   parameter, spelled as for `--parameter`. Both repeat. See
   [call slots](composing_workflows.md#call-slots).
-- `--format FORMAT` selects the format of a bare document (see
+- `--language LANGUAGE` selects the language of a bare document (see
   [Running workflow documents](#running-workflow-documents)).
-- `--priority` (0 is highest) and `--step` override the workflow's defaults.
+- `--priority` (0 is highest) and `--start-step` override the workflow's defaults.
 - `--duplicate-tag {refuse,skip,allow}` decides what happens when a job with
   the same `--tag` already exists in the same placement (exactly that
   placement, not its subtree) in any state, away and running included. The
@@ -379,7 +415,7 @@ Other options:
   Jobs without a tag are never checked, `job submit` and spawned children are
   unaffected, and deleting a job frees its tag. The check precedes the
   creation, so two creators racing on one tag can both succeed;
-  `workspace fsck` notes jobs sharing a tag in one placement (a `noted`
+  `workspace check` notes jobs sharing a tag in one placement (a `noted`
   finding `duplicate_tag`, not a failure). Re-running a creation script with
   `skip` thus creates only the jobs that do not exist yet, wherever the
   existing ones are, as *httk* v1's fixed task directories did.
@@ -420,15 +456,17 @@ of the job's run, labelled by its payload-relative path (see
 
 After a batch, one final stderr line reports `submitted N jobs`. If a batch
 fails partway, it instead reports `submitted and reported N of M jobs before
-failing` and exits `2`; the error's notes, printed after it, name a job that
-was submitted too without being reported (one named complete before a
-failure, which the command's close publishes). In a batch, `--tag` becomes a
+failing` and exits `2`; the error's notes, printed after it, name by id the
+jobs that were submitted too without being reported (a batch of eight or
+more is submitted as a whole before its jobs are reported), those named
+complete but not published yet (the command's close or recovery publishes
+them), and any whose durability is unresolved. In a batch, `--tag` becomes a
 *prefix* combined with each item's derived tag (`run7-si2o`); for a single
 job, `--tag` is the whole tag.
 
 ### Command templates
 
-With `--from-command TEMPLATE`, `shlex`-style words are turned into a one-step
+With `--command TEMPLATE`, `shlex`-style words are turned into a one-step
 Bash runner, installed ad hoc as `adhoc:command@<digest>`. The template is an
 argv-only word list with no shell syntax. Each `{name}` placeholder must have a
 matching `--parameter NAME=VALUE` or `--file NAME=PATH`. Parameter placeholders
@@ -441,87 +479,168 @@ Each `--file` input is copied into the job workdir under its basename before
 the command runs; two inputs with the same basename are refused at `job new`,
 as is a `--file` staged below the workdir `run/`. Existing workdir entries are
 never replaced, so a retry keeps working on the copy an earlier attempt left.
-The generated runner can be edited and passed back with `--from-runner`.
+The generated runner can be edited and passed back as `job new FILE`.
 
 ### Running workflow documents
 
 Run a PWD, CWL, or jobflow document directly with
-`job new --from-runner DOCUMENT`; the document is installed ad hoc and run by
+`job new DOCUMENT`; the document is installed ad hoc and run by
 the manager's built-in realization:
 
 ```console
-httk job new --workspace WS --from-runner flow.cwl --input message=echo
-httk job new --workspace WS --from-runner workflow.json --parameter pwd_module_path='["."]'
-httk job new --workspace WS --from-runner maker.json
+httk job new --workspace WS flow.cwl --input message=echo
+httk job new --workspace WS workflow.json --parameter pwd_module_path='["."]'
+httk job new --workspace WS maker.json
 ```
 
-`--format` accepts `cwl`, `pwd`, `jobflow`, and `httk-v1` for bare document
+`--language` accepts `cwl`, `pwd`, `jobflow`, and `httk-v1` for bare document
 inputs. See {doc}`/details/workflow_compat`.
 
 ### Requests
 
-`job request ACTION [JOB_ID...]` posts one request per job and requires
-`--reason`. Jobs are the `JOB_ID` selectors joined with every job in a
+`job cancel`, `job pause`, `job resume` and `job restart` post one request
+per job: `cancel`, `pause`, `continue` and `restart`. `job set JOB...
+KEY=VALUE...` posts the requests its pairs name, in this order: `workflow=WORKFLOW`
+(`set_workflow`: an installed id, short name or `NAME@REF`, resolved once in the
+jobs' workspace, on the remote side for a remote one; every job is checked
+against it before anything is posted, and a workspace daemon remote refuses it),
+the budget keys `budget.max_attempts_per_activation=N|unlimited`,
+`budget.max_total_attempts=N|unlimited` and `budget.max_activations=N|unlimited`
+(together one `set_budget` request), `priority=N` (`set_priority`) and
+`step=STEP` (`override_step`). A word holding `=` is a pair and every other word
+a job selector; an unknown key is refused naming the valid ones, and the command
+stops at the first request that does not exit `0`. `--reason TEXT` is recorded
+with each request (default: the command, such as `httk job pause`).
+
+Jobs are the `JOB` selectors joined with every job in a
 `--state STATE` (repeatable, an unowned state); `--step STEP` (repeatable)
 narrows both and alone selects from every unowned state, and `--placement
-PREFIX` narrows `--state`, or a `--step` without `JOB_ID`, to a placement
+PREFIX` narrows `--state`, or a `--step` without `JOB`, to a placement
 subtree. `--state`, `--step` and `--placement` select in a local workspace
-only, and a selection with no job exits `1` with `no jobs selected`. The
-actions are `cancel`, `pause`, `continue`, `restart`,
-`override_step` (with `--override-step STEP`), `set_priority` (with `--priority`),
-`set_budget` (with at least one of `--max-attempts-per-activation N|unlimited`,
-`--max-total-attempts N|unlimited` and `--max-activations N|unlimited`; the
-options are valid only with `set_budget`), `set_workflow` (with
-`--workflow WORKFLOW`: an installed id, short name or `NAME@REF`, resolved once
-in the jobs' workspace, on the remote side for a remote one; every job is
-checked against it before anything is posted, and a workspace daemon remote
-refuses it), `detach`, `unlock`, `eject` (with `--destination`), `delete`, `seal` and
-`unseal`. An `away` job accepts no request but `delete` (see
-*Away copies* below). The CLI applies each at once to a job no owner holds;
-a job held by an owner gets it once, at that owner's next boundary. What
-each action does is tabulated in
-[the task-manager guide](taskmanager.md#requests). `--force` accepts reviving a
-child a parent's observations name (`continue`, `restart`, `override_step`) and
-publishes an `override_step` outside the runner's recorded steps. `restart`
-refuses, posting nothing and exiting non-zero, a job that recorded a failed or
-cancelled child its rerun spawning step would reuse: it prints an `error:` line
-per such child and the remedy (`continue --tree`, or `httk job delete` the
-child); `--force` restarts anyway. The revival
-guard does not apply to a child that its parent's join still names (the parent
-failed at its wait, or waits on it again). A revival (`continue`, `restart`,
-`override_step`) restores the job's declared retry allowance; `--keep-budget`
-(only with those actions) keeps the current limits instead. `--tree` (only with `continue`, also over ssh, not
-for a workspace daemon remote) also resumes the failed descendants of the job reachable through retained
-joins, deepest first, before the job itself, forwarding `--keep-budget` to each;
-see {doc}`/restarting_jobs`.
+only, and a selection with no job exits `1` with `no jobs selected`. `job
+delete`, `job seal`, `job unseal`, `job detach`, `job unlock` and `job eject`
+post the requests of the same names (see their sections). An `away` job
+accepts no request but `delete` (see *Away copies* below). The CLI applies
+each at once to a job no owner holds; a job held by an owner gets it once, at
+that owner's next boundary. What each action does is tabulated in
+[the task-manager guide](taskmanager.md#requests). `--force` (on `job resume`,
+`job restart`, and `job set` with `step=`) accepts reviving a child a parent's
+observations name and publishes a `step=` outside the runner's recorded steps.
+`job restart` refuses, posting nothing and exiting non-zero, a job that
+recorded a failed or cancelled child its rerun spawning step would reuse: it
+prints an `error:` line per such child and the remedy (`job resume --tree`, or
+`httk job delete` the child); `--force` restarts anyway. The revival guard does
+not apply to a child that its parent's join still names (the parent failed at
+its wait, or waits on it again). A revival (`resume`, `restart`, `step=`)
+restores the job's declared retry allowance; `--keep-budget` keeps the current
+limits instead. `job resume --tree` (also over ssh, not for a workspace daemon
+remote) also resumes the failed descendants of the job reachable through
+retained joins, deepest first, before the job itself, forwarding
+`--keep-budget` to each; see {doc}`/restarting_jobs`.
 
 After publication, the CLI immediately serves the pending requests of each
 unowned job, from a snapshot taken then, oldest first by `created_at` instant
-and request id, up to and including the published one. Each request prints its
-job id, request id, outcome (`applied`, `queued`, `refused` or `uncertain`) and
+and request id, up to and including the published one. It posts and serves the
+requests of at most 256 jobs at a time. A request of the command whose outcome
+is `uncertain`, and on an error or interrupt every request of the current batch
+not served yet, is withdrawn: its file is removed while the command holds the
+job (claiming it if need be, and giving it back only once the removals are
+durable; if they cannot be made durable the command stops with its jobs held
+for recovery), with a warning naming it. A request stays pending, with a
+warning, when its application had begun under this or any earlier owner (the
+job's run log records it, or cannot be read: its effect may have started), when
+its job was returned with an attempt that may still be running (a manager
+signals a cancelled attempt before it records the cancel), when
+it is a `delete` or `eject` of a job adopted from an exchange (a previous owner
+may have begun it), when its job cannot be held (another owner holds it, or it
+is not found: it may still be applied), and when it is `queued`. Only a `SIGKILL` (or a signal the CLI does not handle) can
+leave one batch's requests behind unannounced (an interrupted withdrawal names
+the requests it did not settle); local `job resume --tree` withdraws
+the same way, one job at a time. On an interrupt, the outcomes known so far are
+printed first. Each request prints its job id, request id, outcome (`applied`, `queued`, `refused` or `uncertain`) and
 an explanation. A job held by another owner, or one needing a manager's
 reconciliation, keeps its request queued for that owner or manager, and so
 does a job with more than 256 pending requests; when an earlier request of the
 job cannot be served, the published one reports the same outcome and reason.
 Exit status is `0` for applied or queued requests and `1` for a refusal or
-uncertain result. `--wait` is valid only for `pause`; it waits for
+uncertain result. `job pause --wait` waits for
 queued pauses and exits `0` only when each reaches `paused`. A superseded,
 dropped or timed-out pause exits `1`. `--timeout SECONDS` requires `--wait`.
 
-`job delete`, `job seal`, `job unseal`, `job detach` and `job unlock` use the
-same immediate serving path and print one concise line per job: done, or the `queued`,
-`refused` or `uncertain` outcome with its explanation.
+In a durable workspace whose filesystems are all in `syncfs` mode (the protocol
+predicate: `io.sync` is `auto` or `syncfs`, `auto` resolves to `syncfs` there
+after the prime, and the filesystem is not Lustre), a request verb (or `job
+detach`) whose action ends in a release or a drop (`cancel`, `pause`, `set_priority`,
+`set_budget`, `set_workflow`, `detach`, `continue`, `restart`,
+`override_step`) serves each contiguous run of at least eight eligible jobs of
+a batch as one: the posts, the claims, the run-log lines with the state
+temporaries, the state replaces, the request unlinks and the release moves
+each end at one commit point, a `syncfs` per filesystem, instead of fsyncs per
+job. A job is eligible when its request is its only request file, it is not
+linked as parent or child to another job of the command, and, once claimed, it
+needs no reconciliation, its request was not applied already, its `logs/` is
+plain and its request files are unchanged; any other job is served as before,
+in input order (one that fails a check after its claim is finished at once,
+still held). A batch has none of this unless a run of eight such jobs (none
+with a request file yet) exists before anything is posted; otherwise the batch
+of jobs is posted and served exactly as before. Each job keeps the order of its
+own durable steps and the outcome the serial path gives it. A failed commit
+point finishes every job whose state was replaced and gives back the others,
+their requests withdrawn while the command still holds them (a
+`request_withdrawn` line follows the run log's `request_applied`), reports
+every outcome and stops the command, withdrawing its unserved requests; an
+interrupt does the same, and so does a job whose own step fails before its
+state is replaced (it stays held, `uncertain`). When a seal, a required
+withdrawal or one of these finishes fails, or a job
+was moved but its move could not be made durable (reported "moved, durability
+unresolved"), the command stops after reporting, its jobs held for recovery,
+and withdraws only the requests of jobs it still holds. Under `io.sync`
+`fsync`, on Lustre or any other filesystem without the predicate, in a
+workspace that is not durable, and for runs shorter than eight jobs, every job
+is served one at a time as before.
 
-For an ordinary remote workspace, `job request ACTION --workspace REMOTE:NAME
-JOB_ID ...` keeps the signed two-leg request-envelope exchange: the client
+`job delete` is batched the same way. A job whose
+delete applies is moved into the command owner's trash scratch at its own
+commit point, after the claims and run-log lines (and after every job of the
+batch whose delete is dropped, such as a `ready` one, was released back); only
+once that move is durable are its tree removed and its request files unlinked,
+at one last commit point. The delete of an exchange-origin job, whose exchange
+index entry goes first, is finished alone after its claim, and the
+waiting-parent check holds as before. A failed commit point or an interrupt
+before a job's trash move gives it back with its request withdrawn; a job
+already moved into the trash is finished, unless its move cannot be made
+durable (reported "moved to trash, durability unresolved"): then the command
+stops with its jobs and trash held for recovery, which disposes of the trash.
+When the final request unlinks cannot be made durable either, the command
+stops the same way (reported "job deleted; its request unlink is not yet
+durable"), and recovery makes them durable before anything else. A deleted
+job's tree that cannot be removed (a persistent permission error, say) is left
+in the control `tmp/` as `trash.<token>` for `workspace gc`, and its line says
+so. The outcomes known when a command stops are printed, in input order,
+before the error. Known limit, as for the serial delete: a crash after a job's
+trash move is durable and before its request unlinks are can leave request
+files that name the deleted job id; a job later restored under that id would
+receive them.
+
+`job delete`, `job seal`, `job unseal`, `job detach` and `job unlock` use the
+same immediate serving path, in the same batches with the same withdrawal, and
+print one concise line per job: done, or the `queued`, `refused` or `uncertain`
+outcome with its explanation.
+
+For an ordinary remote workspace, a request verb with `--workspace REMOTE:NAME
+JOB ...` keeps the signed two-leg request-envelope exchange: the client
 signs the request documents with the identity selected by `--operator`, then
-sends them back for verbatim publication. With `continue --tree` the far
+sends them back for verbatim publication; `job seal`, `job unseal`, `job detach`,
+`job unlock` and `job eject` reach a remote workspace the same way (`job delete`
+runs `job delete` there). With `job resume --tree` the far
 side expands the selection to the failed descendants, deepest first; the
 client signs only `continue` requests, each requested job among them, notes
 each added job on stderr, and has the far side post and serve them one at a
 time, stopping at the first that does not resume. The far side also applies
 the `restart` refusal before anything is signed. A mounted-daemon remote instead
-sends one signed typed command for each selector. Daemon batches are
+sends one signed typed command for each selector, also for `job delete`,
+`job seal`, `job unseal`, `job detach` and `job eject` (whose `DEST` is then a
+directory under the exchange outbox, the outbox itself when omitted). Daemon batches are
 non-atomic: earlier commands may have been accepted if a later command fails.
 A mounted daemon executes a command only for an exchange root submitted with
 the signing key; other targets are refused with `not_owner`.
@@ -538,7 +657,7 @@ workspaces.
 For `pause --wait`, the client sends the pause command once and then polls
 with fresh signed observations until the daemon reports `paused`, refusal,
 terminal supersession or timeout. Passive `status.json` is not evidence that
-a command completed. Run `httk remote daemon status REMOTE --request-id ID` to
+a command completed. Run `httk manager status REMOTE --request-id ID` to
 inspect a previously sent daemon job command; each inspection uses a fresh
 signed observation request. Without `--handle` or `--request-id`, status
 remains passive and informational.
@@ -572,20 +691,19 @@ deduplicate by `job_id`. `--counts` adds per-state totals, which need a full
 directory walk and ignore `--step`.
 
 `--state STATE` and `--step STEP` select jobs in the same way across `job
-list`, `job transfer`, `job request`, `collect`, `campaign collect` and
+list`, `job move`, the request verbs, `collect` (also with `--campaign`) and
 `postprocess`: each
 repeats (the values of one option are alternatives), and a job must match
 every option given. A job whose step cannot be determined (an unreadable
 `job.json` or a damaged `state.json`) matches no `--step`: `job list` logs a
-warning, `job request` leaves it out with a note, `job transfer` reports an
+warning, a request verb leaves it out with a note, `job move` reports an
 error, and `collect` counts it as
 unreadable. `--step` reads each examined job's `job.json` and `state.json`, so
 like `--tag-contains` a sparse `--step` page with `--limit` may examine up to
 `max(100 × limit, 10000)` jobs (two small reads each) and come back partial,
-with a `next_after` that resumes the scan. This selector `--step` is not the
-`--step` of `job new` and `job debug`, which names the step a job starts at;
-`job request override_step` names the step a job resumes at with
-`--override-step`.
+with a `next_after` that resumes the scan. The step a job starts at is the
+`--start-step` of `job new` and `job debug`;
+`job set JOB step=STEP` names the step a job resumes at.
 
 `job why` also lists **held** jobs: a job held for a transfer is in neither
 state tree, and `job why JOB` shows its hold, destination and the way back.
@@ -610,14 +728,13 @@ Ancestor lines end with ` (ancestor)`; an ancestor already unlocked prints
 `already unlocked (ancestor)` and is not an error, and a parent that cannot be
 found prints `<job_id>` `parent <key> not found; not unlocked` without changing
 the exit status. It exits `1` when a request of a selected job or ancestor is
-refused or uncertain. `job request unlock` does the same on a local workspace, ancestors included, with the same lines and exit rules. Without `--no-copy`
+refused or uncertain. Without `--no-copy`
 it copies the job's installed `package/` to `workflow/` in the job directory
 (a reserved payload name), where the manager then runs the runner from, while
 the job is unlocked, and the operator edits it. The marker cannot
 be cleared by any request. A succeeded job with a live seal is refused until
-`job unseal`, and a cancelled job is refused. `job unlock` refuses a remote
-workspace as `job detach` does; `job request unlock` reaches an ssh remote
-through the signed request envelope (it copies; a spawned job is refused there:
+`job unseal`, and a cancelled job is refused. `job unlock` reaches an ssh remote
+through the signed request envelope (it copies, and refuses `--no-copy`; a spawned job is refused there:
 unlock spawned jobs on the workspace host with `httk job unlock`, which also
 unlocks their ancestors), and a
 workspace daemon refuses it (the daemon does not carry `unlock`; run it on the
@@ -655,9 +772,9 @@ filesystems the bundle is copied to a hidden partial name in DEST and renamed
 into place when complete. The command prints `ejected N job(s) to PATH`. A
 failed delivery returns every job to the state it left.
 
-`--hold` puts the bundle in the workspace's own
+The hidden protocol option `--hold` puts the bundle in the workspace's own
 `.httk-workspace/transfers/outgoing/<transfer id>/` instead, the first leg of
-`job transfer`; DEST, when given, and `--destination-id` are then only recorded.
+`job move`; DEST, when given, and `--destination-id` are then only recorded.
 
 `job adopt BUNDLE...` validates each bundle and publishes each job into the state
 and priority it left, printing `JOB_KEY<TAB>STATE<TAB>DIRECTORY` per job and a
@@ -688,7 +805,7 @@ destination workspace id is refused and discarded there. A hold directory,
 `.httk-workspace/transfers/outgoing/<transfer id>/`, is itself a bundle: copied
 by hand to another machine, `job adopt` takes it like any ejected bundle (the
 remedy for a hold too large for a transfer session's answer; release the hold on
-its source afterwards with `job transfer --release`).
+its source afterwards with `job move --release`).
 
 Both commands are crash-safe and take no file locks: each records what it needs
 to finish before it moves anything, so an interrupted eject or adoption is
@@ -699,7 +816,7 @@ workspace or project; a sealed job keeps its seal.
 
 ## Moving jobs between workspaces
 
-`job transfer` moves jobs between two workspaces, each a registered name
+`job move` moves jobs between two workspaces, each a registered name
 (`REMOTE:WS` for a workspace on a remote) or else a workspace directory; a
 registered name wins over a same-named directory, so `./NAME` addresses the
 directory. Any combination of local and remote ends works, and a
@@ -707,18 +824,18 @@ remote-to-remote transfer is relayed through the client (a temporary directory
 here, see *Remote to remote* below):
 
 ```console
-httk job push [SRC] DST [--no-keep] [--job JOB … | --state STATE … | --step STEP …] [--placement PREFIX] [--no-workflows] [--json] [-q]
-httk job pull SRC [DST] [--job JOB … | --state STATE … | --step STEP …] [--placement PREFIX] [--no-workflows] [--json] [-q]
-httk job transfer (--job JOB … | --state STATE … | --step STEP …) [--placement PREFIX] [--tree] [--keep] [--no-workflows] SRC DST [--json] [-q]
-httk job transfer --resume [--keep] [SRC] [DST]
-httk job transfer --release TRANSFER_ID [--release TRANSFER_ID …] [--keep [--destination-id ID]] [WS]
+httk push [SRC] DST [--no-keep] [--job JOB … | --state STATE … | --step STEP …] [--placement PREFIX] [--no-workflows] [--json] [-q]
+httk pull SRC [DST] [--job JOB … | --state STATE … | --step STEP …] [--placement PREFIX] [--no-workflows] [--json] [-q]
+httk job move (--job JOB … | --state STATE … | --step STEP …) [--placement PREFIX] [--tree] [--keep] [--no-workflows] SRC DST [--json] [-q]
+httk job move --resume [--keep] [SRC] [DST]
+httk job move --release TRANSFER_ID [--release TRANSFER_ID …] [--keep [--destination-id ID]] [WS]
 httk job recover [--workspace WS] (JOB … | --all [--placement PREFIX])
-httk transfer status [WS] [--json]
+httk workspace status [WS] [--json]
 ```
 
-`job push` and `job pull` are the everyday forms: `job push REMOTE:WS` moves
+`push` and `pull` are the everyday forms: `push REMOTE:WS` moves
 every `ready` job (created, waiting to start) of the workspace the command
-runs in, else the default workspace, to REMOTE:WS, and `job pull REMOTE:WS`
+runs in, else the default workspace, to REMOTE:WS, and `pull REMOTE:WS`
 moves every `succeeded` job of REMOTE:WS back. With one positional push takes
 it as DST and pull as SRC; the omitted end resolves like any omitted
 workspace (the enclosing workspace, the project's default, else the per-user
@@ -726,8 +843,7 @@ default, which is created on first use), and with none the command is
 refused. Both always act as `--tree`, and `--job`, `--state` or `--step`
 replaces their implicit state (`--step` without `--state` selects from every
 unowned state except `away`; `--state away` is refused by push, pull and
-transfer). `--resume`, `--release`, `--hold` and `--destination-id` stay
-on `job transfer`.
+transfer). `--resume`, `--release` and `--destination-id` stay on `job move`.
 
 Jobs are selected by name with `--job` (a UUID, key, unique prefix, path or
 glob), or by state with `--state STATE`, which takes every job of SRC in that
@@ -1042,8 +1158,8 @@ only: it fails alone, stays held on SRC, and the message names the remedy by
 hand (an accepted limitation): copy its bundle
 `.httk-workspace/transfers/outgoing/<transfer id>/` from SRC to the
 destination's machine, run `httk job adopt BUNDLE` in the destination
-workspace, then `httk job transfer --release TRANSFER_ID SRC`, or, to keep away
-copies, `httk job transfer --release TRANSFER_ID --keep --destination-id ID
+workspace, then `httk job move --release TRANSFER_ID SRC`, or, to keep away
+copies, `httk job move --release TRANSFER_ID --keep --destination-id ID
 SRC`, ID being the `workspace_id` that `httk workspace status --json DST`
 reports (such a hold records no destination id, and `--keep` alone keeps
 none). A tree's `bundle.json` (about 220 bytes a member) is held to 512 MiB,
@@ -1069,7 +1185,7 @@ them held (`failed`). A hold that existed before the run (left by an earlier
 run, re-driven now) is never taken back, since an earlier delivery of it may
 have been adopted with its answer lost: it stays held and is reported
 `failed` with the refusal. Check with `httk job show` on DST: deliver it again
-with `--resume`, or, if the jobs are there, release it (`job transfer
+with `--resume`, or, if the jobs are there, release it (`job move
 --release T`), or, if they are not, take it back with
 `httk job adopt --workspace SRC SRC/.httk-workspace/transfers/outgoing/<transfer id>`
 (the message names both). This is why the earlier holds and the run's new ones
@@ -1087,7 +1203,7 @@ marks every hold of that call `failed` and leaves it held: whether the jobs
 arrived is unknown, and `--resume` delivers again (they then report "already
 adopted") and releases. Releasing such a hold by hand instead, after checking
 with `httk job show` that DST has the jobs, keeps away copies only with
-`httk job transfer --release T --keep --destination-id ID SRC`, where ID is the
+`httk job move --release T --keep --destination-id ID SRC`, where ID is the
 `workspace_id` that `httk workspace status --json REMOTE:WS` reports for DST.
 
 **Paged holds.** A transfer from a local SRC (a push, local to local) and a pull
@@ -1122,7 +1238,7 @@ answered, the synchronization file by file after a failed `syncfs`, and its
 workflow attempts.
 
 A push from a local SRC to a remote DST that keeps no away copies
-(`job transfer` without `--keep`, or `job push --no-keep`) holds one page ahead:
+(`job move` without `--keep`, or `push --no-keep`) holds one page ahead:
 a second thread holds the next page while the current one is staged, adopted
 and released (so a page costs about the longer of the two, not their sum),
 starting each page only once the one before was handed over. It holds nothing
@@ -1130,7 +1246,7 @@ else, prints nothing (its warnings go to stderr through logging), and hands
 each page over with everything it completed, a failure on SRC included, which
 then stops the destination as an error between pages does. With its pooled
 holds and the releases of the page before, up to twice `io.workers`
-operations can run on SRC at once. `job push` keeps away copies by default
+operations can run on SRC at once. `push` keeps away copies by default
 (like `--keep`), so it holds no page ahead unless given `--no-keep`; nor do
 pulls, remote to remote, local to local and the holds an earlier run left.
 
@@ -1174,7 +1290,7 @@ not also held in memory, so a spool that cannot be read back at the end (an
 I/O error on the file just written) stops the report where it is, perhaps
 leaving standard output with an incomplete JSON document, and the command
 exits with status 2 after one diagnostic on standard error: the transfers
-themselves are done as reported so far, and `httk transfer status` shows what
+themselves are done as reported so far, and `httk workspace status` shows what
 is still held. Every page
 driven also adopts the staged segments of every destination whose deadline
 has passed, so that one destination's last staged segment does not hold back
@@ -1227,7 +1343,7 @@ interrupt) stay held for `--resume`, reported as not delivered. The command then
 destination, why, how many selected jobs were not attempted (or that the
 selection was not, when the stop came before it; the holds not yet listed, when
 it came while the earlier holds were), and that
-`httk job transfer --resume SRC DST` drives the holds left on SRC; `--resume`
+`httk job move --resume SRC DST` drives the holds left on SRC; `--resume`
 re-drives holds and does not select the rest, so run the transfer again for
 that. A page of a pull whose answer was lost may have been held: the message
 says so, never that nothing was held, and `--resume` drives it. A failure of
@@ -1237,10 +1353,10 @@ between pages (an owner that cannot be registered, a hold that cannot be read)
 stops the destination (reading SRC's holds: every destination) and the pages
 already driven are still reported.
 
-`job transfer --hold` alone still holds everything first.
+The hidden protocol option `job move --hold` still holds everything first.
 
 **Recovery.** Delivery is at least once. Every run, and
-`job transfer --resume`, first re-drives the holds of SRC bound for DST
+`job move --resume`, first re-drives the holds of SRC bound for DST
 (`--resume` without DST re-drives every hold to the destination it records), so
 a transfer interrupted at any step is finished by running it again. A pushed
 hold records the destination locator only (no probe runs before a push); DST's
@@ -1251,17 +1367,17 @@ workspace's id. Accepted limitation: if a push's answer was unreadable and the
 remote workspace NAME is then pointed at another workspace before `--resume`,
 the resume delivers to the new workspace and the jobs exist in both; after such
 a change, check with `httk job show` or `httk job list` on the remote before
-resuming. `transfer status`
+resuming. `workspace status`
 lists the holds of a workspace (transfer id, root job, member count,
-destination, age), `job why JOB` explains a held job, and `httk project repair
---dry-run` reports holds and incoming copies older than seven days. A transfer
+destination, age), `job why JOB` explains a held job, and `httk project check`
+reports holds and incoming copies older than seven days. A transfer
 abandoned for good is taken back into SRC with
 `httk job adopt --workspace SRC SRC/.httk-workspace/transfers/outgoing/<transfer id>`,
 which is safe only after checking that DST does not have the jobs;
-`job transfer --release T` discards a hold whose jobs DST has (add `--keep
---destination-id ID` to keep away copies, as above). `job transfer
---hold (--job JOB … | --state STATE … | --step STEP …) SRC DST` only holds jobs in a local SRC, recording DST as
-given, for a later `--resume` or `--release`. With `--json` it
+`job move --release T` discards a hold whose jobs DST has (add `--keep
+--destination-id ID` to keep away copies, as above). The hidden protocol option
+`job move --hold (--job JOB … | --state STATE … | --step STEP …) SRC DST` only holds jobs in a local SRC,
+recording DST as given, for a later `--resume` or `--release`; with `--json` it
 prints `{"holds": [...], "held_before": [...], "errors": [...]}`, where
 `held_before` lists, in the same shape, the other holds of SRC already bound for
 the same DST locator. `--release T --keep --destination-id ID` keeps away copies
@@ -1270,9 +1386,9 @@ push learns that id from the adoption report).
 
 ### Away copies
 
-`job push` leaves in SRC an *away copy* of every job it moves
-(`--no-keep` opts out), and `job transfer --keep` does the same; a plain
-`job transfer` moves. An away copy is a job in the seventh unowned state,
+`push` leaves in SRC an *away copy* of every job it moves
+(`--no-keep` opts out), and `job move --keep` does the same; a plain
+`job move` moves. An away copy is a job in the seventh unowned state,
 `away` (`jobs/away/<placement>/…`). It never runs, is not collected and cannot
 be transferred or requested; only `job delete` works on it. Its `state.json`
 records `away`: the destination workspace id and locator, the transfer id, the
@@ -1282,7 +1398,7 @@ recover JOB to resend)`, and `--json` outcomes carry `"kept": true|false`.
 `httk job list --state away` lists what you are still waiting for, and `job
 why` and `job show` explain an away job.
 
-`job pull` (or any trusted transfer back) replaces the away copy when the job
+`pull` (or any trusted transfer back) replaces the away copy when the job
 returns from the workspace it was pushed to. A bundle from another workspace
 is refused: `KEY is away at X, but this bundle comes from workspace Y; recover
 or delete the copy first`. An interrupted transfer finished with `--resume` is
@@ -1303,16 +1419,15 @@ through the workspace daemon's exchange.
 
 ## Running managers
 
-### `manager` and `run`
+### `run`
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `run` | run managers through the workspace launcher until the workspace is idle, or keep serving with `--idle` | `--workspace`, `--workers`, `--worker-resource`, `--allocation`, `--count`, `--pool`, `--capability`, `--placement-prefix`, `--idle`, `--idle-timeout`, `--idle-grace`, `--time-limit`, `--deadline-margin`, `--drain-timeout`, `--join-grace-seconds`, `--gc-interval`, `--inline`, `--launcher`, `--detach`, `--log-level`, `--log-file`, `--json-logs`, `--adapter-timeout` |
-| `manager run` | the same, the advanced spelling | as `run` |
+| `run` | run managers through the workspace launcher until the workspace is idle, or keep serving with `--keep-running`; `--campaign` starts a manager per campaign partition (see [Campaigns](#campaigns)) | `--workspace`, `--campaign`, `--partition`, `--workers`, `--worker-resource`, `--allocation`, `--count`, `--pool`, `--capability`, `--placement`, `--keep-running`, `--idle-timeout`, `--idle-grace`, `--time-limit`, `--deadline-margin`, `--drain-timeout`, `--join-grace-seconds`, `--gc-interval`, `--inline`, `--launcher`, `--detach`, `--log-level`, `--log-file`, `--json-logs`, `--adapter-timeout` |
 
-Both follow the binding: a local workspace uses its `manager.launch` setting
+It follows the binding: a local workspace uses its `manager.launch` setting
 (the built-in `process` launcher by default), and a remote workspace invokes the
-same command on its owner. Both also take `--setting KEY=VALUE` (repeatable, not
+same command on its owner. It also takes `--setting KEY=VALUE` (repeatable, not
 shown in `--help`), which pins `manager.confine`, `manager.launch_template`,
 `manager.launch_mpi`, `manager.confine.block_mpi_spawn`, `manager.bind_cpus` or
 a `confine.*` key on the managers for their lifetime; any other key is refused.
@@ -1332,10 +1447,20 @@ otherwise it stays the managers' own deadline; see {doc}`launchers`.
 are explained in {doc}`taskmanager` under resources, time requirements and
 allocations; the startup banner, idle summary and logs under running managers.
 
+On a workspace of a `mount-daemon` remote (`-w REMOTE:WS`), `run` asks the
+remote's daemon to start one approved manager configuration with a typed,
+signed request: `--configuration NAME` (required there) names it, `--time-limit`
+sets the job's Slurm `--time` (above 120 s and up to the configuration's
+`slurm.time_limit_max`), `--request-id` fixes the request ID for a retry and
+`--wait-seconds` (0.05 to 120, default 10) bounds the mailbox wait. No other
+manager option applies there, and `--configuration`, `--request-id` and
+`--wait-seconds` are refused for every other workspace. `httk manager status`,
+`log` and `cancel` follow the started managers; see {doc}`workspace_daemon`.
+
 Every confined manager without placement prefixes that takes the `default` pool
-or an `exchange-` pool serves the workspace's `exchange/` extension once it is
-enabled with `httk workspace exchange enable`; there is no `--exchange` option.
-Without `--idle`, such a manager does not exit as idle within `--idle-grace`
+or an `exchange-` pool serves the workspace's `exchange/` extension once
+`httk daemon init` has enabled it.
+Without `--keep-running`, such a manager does not exit as idle within `--idle-grace`
 seconds of starting (default 120), nor while it can still adopt an inbox entry
 or return a finished exchange tree of its pools. The grace also holds any
 manager whose ready jobs wait for unavailable confinement; still blocked after
@@ -1344,8 +1469,8 @@ it, the manager exits with status 2. See {doc}`taskmanager`.
 ### `precheck`: readiness before an attempt
 
 ```console
-httk workflow precheck --workspace WORKSPACE
-httk workflow precheck --workspace WORKSPACE --placement project/screening --json
+httk job precheck --workspace WORKSPACE
+httk job precheck --workspace WORKSPACE --placement project/screening --json
 ```
 
 This read-only, advisory report checks `ready`, `waiting`, and `paused` jobs:
@@ -1359,11 +1484,12 @@ and required inputs. It exits `1` for any problem; see
 | Command | What it does | Notable options |
 | --- | --- | --- |
 | `launcher list` | list manager launchers visible to this project | `--json` |
-| `launcher add NAME...` | create launchers from the packaged `slurm` template | `--template`, `--set`, `--global`, `--non-interactive` |
-| `launcher configure NAME...` | update launcher settings | `--set`, `--unset`, `--add KEY=PATH[:PATH...]`, `--remove KEY=PATH[:PATH...]` |
+| `launcher add NAME [KEY=VALUE...]` | create a launcher from the packaged `slurm` kind, with initial settings | `--kind`, `--global`, `--non-interactive` |
+| `launcher set NAME [KEY=VALUE...]` | update launcher settings: the pairs, then `--add`, then `--remove`, validated together | `--add KEY=PATH[:PATH...]`, `--remove KEY=PATH[:PATH...]` |
+| `launcher unset NAME KEY...` | remove launcher setting overrides | |
 | `launcher show NAME...` | describe launchers and their settings, each marked by whether the launcher reads it | `--json` |
-| `launcher check NAME...` | check a launcher's required binaries | `--launcher-timeout` |
-| `launcher remove NAME...` | remove launcher bundles | `--force` |
+| `launcher check NAME...` | check a launcher's required binaries | `--adapter-timeout` |
+| `launcher remove NAME...` | remove launcher bundles | `--yes` |
 
 See {doc}`launchers` and {doc}`launcher_authoring`.
 
@@ -1371,7 +1497,7 @@ See {doc}`launchers` and {doc}`launcher_authoring`.
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `workflow monitor` | open the curses workspace monitor | `--workspace WORKSPACE` (repeatable), `--refresh SECONDS`, `--adapter-timeout SECONDS`, `--non-interactive` |
+| `monitor` | open the curses workspace monitor | `--workspace WORKSPACE` (repeatable), `--refresh SECONDS`, `--adapter-timeout SECONDS`, `--non-interactive` |
 
 See {doc}`monitor` for the panes, keys, and read budget.
 
@@ -1388,6 +1514,7 @@ See {doc}`monitor` for the panes, keys, and read budget.
 | a workspace root | that workspace |
 | a directory inside a workspace | refused: collect the workspace root, narrowing with `--placement` |
 | any other directory | the calculation tree below it, through the recognized-calculation collectors |
+| `--campaign` (no PATH) | the selected partitions of this project's campaign, one workspace after another (see [Campaigns](#campaigns)) |
 
 | Options | Apply to |
 | --- | --- |
@@ -1428,11 +1555,11 @@ already be collected into the store. It is refused together with `--raw`,
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `postprocess [OPTIONS] [JOB...]` | run one declared script for each selected job | `--workspace WS`, `--script NAME` (required), `--workflow-dir PKG`, `--state`, `--step`, `--placement`, `--output-dir DIR`, `--timeout`, `--json` |
+| `postprocess SCRIPT [JOB...]` | run the declared script SCRIPT for each selected job | `--workspace WS`, `--workflow-dir PKG`, `--state`, `--step`, `--placement`, `--output-dir DIR`, `--timeout`, `--json` |
 
 ```console
-httk workflow postprocess --workspace WS --script relaxation-report
-httk workflow postprocess --script relaxation-plot <job-id>
+httk postprocess relaxation-report --workspace WS
+httk postprocess relaxation-plot <job-id>
 ```
 
 Output is written outside the job payload, so a sealed job can be
@@ -1474,20 +1601,38 @@ remote meaning "this machine", so `remote add local` is refused.
 | Command | What it does | Notable options |
 | --- | --- | --- |
 | `remote list` | list the remotes this project can reach | `--json` |
-| `remote add NAME...` | create remotes from a packaged adapter template | `--template`, `--global`, `--non-interactive` |
-| `remote configure REMOTE...` | run adapters' `configure` operation | `--set KEY=VALUE`, `--unset KEY`, `--adapter-timeout` |
-| `remote check REMOTE...` | check that `httk` answers on remotes | `--set KEY=VALUE`, `--adapter-timeout` |
+| `remote add NAME [KEY=VALUE...]` | create a remote from a packaged adapter; pairs then run exactly what `remote set` runs on the new bundle, and if that fails the remote stays created | `--kind`, `--global`, `--non-interactive`, `--adapter-timeout` |
+| `remote set NAME KEY=VALUE...` | run the adapter's `configure` operation with new settings and store them when it succeeds | `--adapter-timeout` |
+| `remote unset NAME KEY...` | remove stored settings or credentials, running `configure` with the remaining settings | `--adapter-timeout` |
+| `remote check NAME...` | check that `httk` answers on remotes, with their stored settings; a `mount-daemon` remote sends its pinned daemon a typed health request and reports its `daemon.json` (identities, approved configurations, digests and published resource settings) under `daemon` | `--adapter-timeout` |
 | `remote import-v1 SOURCE...` | map legacy *httk* v1 computer bundles | `--name` (one source only), `--global` |
-| `remote show NAME...` | describe remotes and their settings | `--json` |
-| `remote remove NAME...` | remove remote bundles; refused while a registered workspace holds a transfer bound for the remote | `--force` skips only the confirmation |
-| `remote daemon configure REMOTE` | pin the identities in the mounted `exchange.json` and `daemon.json` | required `--exchange` |
-| `remote daemon show REMOTE` | print the pinned daemon's `daemon.json`: approved configurations, digests and published resource settings | |
-| `remote daemon health REMOTE` | check the confined daemon | `--request-id`, `--wait-seconds` |
-| `remote daemon start REMOTE` | start one approved manager configuration | required `--configuration`; `--time-limit` (the job's Slurm `--time`, above 120 s and up to the configuration's `slurm.time_limit_max`), `--request-id`, `--wait-seconds` |
-| `remote daemon status REMOTE` | print passive status, inspect a manager with `--handle`, or inspect an original job command with `--request-id` | mutually exclusive `--handle` / `--request-id`; `--wait-seconds` |
-| `remote daemon cancel REMOTE` | request manager cancellation | required `--handle`; `--request-id`, `--wait-seconds` |
-| `remote daemon log REMOTE` | print a manager's published log | required `--handle` |
-| `remote daemon take-back REMOTE NAME [DESTINATION]` | take your bundle back from `inbox` before a manager takes it | `DESTINATION` defaults to `./NAME` |
+| `remote show NAME...` | describe remotes and their stored settings, locally (a `mount-daemon` remote's pins included; the mount is never read) | `--json` |
+| `remote remove NAME...` | remove remote bundles; refused while a registered workspace holds a transfer bound for the remote | `--yes` skips only the confirmation |
+| `remote take-back REMOTE NAME [DESTINATION]` | take your bundle back from a `mount-daemon` remote's `inbox` before a manager takes it | `DESTINATION` defaults to `./NAME` |
+
+For a `mount-daemon` remote, `remote set REMOTE exchange=PATH` (or `remote add
+NAME --kind mount-daemon exchange=PATH`) pins the workspace published in the
+mounted `EXCHANGE/exchange.json` and, when present, the daemon identities in
+`EXCHANGE/daemon.json`.
+
+| Command | What it does | Notable options |
+| --- | --- | --- |
+| `manager status REMOTE` | print passive status, inspect a manager with `--handle`, or inspect an original job command with `--request-id` | mutually exclusive `--handle` / `--request-id`; `--wait-seconds` |
+| `manager cancel REMOTE` | request manager cancellation | required `--handle`; `--request-id`, `--wait-seconds` |
+| `manager log REMOTE` | print a manager's published log | required `--handle` |
+
+The daemon itself is set up on its host with `httk daemon` (see
+{doc}`workspace_daemon`):
+
+| Command | What it does | Notable options |
+| --- | --- | --- |
+| `daemon init WORKSPACE [KEY=VALUE...]` | approve global `slurm` launchers, create and enable the exchange when it is not enabled and enroll the workspace, then check the sandbox | `--add KEY=VALUE` |
+| `daemon set WORKSPACE KEY=VALUE...` | change the daemon configuration (values, then `--add`, then `--remove`), activated by `reload` or when the daemon next starts | `--add KEY=VALUE`, `--remove KEY=VALUE` |
+| `daemon unset WORKSPACE KEY...` | clear `sacct` or `slurm_conf`, or reset `max_submissions` or `force` to its default | |
+| `daemon show WORKSPACE` | describe the enrollment and its daemon configuration | `--json` |
+| `daemon check WORKSPACE` | activate the configuration and check the real sandbox and scheduler clients | |
+| `daemon run WORKSPACE` | activate the configuration and run the confined Slurm broker | `--once` |
+| `daemon reload WORKSPACE` | activate the changed configuration and launcher bundles; a running daemon restarts on it | |
 
 `remote show NAME` reports which file each setting came from, but never a
 credential value.
@@ -1499,7 +1644,7 @@ executable `adapter`; project definitions shadow global ones. {doc}`adapter_auth
 is the reference for writing your own: the bundle layout, the request and
 result documents of the six operations (`configure`, `install`, `invoke`,
 `push`, `pull`, and `status`), and the optional `daemon` operation. The module
-packages four maintained templates for `remote add --template`:
+packages four maintained adapters for `remote add --kind`:
 
 - `local`: same-machine transport;
 - `ssh`: one `tar` stream per transfer plus command execution over SSH;
@@ -1514,11 +1659,11 @@ See {doc}`/details/remotes` for configuration and request-ID retry rules.
 
 ### Remote settings
 
-`remote configure --set KEY=VALUE` persists only the machine-level keys
-`check_connectivity`, `check_mount`, `cli_prelude`, `exec_command`, `exchange`,
-`host`, `httk_command`, `interactive_auth`, `legacy_settings`, `mount_root`,
-`port`, `remote_root`, `username`, `vasp_command`, and `vasp_pseudo_library` in the
-shareable `remote.json`. Scheduler profile values are workspace settings
+`remote set NAME KEY=VALUE...` persists only the machine-level keys
+`check_connectivity`, `check_mount`, `cli_prelude`, `connection_reuse`,
+`exec_command`, `exchange`, `host`, `httk_command`, `interactive_auth`,
+`legacy_settings`, `mount_root`, `port`, `remote_root`, `username`,
+`vasp_command`, and `vasp_pseudo_library` in the shareable `remote.json`. Scheduler profile values are workspace settings
 (`slurm.*`, `manager.workers`) and are refused as remote settings. Other keys
 are stored in the remote's `credentials.json` beside it, with mode `0600`;
 project manifests exclude that file.
@@ -1552,9 +1697,8 @@ shell, use the remote's `cli_prelude` setting, or point `httk_command` at it.
 | Command | What it does | Notable options |
 | --- | --- | --- |
 | `config show [KEY]` | print the configuration, or one member | `--json` |
-| `config configure` | set/unset keys or add/remove machine names | `--set`, `--unset`, `--add machine_names=NAME`, `--remove machine_names=NAME` |
-| `config set KEY VALUE` | store one member | `machine_names` is a comma-separated list of names this machine answers to |
-| `config unset KEY` | remove one member | |
+| `config set [KEY=VALUE...]` | store members: the pairs, then `--add`, then `--remove`, validated together and saved once | `--add machine_names=NAME`, `--remove machine_names=NAME`; `machine_names` is a comma-separated list of names this machine answers to; `connection_reuse` (`yes`/`no`) is the `connection_reuse` of every remote that sets none |
+| `config unset KEY...` | remove members | |
 | `config import-v1 [SOURCE]` | read a legacy `~/.httk` configuration | |
 
 User configuration lives below `$XDG_CONFIG_HOME/httk/` (`config.json`, the
@@ -1564,8 +1708,8 @@ core-managed `identity.json` and `keys/`, global remotes and launchers);
 ### Projects
 
 The project anchor and every project verb (`init`, `show`, `import-v1`,
-`export`, `repair`, `adopt`, `manifest create | verify`, `seal`, `unseal`, and
-`verify-seal`) belong to *httk-core*. *httk-workflow* registers the
+`export`, `check`, `repair`, `manifest`, `verify`, `seal`, and `unseal`) belong
+to *httk-core*. *httk-workflow* registers the
 **workspace** as a project-*member* kind, so core's verbs delegate a
 workspace's internals to it: what to leave out of a manifest, how to seal it,
 its seal digest, how to verify it, and its health checks.
@@ -1573,37 +1717,40 @@ its seal digest, how to verify it, and its health checks.
 A workspace inside a project is recorded in `httk_project/members.json`:
 registered on `httk workspace init`, unregistered on `workspace delete` or
 `workspace forget`, and its path followed on `workspace move`. On another
-machine, `httk workspace adopt` (per workspace) or `httk project adopt` (every
+machine, `httk workspace register` (per workspace) or `httk project repair` (every
 member) registers copied workspaces under their recorded names.
 
 `httk project repair` handles conditions that quietly break a project later:
 dead owners not yet recovered, scratch of unknown owners, old temporaries, holds
 and incoming copies older than seven days, a workspace missing from the
 registry, and a member not yet adopted on this machine. It repairs only through
-`gc` and adoption. `--dry-run` only reports, and `--no-adopt` skips adopting.
+`gc` and adoption. `httk project check` only reports, and `--no-adopt` skips adopting.
 
 To seal a project, run `httk workspace seal` and then `httk project seal`.
-Verify the whole tree with `httk project verify-seal` or `httk seal verify`.
+Verify the whole tree with `httk project verify`.
 
-### `seal verify`: verify a sealed tree
+### `job verify` and `workspace verify`: verify seals
 
 | Command | What it does | Notable options |
 | --- | --- | --- |
-| `seal verify [PATH]` | verify the seal at `PATH` (a project, workspace, or job payload; default `.`) and, unless `--shallow`, every seal it references | `--json`, `--trusted-key KEY_OR_FINGERPRINT` (repeatable), `--shallow` |
+| `job verify JOB...` | verify each job's seal: its signatures and the digests of the files it seals; a payload directory is verified where it is, inside a workspace or free-standing | `--workspace`, `--json`, `--trusted-key KEY_OR_FINGERPRINT` (repeatable), `--content` |
+| `workspace verify [WORKSPACE...]` | verify a workspace seal and report every job that drifted since the snapshot | `--json`, `--trusted-key`, `--deep` (also verify every recorded job seal, as `job verify`), `--content` (implies `--deep`; as `job verify --content`) |
 
-The final status word and exit code mirror `manifest verify`: `ok` (exit 0)
-when every entry is `valid_trusted`, `UNTRUSTED` (exit 3) when no entry is
-invalid but a signer is untrusted, `FAILED` (exit 1) on any invalid entry. See
-{doc}`sealing`.
+`--content` also decompresses job files and checks them against their sealed
+`uncompressed.sha256` manifests. The final status word and exit code of
+`job verify` and `workspace verify --deep` mirror `project verify --manifest`:
+`ok` (exit 0) when every entry is `valid_trusted`, `UNTRUSTED` (exit 3) when no
+entry is invalid but a signer is untrusted, `FAILED` (exit 1) on any invalid
+entry, an unsealed job included. See {doc}`sealing`.
 
 ## Signed manifests and operator identity
 
 ### Signed manifests
 
 ```console
-httk project manifest create .
-httk project manifest verify
-httk project manifest verify --trusted-key keys/collaborator.pub
+httk project manifest .
+httk project verify --manifest
+httk project verify --manifest --trusted-key keys/collaborator.pub
 ```
 
 The *httk₂* manifest is deterministic canonical JSON lines compressed with
@@ -1637,11 +1784,11 @@ until a key is adopted explicitly with
 
 Operator identity (the recorded name, email, default, and named identities)
 lives in `$XDG_CONFIG_HOME/httk/identity.json`, managed by *httk-core*. `httk
-init` creates the first named identity and its key pair and makes it the
+setup` creates the first named identity and its key pair and makes it the
 default; `httk identity add --name NAME --email EMAIL SHORT` adds more, and
 `httk identity default SHORT` changes the default.
 
-`job request` records the selected identity's `Name <email>` label and signs the
+A request verb records the selected identity's `Name <email>` label and signs the
 request with that identity's key. Omitting `--operator` selects the default
 identity. A selector containing `<` is a literal `Name <email>` label, signed
 with the default identity's key; any other selector must be a configured short
@@ -1663,20 +1810,39 @@ exception: the daemon accepts only commands signed by a key in its own
 | Command | What it does | Notable options |
 | --- | --- | --- |
 | `campaign init` | define the project's partition map and assignment policy | `--partition NAME=WORKSPACE`, `--assignment` |
-| `campaign configure` | edit individual partitions or the assignment policy | `--set partitions.NAME=WORKSPACE`, `--unset partitions.NAME`, `--set assignment=POLICY`, `--unset assignment` |
-| `campaign remove` | clear campaign configuration, keeping jobs and workspaces | `--force` skips confirmation |
+| `campaign set KEY=VALUE...` | set individual partitions or the assignment policy | `partitions.NAME=WORKSPACE`, `assignment=POLICY` |
+| `campaign unset KEY...` | remove partitions or reset the assignment to `hash` | `partitions.NAME`, `assignment` |
+| `campaign remove` | clear campaign configuration, keeping jobs and workspaces | `--yes` skips confirmation |
 | `campaign show` | show the partition map | `--json` |
-| `campaign submit` | assign one root job to a partition and submit it there | `--workflow` (required), `--install`, `--key` (required), `--index`, `--input`, `--input-from`, `--parameter`, `--file`, `--tag`, `--placement`, `--priority`, `--name`, `--json` |
-| `campaign collect` | collect every partition, one workspace after another | `--partition`, `--state`, `--step`, `--placement`, `--raw`, `--into PATH`, `--id-base BASE`, `--id-series SERIES`, `--records TYPE=NAME[,NAME...]`, … |
-| `campaign start-<wbr>managers` | start a manager per selected partition | `--partition`, `--workers`, `--worker-resource`, `--count`, `--launcher`, `--idle-timeout`, `--adapter-timeout` |
 
 A campaign is a thin convention over registered workspaces: a partition map,
 stored in the project, that spreads a very large body of work across many
 workspaces without a new scheduler. Roots are assigned to partitions by policy,
-and spawned children always inherit their parent's workspace. `campaign submit
---workflow` names a workflow installed in the partition's workspace, or with
-`--install` a package directory, git URI or workflow name to install there
-first. See {doc}`/campaigns`.
+and spawned children always inherit their parent's workspace. `job new`,
+`collect` and `run` act on the campaign with `--campaign` (and `-w/--workspace`
+is refused, since each partition names its workspace):
+
+| Command | What it does | Notable options |
+| --- | --- | --- |
+| `job new SOURCE --campaign` | assign each new job to a partition and submit it into that partition's local workspace (`hash`: by the tag known before scaffolding, not a hook-derived one) | `--partition NAME` (required by `explicit` assignment; a pin otherwise), `--campaign-index N` (round-robin start, default 0), every `job new` option |
+| `collect --campaign` | collect the selected partitions' local workspaces one after another as one sweep (one summary, one `--into` store) | `--partition NAME` (repeatable; default all), every workspace `collect` option except `--job` and `--postprocess` |
+| `run --campaign` | start a manager per selected partition: through its launcher locally, or on the remote owner | `--partition NAME` (repeatable; default all), `--workers`, `--worker-resource`, `--count`, `--launcher`, `--idle-timeout`, `--adapter-timeout` |
+
+The assignment policy picks a new job's partition: `hash` hashes the job's tag
+(`--tag`, or the tag an input supplies; without one the job is refused; a tag
+an instantiate hook derives does not count, so such a workflow needs `--tag`
+or `--partition`), `round-robin` numbers the jobs of one `job new` batch from
+`--campaign-index` (refused under the other policies and with `--partition`),
+and `explicit` takes `--partition`. A batch is checked in every partition it
+reaches before anything is submitted (an uninstalled workflow, a taken or
+repeated tag); see {doc}`/campaigns` for the failures that can still leave a
+partial fan-out. SOURCE is a workflow installed in the
+partition's workspace, or with `--install` a package directory, git URI or
+workflow name to install there first; a runner file, document or `--command`
+is refused. A remote partition is refused by `job new` and `collect` (submit
+locally and `push`; `pull` it home to collect). `collect --campaign --into`
+uses the default id ledger as a calculation tree does, signed with the
+project's keys. See {doc}`/campaigns`.
 
 ## Protocol spellings and removed commands
 
@@ -1686,16 +1852,16 @@ ordinary commands; their spelling is frozen because the far side may run a
 different *httk*. A transfer itself runs over the hidden `workflow
 transfer-session`, whose one protocol version both ends must speak (see *The
 transfer session* in {doc}`remotes`); the release and the listing below are what
-an operator's `job transfer --release` and `transfer status` run on a remote:
+an operator's `job move --release` and `workspace status` run on a remote:
 
 ```text
 httk workflow transfer-session
-httk job transfer --release TRANSFER_ID [--release TRANSFER_ID …] [--keep [--destination-id ID]] WS
-httk transfer status --json WS
+httk job move --release TRANSFER_ID [--release TRANSFER_ID …] [--keep [--destination-id ID]] WS
+httk workspace status --json WS
 httk job request-envelopes ACTION --workspace WS --operator LABEL --reason TEXT [--priority N] [--override-step S] [--workflow W] [--destination D] [--max-attempts-per-activation N|unlimited] [--max-total-attempts N|unlimited] [--max-activations N|unlimited] [--force] [--keep-budget] [--tree] JOB_ID …
 httk job publish-requests --workspace WS --document JSON [--document JSON …] [--wait] [--timeout S] [--sequential]
 httk workspace status --by-path --json PATH
-httk workflow manager run --by-path --workspace PATH
+httk run --by-path --workspace PATH
 ```
 
 The hidden `--by-path` switch makes the workspace argument a literal path with
@@ -1705,7 +1871,8 @@ The hidden `job delete --confirmed` is the remote half of a confirmed delete.
 ### Removed commands and options
 
 The filesystem kernel of this version replaced state markers, the journal,
-leases, receipts and the maintenance lock. These spellings no longer parse:
+leases, receipts and the maintenance lock, and the command line has since renamed
+some commands and options. These spellings no longer parse:
 
 | Removed | Now |
 | --- | --- |
@@ -1715,17 +1882,82 @@ leases, receipts and the maintenance lock. These spellings no longer parse:
 | `job seal --keys` | the workspace's `seal.keys` setting |
 | `job confirm-launches-ended` | `workspace attest-dead` once the owner and its launches are gone |
 | `job eject --resume` | an interrupted eject is rolled forward or back by recovery |
-| `httk workflow transfer offer\|receive\|retire\|reclaim` | `job transfer`, `job eject --hold`, `job adopt`, `job transfer --release` |
+| `httk workflow transfer offer\|receive\|retire\|reclaim` | `job move` (whose first leg is the hidden protocol option `job eject --hold`), `job adopt`, `job move --release` |
 | `workspace unlock` | removed with the maintenance lock; there is nothing to release (`job unlock` is unrelated: it puts one job in debug mode) |
 | `workspace forget --force` | `workspace forget` |
-| `workspace fsck --quarantine-unrepairable` | `workspace fsck --repair` |
+| `workspace fsck --quarantine-unrepairable` | `workspace repair` |
 | `workspace seal --force` | `job seal` the remaining jobs first, or seal the workspace with them listed as unsealed |
 | `manager run --lease-seconds`, `--takeover-grace-factor`, `--unsafe-persistent-takeover`, `--unsafe-isolated-takeover` | recovery only after the death proof or `workspace attest-dead` |
-| `transfer send`, `transfer fetch`, `transfer status REMOTE` (by remote) | `job transfer --job JOB … SRC DST`; `transfer status WS` lists one workspace's holds (`REMOTE:WS` for a remote one) |
-| the remote setting `transfer_session` (`off` forced the adapter operations) | nothing: transfers always use a transfer session, and both ends must run the same *httk* version; `remote configure --set transfer_session=…` is refused as an unknown setting |
+| `transfer send`, `transfer fetch`, `workspace status REMOTE` (by remote) | `job move --job JOB … SRC DST`; `workspace status WS` lists one workspace's holds (`REMOTE:WS` for a remote one) |
+| the remote setting `transfer_session` (`off` forced the adapter operations) | nothing: transfers always use a transfer session, and both ends must run the same *httk* version; `remote set NAME transfer_session=…` is refused as an unknown setting |
 | `job adopt --stdin-tar` (with the hidden `--token`, `--sync`, `--built-for`), `workflow install --stdin-tar`, `--from-store`, `--source-label`, `--build`, `--also-build`, `workflow list --built-for` | the transfer session's own requests; `job adopt BUNDLE…` adopts bundles on disk |
 | the adapter operation `deliver` | the transfer session (`session` operation) |
-| `job list --kind`, `job transfer --kind` | `--state STATE` (and `--step STEP` to select by step) |
+| `job list --kind`, `job move --kind` | `--state STATE` (and `--step STEP` to select by step) |
+| `--force` on `job delete`, `job unseal`, `workspace delete`, `workspace unseal`, `launcher remove`, `remote remove`, `campaign remove` | `--yes` (pre-confirms the prompt; `workspace delete` now asks too) |
+| `--durable` | nothing: durability is the default; `--no-durable` opts out |
+| `config configure --set/--unset/--add/--remove`, `config set KEY VALUE` | `config set KEY=VALUE... [--add KEY=VALUE] [--remove KEY=VALUE]`, `config unset KEY...` |
+| `campaign configure --set/--unset` | `campaign set KEY=VALUE...`, `campaign unset KEY...` |
+| `remote configure NAME... --set KEY=VALUE --unset KEY` | `remote set NAME KEY=VALUE...`, `remote unset NAME KEY...` (one remote per call) |
+| `remote add --template KIND` | `remote add --kind KIND NAME [KEY=VALUE...]` (one remote per call) |
+| `remote check --set KEY=VALUE` | `remote set` first: `remote check` checks the stored settings |
+| `launcher configure NAME... --set/--unset/--add/--remove`, `--add-path`, `--remove-path` | `launcher set NAME [KEY=VALUE...] [--add KEY=PATH[:PATH...]] [--remove KEY=PATH[:PATH...]]`, `launcher unset NAME KEY...` |
+| `launcher add --template KIND --set KEY=VALUE` | `launcher add --kind KIND NAME [KEY=VALUE...]` (one launcher per call) |
+| several NAMEs in one `remote add`/`configure` or `launcher add`/`configure` call; exit status 1 for their validation errors | one NAME per `remote add/set/unset` and `launcher add/set/unset` call; a validation error of these commands exits 2 |
+| `job new --step`, `job debug --step` | `--start-step` |
+| `job new --workflow NAME`, `--workflow-dir DIR`, `--from-runner FILE` | `job new SOURCE` (the kind is detected as by `workflow install SOURCE`) |
+| `job new --from-command TEMPLATE` | `job new --command TEMPLATE` |
+| `job new --name NAME` | nothing: the tag (`--tag`) is the readable job handle; `job.json` keeps its derived `name` |
+| `campaign submit --workflow W --key K [--index N]` | `job new W --campaign` (`--tag` is the hash key, `--partition NAME` the explicit one, `--campaign-index N` the round-robin start) |
+| `campaign collect` | `collect --campaign [--partition NAME]...` (with `--into X` it keeps the default id ledger: a store built by the ledger-less `campaign collect --into X` gets a fresh `X.ids.sqlite` on its next sweep unless `--no-id-ledger` is passed or the store is rebuilt) |
+| `campaign start-managers` | `run --campaign [--partition NAME]...` |
+| `--format` on `job new`, `workflow describe`, `workflow install` | `--language` |
+| `manager run --idle`, `workflow run --idle` | `--keep-running` |
+| `manager run --placement-prefix`, `workflow run --placement-prefix` | `--placement` |
+| `launcher check --launcher-timeout` | `--adapter-timeout` |
+| `httk init` | `httk setup` |
+| `httk system reset [-f]` | `httk setup --reset [--yes]` |
+| `workspace configure NAME... --set KEY=VALUE --unset KEY`, `workspace settings set\|unset --key KEY --value VALUE` | `workspace set -w WS KEY=VALUE...`, `workspace unset -w WS KEY...` |
+| `workspace show NAME... [--key KEY]`, `workspace settings show` | `workspace show -w WS [KEY...]` (also lists `policy.*` and `prelude.*`) |
+| `workspace policy show\|set\|unset --key KEY --value JSON` | `workspace show\|set\|unset` with `policy.KEY` (e.g. `policy.retention.trash_days=14`) |
+| `workspace workflow-prelude show\|set\|unset --workflow ID --value TEXT` | `workspace show\|set\|unset` with `prelude.ID` (`prelude.ID=@FILE` reads a file) |
+| `workspace init --setting KEY=VALUE`, `workspace init PATH PATH...` | `workspace init PATH [KEY=VALUE...]` (one path per call) |
+| `httk project adopt` | `httk project repair` (adopts members unless `--no-adopt`) |
+| `httk project repair --dry-run` | `httk project check` |
+| `httk project manifest create` | `httk project manifest` |
+| `httk project manifest verify [--manifest PATH]` | `httk project verify --manifest`, or `--manifest-file PATH` |
+| `httk project verify-seal` | `httk project verify` |
+| `httk project verify-export ZIP` | `httk project verify ZIP` |
+| `httk project unseal --force` | `httk project unseal --yes` |
+| `job request cancel\|pause\|restart` | `job cancel`, `job pause`, `job restart` (`--reason` is optional; it defaults to the command, e.g. `httk job pause`) |
+| `job request continue` | `job resume` |
+| `job request set_priority --priority N`, `override_step --override-step S`, `set_workflow --workflow W`, `set_budget --max-attempts-per-activation N --max-total-attempts N --max-activations N` | `job set JOB... priority=N step=S workflow=W budget.max_attempts_per_activation=N budget.max_total_attempts=N budget.max_activations=N` |
+| `job request delete\|seal\|unseal\|detach\|unlock` | `job delete`, `job seal`, `job unseal`, `job detach`, `job unlock` (which reach a remote workspace as signed requests too; over a remote they record the reason `httk job VERB`, and only `job unlock` takes `--reason`) |
+| `job request eject --destination D` | `job eject JOB [D]` (for a workspace daemon, `D` is under its outbox) |
+| `workflow precheck` | `job precheck` |
+| `job transfer` | `job move` |
+| `job push`, `job pull` | `httk push`, `httk pull` |
+| `httk transfer status [WS]` | `httk workspace status [WS]` (the held transfers; `transfers` in `--json`) |
+| `httk seal verify [PATH]` | `httk job verify JOB...` (a payload directory too), `httk workspace verify [--deep] [--content]`, `httk project verify` |
+| `httk workflow run`, `httk manager run` (and the remote vector `httk workflow manager run`) | `httk run` |
+| `httk workflow monitor` | `httk monitor` |
+| `httk workflow postprocess --script SCRIPT [JOB...]` | `httk postprocess SCRIPT [JOB...]` |
+| `httk workflow describe TARGET...` | `httk workflow show TARGET...` (the installation in the workspace, else this machine's resolution) |
+| `httk workflow list` without `--workspace` (this machine's workflows) | `httk workflow list --available`; `workflow list` lists the default workspace |
+| `httk workflow install URI...` without `--workspace` (fetch only) | `httk workflow fetch URI...`; `workflow install` installs into the default workspace |
+| `httk workflow uninstall SELECTOR...` without `--workspace` (forget fetched) | `httk workflow forget SELECTOR...`; `workflow uninstall` removes from the default workspace |
+| `httk workspace workflows [NAME...]` | `httk workflow list [-w NAME]` |
+| `httk workspace adopt [PATH...]` | `httk workspace register [PATH...]` |
+| `httk workspace fsck [NAME...]` | `httk workspace check [NAME...]` |
+| `httk workspace fsck --repair [--yes] NAME...` | `httk workspace repair [--yes] NAME...` |
+| `httk workspace daemon init\|show\|check\|run\|reload WS` | `httk daemon init\|show\|check\|run\|reload WS` |
+| `workspace daemon init WS --set KEY=VALUE` | `daemon init WS KEY=VALUE...` |
+| `workspace daemon configure WS --set/--add/--unset/--remove` | `daemon set WS KEY=VALUE... [--add KEY=VALUE] [--remove KEY=VALUE]`, `daemon unset WS KEY...` |
+| `httk workspace exchange enable [WS]` | `httk daemon init WS` (creates and enables the exchange) |
+| `httk remote daemon configure REMOTE --exchange PATH` | `httk remote set REMOTE exchange=PATH` (or `remote add NAME --kind mount-daemon exchange=PATH`) |
+| `httk remote daemon health REMOTE`, `remote daemon show REMOTE` | `httk remote check REMOTE` (the health response and `daemon.json`) |
+| `httk remote daemon start REMOTE --configuration NAME` | `httk run -w REMOTE:WS --configuration NAME` |
+| `httk remote daemon status\|log\|cancel REMOTE` | `httk manager status\|log\|cancel REMOTE` |
+| `httk remote daemon take-back REMOTE NAME` | `httk remote take-back REMOTE NAME` |
 
 Workspaces and bundles of the earlier layout are refused with a message that
 there is no migration: re-create the workspace with `httk workspace init` and

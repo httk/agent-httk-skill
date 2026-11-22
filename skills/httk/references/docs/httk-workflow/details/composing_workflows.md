@@ -58,10 +58,10 @@ store:
   refused with the `httk workflow install` command that fixes it;
 - a manager does not claim a job until its workflow and every workflow it
   calls, transitively, are installed (and built, when compiled), so a
-  missing callee shows up in `httk job why` and `httk workflow precheck`
+  missing callee shows up in `httk job why` and `httk job precheck`
   before any step runs.
 
-An ad hoc workflow (a runner file given to `job new --from-runner`) has no
+An ad hoc workflow (a runner file given to `job new FILE`) has no
 `[workflow.calls]`, so it cannot call anything; give it a package manifest to
 compose it. See the `[workflow.calls]` section of
 {doc}`/details/workflow_packages`.
@@ -232,7 +232,7 @@ name resolves to its newest installation), a slot passes its
 to another installation, they are ignored.
 
 ```bash
-httk job new --workflow phonopy.phonons --input structure=POSCAR \
+httk job new phonopy.phonons --input structure=POSCAR \
     --call forces=ase.static --call-parameter forces calculator=ase.calculators.emt:EMT
 ```
 
@@ -400,7 +400,7 @@ labels are unique per parent job). See
   `placement=`, its placement is `<parent placement>/<parent job key>.children`;
   the workspace setting `children.placement=flat` gives it the parent's
   placement instead. Either way the whole tree below a root stays under the
-  root's placement, so a `--placement-prefix` manager serves it, which
+  root's placement, so a `--placement` manager serves it, which
   {doc}`/campaigns` relies on. A `placement=` must not
   contain a component that parses as a job key, since job directories never
   nest; see the

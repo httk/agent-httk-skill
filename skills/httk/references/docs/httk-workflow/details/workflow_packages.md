@@ -42,12 +42,12 @@ A package runs only once it is installed in a workspace, which copies it to
 [Installation and lifecycle](#installation-and-lifecycle)):
 
 ```console
-httk workflow describe ./my-workflow
+httk workflow show ./my-workflow
 httk workflow install --workspace WS ./my-workflow
-httk job new --workspace WS --workflow example.relax --input structure=POSCAR
+httk job new --workspace WS example.relax --input structure=POSCAR
 ```
 
-`httk job new --workflow-dir ./my-workflow --install` installs and creates the
+`httk job new ./my-workflow --install` installs and creates the
 job in one command. In Python, `new_job(workspace, "my-workflow", install=True)`
 does the same, and
 `httk.workflow.packages.load_workflow_package` registers a package
@@ -94,7 +94,8 @@ and output relationships are all validated before a provider is returned.
 | `description` | no | Human-readable summary and generated declaration description. |
 | `declaration_uri` | no | String `$id` for the generated or external workflow declaration. |
 | `declaration_file` | no | Relative regular-file member containing an externally authored OPTIMADE-format workflow declaration JSON. |
-| `resources` | no | Default resource requirements: a table mapping resource labels to non-negative integers, or to Slurm duration strings for `maxtime` and `mintime`. |
+| `resources` | no | Default resource requirements: a table mapping resource labels to non-negative integers, or to Slurm duration strings for `maxtime`, `mintime` and `warntime`. |
+| `retry_policy` | no | The retry policy every job of the package is created with; see [`[workflow.retry_policy]`](#workflowretry_policy). |
 | `steps` | no | Per-step resource overrides. Valid only with an executable runner, and only for names in its declared `steps` list. |
 | `calls` | no | The sub-workflows this one calls: a `[workflow.calls]` table mapping an alias to a workflow name or commit-pinned git URI. |
 | `settings` | no | The workspace settings the workflow reads, as a list of unique dotted names outside *httk-workflow*'s namespaces; see [`settings`](#settings). |
@@ -113,6 +114,10 @@ requires = ["httk-workflow>=2.2.0"]
 procs = 4
 mem = 4096
 
+[workflow.retry_policy]
+retry_on = ["owner_lost"]
+maximum_attempts_per_activation = 3
+
 [workflow.steps.relax.resources]
 procs = 8
 ```
@@ -124,10 +129,10 @@ checked against the interpreter doing the work:
 
 - **At claim time.** A manager whose environment does not meet the installed
   workflow's `requires` leaves the job unclaimed for another manager, as with
-  a missing capability; `httk job why` and `httk workflow precheck` name the
+  a missing capability; `httk job why` and `httk job precheck` name the
   unmet requirement. Install the required versions in its environment and
   restart it.
-- **When describing.** `httk workflow describe` refuses a workflow whose
+- **When describing.** `httk workflow show` refuses a workflow whose
   requirements this interpreter does not meet, listing every unmet
   requirement and its installed version.
 
@@ -168,7 +173,7 @@ The declaration is resolved through the workspace store:
   workflow it calls, transitively, are installed in the workspace and, for a
   package with `[workflow.build]`, built for the manager's platform. The
   check only looks things up and never fetches. Until then the job stays
-  unclaimed, and `httk job why`, `httk workflow precheck`, and the manager's
+  unclaimed, and `httk job why`, `httk job precheck`, and the manager's
   idle summary name what to install or build.
 - **At call time**, `Attempt.call` accepts only a declared alias or the
   installed id an alias names, and the callee must be installed. An ad hoc
@@ -204,8 +209,11 @@ target of a fixed call must give every slot a default.
 
 `[workflow.resources]` maps validated resource labels to non-negative,
 non-boolean integers; units are opaque. The reserved time labels `maxtime`
-(the time limit of one attempt) and `mintime` (the least remaining allocation
-time a manager needs to start one) are instead Slurm `--time` strings: `M`,
+(the time limit of one attempt), `mintime` (the least remaining allocation
+time a manager needs to start one) and `warntime` (how long before its deadline
+an attempt is told to wind down; it sets the attempt's
+[stop warning](taskmanager.md#winding-down-before-the-deadline) and sends no
+signal) are instead Slurm `--time` strings: `M`,
 `M:S`, `H:M:S`, `D-H`, `D-H:M`, or `D-H:M:S`, so `"30"` is 30 minutes and
 `"2-12"` is 60 hours. Integers are refused for them, and `job.json` stores
 seconds. A Python `WorkflowProvider(resources=..., step_resources=...)` takes the
@@ -231,6 +239,55 @@ Here `relax` and `analyse` override the defaults. The manager's advertised
 capacities decide whether each activation fits. The time labels resolve one by
 one rather than as a whole table, so `relax` keeps the 24-hour `maxtime`; they
 are never counted against a manager's capacity.
+
+### `[workflow.retry_policy]`
+
+The table declares the retry policy of every job created from the package:
+
+```toml
+[workflow.retry_policy]
+retry_on = ["owner_lost"]
+maximum_attempts_per_activation = 3
+# maximum_total_attempts = 10
+# maximum_activations = 50
+```
+
+Its keys are the four members of the `job.json` `retry_policy`, written there
+unchanged: `retry_on`, an array of nonempty failure codes, and the limits
+`maximum_attempts_per_activation`, `maximum_total_attempts` and
+`maximum_activations`, each an integer of at least 1. An absent limit is
+unbounded. Without the table, or with an empty one, a job retries nothing.
+
+`retry_on` lists codes of manager-detected failures (see
+[Exit without an outcome](workflow_filesystem_api.md#exit-without-an-outcome)).
+The usual declaration is `retry_on = ["owner_lost"]` with
+`maximum_attempts_per_activation`, which restarts a job whose manager died, or
+drained it at the end of its allocation. A failure a runner publishes with
+`retryable: true` is retried whatever `retry_on` says, within the same budgets.
+`timeout` and `process_failure` can be listed too, but a plain re-run usually
+repeats them. A runner that launches its program with `ProcessSupervisor` (the
+`httk.codes.<code>` run helpers) ends without an outcome on a drain, so its job
+is retried under `retry_on = ["owner_lost"]`; a runner that publishes an
+outcome on `SIGTERM` is not.
+
+A retry is a new attempt of the same step in the same job directory. Nothing
+the ended attempt wrote there is removed; the new attempt is told through
+`is_unclean_restart` (`HTTK_WORKFLOW_UNCLEAN_RESTART=1`). Declare `owner_lost`
+only for a workflow whose every step can be started again over the files a
+killed attempt left. When an unconfined manager dies hard (killed or crashed,
+not drained), recovery does not stop the dead attempt's processes, which may
+still run when the retry starts in the same directory; under confinement
+(`manager.confine`) or once the batch allocation has ended this cannot happen.
+
+`httk job set JOB budget.max_total_attempts=N` (and the other `budget.*` keys) raises the limits of an existing job (see
+{doc}`/restarting_jobs`); its `retry_on` cannot change, and `set_workflow` keeps
+the job's original `retry_policy`, since `job.json` is not rewritten. A child started with
+`Attempt.call` takes the called workflow's declared policy. A spawned child,
+which runs the same workflow, takes its parent's policy unless its `ChildSpec`
+gives any retry field. `format = "httk-v1"` refuses the table, because its
+`attempts` option sets the policy; `format = "jobflow"` always gives its jobs
+unlimited activations, so `maximum_activations` has no effect there. A
+`[workflow.recognize]` package never runs and refuses the table.
 
 ### `[workflow.runner]`: executable form
 
@@ -288,7 +345,7 @@ The command is validated when the package loads:
 
 A job of a package using `{artifacts}` is not claimed until its build is
 registered for the manager's platform, like a `run` bridge into the
-artifacts. `httk workflow describe`
+artifacts. `httk workflow show`
 runs a command without `{artifacts}` with `HTTK_WORKFLOW_DESCRIBE=1` to check
 the manifest steps. Describe has no build registration, so for a compiled
 package it reports the manifest alone.
@@ -427,20 +484,20 @@ add no observed data or log lines.
 The CLI supplies per-job overrides with repeatable `--environment NAME=VALUE`,
 decoding JSON values when possible. In Python, `new_job(environment={...})`
 supplies shared overrides, and each `JobItem` in `new_jobs` may carry its own
-`environment` mapping. `workflow describe` shows each entry's type, setting,
+`environment` mapping. `workflow show` shows each entry's type, setting,
 default, and description.
 
 ### `settings`
 
 The optional `[workflow]` member `settings` lists the workspace settings the
 workflow reads beyond its environment entries, such as keys it reads with
-`Attempt.setting`. It only informs: `httk workspace settings show` marks a key
+`Attempt.setting`. It only informs: `httk workspace show` marks a key
 an installed workflow declares as *recognized by workflow NAME*, and writing it
 prints no notice. Each item is a dotted setting name, listed once. A name in a
 namespace *httk-workflow* owns (`manager`, `slurm`, `confine`, `environment`,
 `seal`, `postprocess`, `children`, `httk_v1`) is refused: the workflow's own
 keys belong outside them. The setting each environment entry resolves counts
-as declared without being listed, and `workflow describe` shows the combined
+as declared without being listed, and `workflow show` shows the combined
 list. An environment entry whose setting lies in one of those namespaces keeps
 working as before, but never changes how the key is classified.
 
@@ -480,7 +537,7 @@ for runner and `[workflow.recognize]` packages alike. The keys are the OPTIMADE
 is a nonempty string, so quote numbers (`year = "1999"`), and `authors` and
 `editors` are nonempty lists of `{name, firstname?, lastname?}` tables. At least
 one of `doi`, `url` and `title` is required. `LABEL` is a local handle that
-`httk workflow describe` and the collect report show; it is not stored.
+`httk workflow show` and the collect report show; it is not stored.
 
 ```toml
 [workflow.references.paw]
@@ -501,7 +558,7 @@ the job's stored entries and run; see {doc}`/details/collecting`.
 The presence of either table declares that hook. Each has exactly one key,
 `file`, naming a relative regular member: a `.py` file selects the in-process
 Python path, and any other must be executable and selects the subprocess
-contract. `workflow describe` reports `kind=python` or `kind=executable` for
+contract. `workflow show` reports `kind=python` or `kind=executable` for
 each. The contracts are in [Hooks and trust](#hooks-and-trust).
 
 ```toml
@@ -529,9 +586,9 @@ description = "copy selected results to an archive"
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `<NAME>` | required | The name selected by `httk workflow postprocess --script`. |
+| `<NAME>` | required | The name selected by `httk postprocess SCRIPT`. |
 | `file` | required | A relative executable regular file inside the registered package. |
-| `description` | optional | Human-readable text shown by `workflow describe`. |
+| `description` | optional | Human-readable text shown by `workflow show`. |
 | `outputs` | optional | List of file patterns the script writes, relative to its output directory, making its results collectable ({doc}`collecting`). |
 
 `outputs` entries are unique relative POSIX paths (no `..`, no empty
@@ -676,8 +733,8 @@ the foreground:
 ```console
 httk workflow install --workspace WORKSPACE ./my-workflow
 httk workflow build --workspace WORKSPACE examples.chain-rust
-httk job new --workspace WORKSPACE --workflow examples.chain-rust --step prepare
-httk workflow run --workspace WORKSPACE
+httk job new --workspace WORKSPACE examples.chain-rust --start-step prepare
+httk run --workspace WORKSPACE
 ```
 
 A workflow without `[workflow.build]` is refused by `workflow build`.
@@ -698,7 +755,7 @@ time) and `artifacts/`. A rebuild replaces it.
 
 A manager runs the installed package's platform probe to find its tag. A job
 whose workflow, or any workflow it calls, has no build for that tag, or whose
-probe fails, is not claimed; `httk job why` and `httk workflow precheck` name
+probe fails, is not claimed; `httk job why` and `httk job precheck` name
 the `httk workflow build` to run. A build that disappears between that check
 and the launch fails the attempt with `runner_unavailable`, and a probe that
 fails then with `runner_build_failed`.
@@ -726,7 +783,7 @@ share the installed/registered trust tier. `httk workflow install --workspace
 WS NAME` installs one into a workspace like any package directory; resolving
 a name never executes a hook or build command. Listings and unknown-workflow hints
 label plugin entries `[plugin PLUGIN_NAME]`, with any alias, and
-`workflow describe` reports `source: installed-package`.
+`workflow show` reports `source: installed-package`.
 
 ## Hooks and trust
 
@@ -946,14 +1003,13 @@ environment, or terminal prompts, so private repositories are not supported.
 A package whose tree cannot be installed (for example one containing a
 symlink) is refused at fetch time. Its runner and instantiate hook run from
 the workspace's installed copy; its collect hook and postprocess scripts run
-from the cache tree, like a plugin package. Without `--workspace`,
-`httk workflow install URI...` only fetches, and
-`httk workflow uninstall SELECTOR...` removes fetched entries, never the
-cached checkouts.
+from the cache tree, like a plugin package. `httk workflow fetch URI...` only
+fetches, and `httk workflow forget SELECTOR...` removes fetched entries, never
+the cached checkouts.
 
 ### Resolution precedence
 
-`httk workflow install` (and `--install` on `job new` and `campaign submit`)
+`httk workflow install` (and `--install` on `job new`, with or without `--campaign`)
 resolves its source as a package directory (id `local:<name>`), a git URI
 (fetched with {py:func}`~httk.workflow.git_workflows.fetch_workflow`; id the
 canonical URI), a runner file or bare workflow document (an ad hoc package,
@@ -963,14 +1019,19 @@ then fetched git workflows by `name` or `alias`; a name with no package
 directory (registered in-process only) cannot be installed. Among fetched
 entries claiming the name, one lineage (`repository`, `subdir`) selects its
 most recently referenced commit, and several lineages are an error naming
-the competing URIs. `workflow list` and the unknown-workflow hint include
+the competing URIs. `workflow list --available` and the unknown-workflow hint include
 fetched short names that are neither shadowed nor conflicted.
 
-Without installing, `new_job` and `job new --workflow` look the workflow up
-in the workspace store by id or short name, and map a package directory,
-alias or fetched git URI to the id it would be installed under; a runner
-file, `--from-command` or bare document is always installed ad hoc.
-`workflow describe` resolves through
+`job new SOURCE` tells the same kinds apart in the same order: an existing
+runner file, document or package directory before a git URI before a name.
+A directory without `httk_workflow.toml` is read as a name unless
+`--language` names a directory format, so a directory of a workflow's name
+where the job is created does not hide that workflow. Without installing,
+`new_job` and `job new` look the workflow up in the workspace store by id or
+short name, and map a package directory, alias or fetched git URI to the id
+it would be installed under; a runner file, `--command` or bare document is
+always installed ad hoc.
+`workflow show` resolves through
 {py:func}`~httk.workflow.scaffold.resolve_workflow`, fetching a git URI but
 installing nothing.
 
@@ -1001,17 +1062,17 @@ next launch runs a different tree than its last, `job why` reports the
 mismatch between the installed tree and the job's `workflow_pin` as a
 `workflow pin` check, and `httk collect` refuses the job with both digests and
 the remedies: reinstall the tree it ran with, or rerun it on the installed
-tree (`httk job request restart --reason TEXT JOB` for a failed or paused job,
-or `continue --tree` when it failed waiting on failed children; a succeeded job
+tree (`httk job restart --reason TEXT JOB` for a failed or paused job,
+or `job resume --tree` when it failed waiting on failed children; a succeeded job
 is deleted with `httk job delete` and created again).
-`job new --workflow-dir DIR --install` reinstalls when the sources
+`job new DIR --install` reinstalls when the sources
 of `DIR` have changed since the installation (compared by the installed
 digest's rules, ignoring `.git` and declared build artifacts), so an
 edited package directory is picked up by the next job. To iterate on a runner
 for one job only, without reinstalling, unlock the job: it gets its own copy of
 the installed `package/` at `workflow/` in the job directory to edit and rerun (see
 {doc}`/restarting_jobs`). `httk workflow list --workspace WS` and
-`httk workflow describe --workspace WS ID` show installations; the manager
+`httk workflow show --workspace WS ID` show installations; the manager
 records the id and tree digest it launched in `state.json` `workflow_pin`.
 The store layout is specified in
 {doc}`/details/workflow_filesystem_api`.
@@ -1028,16 +1089,16 @@ The usual lifecycle is install, instantiate, run, then collect:
 
 ```console
 httk workflow install --workspace WS ./my-workflow
-httk job new --workspace WS --workflow example.relax \
+httk job new --workspace WS example.relax \
     --input-from structure structures/ \
     --parameter kpoint_density=30.0 \
     --placement project/screening
-httk workflow run --workspace WS
+httk run --workspace WS
 httk collect --workspace WS
 httk collect --workspace WS --into results.sqlite --id-base httk.workflow
 ```
 
-`httk workflow describe TARGET [--json]` reports a registered id or alias,
+`httk workflow show TARGET [--json]` reports a registered id or alias,
 git URI, runner file, or package directory without installing it. `collect`
 emits one `CollectedJob` summary per line by default, `--raw` emits
 `JobRecord` records, and `--allow-job-collector` enables the third trust
@@ -1072,11 +1133,11 @@ the short version is in {doc}`/workflow_packages`.
 
 ### Creating a job with an embedded workflow
 
-`--embed-workflow` combines with `--workflow ID|ALIAS|GIT-URI`, `--workflow-dir DIR`,
-`--from-runner FILE` and `--from-command CMD` (and the API's
+`--embed-workflow` combines with every SOURCE (an installed id or alias, a git URI, a package
+directory, a runner file) and with `--command CMD` (and the API's
 `new_job(..., embed_workflow=True)` / `new_jobs(..., embed_workflow=True)`), and is refused with
 `--install`. Nothing is installed; fetching a git URI into the fetch cache is
-allowed, as for `workflow describe`. The creator resolves the package, builds one
+allowed, as for `workflow show`. The creator resolves the package, builds one
 scratch snapshot of it (no symlinks, special files, hard-linked files, `.git` or
 `__pycache__`), computes the embedded digest, runs the instantiate hooks from that
 snapshot pinned to the digest, and copies the snapshot into each job's
@@ -1162,7 +1223,7 @@ anything; the model defends against the running job.
 - **Damaged state.** Rebuilding a damaged `state.json` never deletes the `workflow/`
   of a job with an embedded workflow, and keeps `workflow/` whenever `job.json` cannot be read.
 - **Seals.** `workflow/` is a payload member, so the job seal covers it.
-- **Transfer.** `job transfer`, `job adopt` and `job eject` bundles carry
+- **Transfer.** `job move`, `job adopt` and `job eject` bundles carry
   `workflow/` (trusted bundles); an embedded id is never reported as a missing
   workflow, while its fixed callees and slot-bound workflows are shipped or
   required as for any job. Trusted bundles run the embedded-workflow job at the destination with nothing installed.

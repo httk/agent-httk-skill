@@ -24,7 +24,7 @@ bundle.
 The maintained Slurm template is installed with:
 
 ```console
-httk launcher add --template slurm --global cluster
+httk launcher add --kind slurm --global cluster
 httk launcher check cluster
 ```
 
@@ -83,7 +83,7 @@ members following the envelope:
   "operation": "start",
   "launcher_dir": "/home/me/.config/httk/launchers/cluster",
   "workspace": "/scratch/me/runs/workspace",
-  "argv": ["httk", "workflow", "manager", "run", "--workspace", "/scratch/me/runs/workspace"],
+  "argv": ["httk", "run", "--workspace", "/scratch/me/runs/workspace"],
   "count": 2,
   "settings": {
     "slurm.partition": "batch",
@@ -332,7 +332,7 @@ stdout:
 | `nodes[].gpu_ids` | no | One non-empty device id per GPU, `gpus` entries |
 | `nodes[].gpu_variable` | with `gpu_ids` | The environment variable the ids belong in, such as `CUDA_VISIBLE_DEVICES` |
 | `nodes[].local` | no | Whether this is the manager's host, default `false`; at most one node may set it to `true` |
-| `resources` | no | Extra non-negative integer capacities; not `procs`, `mem`, `gpus`, `nodes`, `maxtime` or `mintime` |
+| `resources` | no | Extra non-negative integer capacities; not `procs`, `mem`, `gpus`, `nodes`, `maxtime`, `mintime` or `warntime` |
 
 CPU sets of different slots on one node must be disjoint, and GPU IDs on that
 node must be unique. The same CPU numbers or GPU IDs may occur on different
@@ -395,7 +395,7 @@ The PBS dispatcher appends `--allocation exec:BUNDLE/allocation` by default;
 setting it explicitly is equivalent:
 
 ```console
-httk launcher configure --set manager.allocation=exec:/home/me/.config/httk/launchers/pbs-cluster/allocation pbs-cluster
+httk launcher set pbs-cluster manager.allocation=exec:/home/me/.config/httk/launchers/pbs-cluster/allocation
 ```
 
 ### Has the allocation ended?

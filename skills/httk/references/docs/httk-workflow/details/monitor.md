@@ -1,11 +1,11 @@
 # Workflow monitor
 
-`httk workflow monitor` opens a stdlib `curses` view over one or more
+`httk monitor` opens a stdlib `curses` view over one or more
 registered workspaces:
 
 ```console
-httk workflow monitor --workspace default --refresh 3
-httk workflow monitor --workspace cluster:runs
+httk monitor --workspace default --refresh 3
+httk monitor --workspace cluster:runs
 ```
 
 `--refresh` accepts finite values from 0.5 through 3600 seconds. The command
@@ -31,7 +31,7 @@ and worker errors appear in the status line.
 | `w` | load the full diagnosis |
 | `l` | load full history |
 | `t` | follow `logs/stdio.out` |
-| `c`, `P`, `C` | request cancel, pause, and continue |
+| `c`, `P`, `C` | request cancel, pause, and resume (`job cancel`, `job pause`, `job resume`) |
 | `m` | start managers |
 | `D` | remove removable jobs after confirmation |
 | `r` | refresh |
@@ -72,11 +72,11 @@ implementations.
 
 If the remote's adapter or its `httk` cannot serve a session (an older far
 side), the monitor falls back to one bounded adapter call per read and action.
-Those calls ask the adapter to share one connection (`share_connection`): the
-`ssh` template then keeps a control socket open, as `interactive_auth=yes`
-does, and closes it after 10 idle minutes, so the monitor logs in once rather
-than once per refresh (a `--refresh` longer than that logs in once per
-refresh). When your own ssh configuration names a `ControlPath` for the host,
+Those calls ask the adapter to share one connection (`share_connection`): unless
+`connection_reuse` is `no` (set on the remote or as the per-user default), the `ssh` template then keeps a control
+socket open, as `connection_reuse=yes` does, and closes it after 10 idle
+minutes, so the monitor logs in once rather than once per refresh (a
+`--refresh` longer than that logs in once per refresh). When your own ssh configuration names a `ControlPath` for the host,
 ssh uses that instead; see [Remotes](remotes.md).
 
 A timed refresh keeps the current page, counts and detail on screen until the

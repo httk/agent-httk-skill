@@ -21,19 +21,21 @@ Create an SSH remote, configure its connection, and check that a compatible
 `httk` answers on the other machine:
 
 ```console
-$ httk remote add --template ssh kappa
-$ httk remote configure \
-      --set host=login.example.org \
-      --set username=me \
-      --set check_connectivity=yes kappa
+$ httk remote add kappa --kind ssh \
+      host=login.example.org \
+      username=me \
+      check_connectivity=yes
 $ httk remote check kappa
 ```
 
 `remote check` invokes the adapter's `install` operation. The name is
 historical: the maintained adapters only verify the remote and install nothing.
 Settings that are credentials go into `credentials.json`, which is excluded from
-signed project manifests. `remote configure NAME --unset KEY` removes a stored connection setting or
-private credential; use repeatable `--set KEY=VALUE` to add or replace it.
+signed project manifests. `remote set NAME KEY=VALUE...` adds or replaces
+settings and credentials after the adapter's `configure` operation accepts them,
+and `remote unset NAME KEY...` removes stored ones. `remote add` with
+`KEY=VALUE` pairs runs exactly what `remote set` runs; if that step fails, the
+remote stays created and `remote set` fixes its settings.
 `remote show [--json]` inspects a definition without
 printing credential values. `remote list`, `remote remove` and
 `remote import-v1` cover the other common management tasks.
@@ -54,8 +56,8 @@ setting rather than in `~/.bashrc`, so it applies only to httk's ssh commands
 and not to every other tool that logs in over ssh:
 
 ```text
-$ httk remote configure --set cli_prelude='module load Python/3.13.5-bundle
-source ~/venv/bin/activate' kappa
+$ httk remote set kappa cli_prelude='module load Python/3.13.5-bundle
+source ~/venv/bin/activate'
 ```
 
 The prelude runs under `set -e`, so a failing line aborts before anything else.
@@ -76,9 +78,9 @@ that `httk` can run at all; it does not run at job start. The manager applies
 prelude when a job of that workflow runs.
 
 Earlier releases called this setting `prelude`. A remote that still stores
-`prelude` is refused when a command would use it, and `--set prelude=...` is
-refused; rename it with
-`httk remote configure NAME --unset prelude --set cli_prelude=...`.
+`prelude` is refused when a command would use it, and setting `prelude=...` is
+refused; rename it with `httk remote unset NAME prelude`, then
+`httk remote set NAME cli_prelude=...`.
 
 ### Passwords and second factors
 
@@ -114,44 +116,66 @@ reaches the remote; a manager that runs unattended cannot reopen it.
 
 Where connection sharing is not an option, set `interactive_auth=yes`. ssh then
 prompts in your terminal for the password or code; httk never sees the secret.
-Connection reuse comes from your own ssh `ControlMaster` configuration, which
-httk's ssh calls honor: when `~/.ssh/config` names a `ControlPath` for the
-host, httk adds no control options and ssh reuses your open master connection.
-That reuse needs a running master or `ControlMaster auto`: with `ControlMaster
-no` and no master open, every call authenticates again.
-Only when the configuration defines no `ControlPath` does httk keep its own
-shared connection open for 10 minutes after its last use
-(`ControlPersist=600`, with the socket under `$XDG_RUNTIME_DIR/httk` or
-`/tmp/httk-ssh-UID`), so a command such as `remote check` prompts once.
-That connection sends a keepalive every 15 seconds, so one that died (after a
-suspend or a network change) is noticed within a minute. To close it at once,
-name its socket: `ssh -O exit -o ControlPath=$XDG_RUNTIME_DIR/httk/%C HOST`.
-Configuring checks connectivity,
-so the configure command itself already prompts:
+Configuring checks connectivity, so `remote set` itself already
+prompts:
 
 ```console
-$ httk remote configure --set interactive_auth=yes kappa
+$ httk remote set kappa interactive_auth=yes
 ```
 
-For sites that forbid connection sharing, `interactive_auth=per-call` prompts on
-every ssh call instead. Either way, prompts happen only when the
-command runs in a foreground terminal. Anything without one (a detached
-manager, a cron job, a backgrounded shell job) keeps batch mode and fails with a
-hint instead of hanging. The adapter's `timeout_seconds` (300 s for the `ssh`
-template) still bounds each operation, including the time you spend typing.
-`httk workflow monitor` prompts at most once per remote workspace, when it
+Prompts happen only when the command runs in a foreground terminal. Anything
+without one (a detached manager, a cron job, a backgrounded shell job) keeps
+batch mode and fails with a hint instead of hanging. The adapter's
+`timeout_seconds` (300 s for the `ssh` template) still bounds each operation,
+including the time you spend typing.
+
+### Connection reuse
+
+On its own, `interactive_auth=yes` prompts on every ssh call. Set
+`connection_reuse=yes` to have httk keep one shared connection open for 10
+minutes after its last use (`ControlPersist=600`, with the socket under
+`$XDG_RUNTIME_DIR/httk` or `/tmp/httk-ssh-UID`), so a command such as
+`remote check` prompts once and the following calls, also those without a
+terminal, log in no more:
+
+```console
+$ httk remote set kappa interactive_auth=yes connection_reuse=yes
+```
+
+Connection reuse is a separate setting, and off unless set, because some sites
+forbid connection sharing; it speeds up key-based logins too. `remote
+set` on an `ssh` remote that leaves it unset prints a notice naming the
+setting. To make reuse the default for every remote that sets none, set it in
+the per-user configuration; a remote then opts out with
+`httk remote set NAME connection_reuse=no`:
+
+```console
+$ httk config set connection_reuse=yes
+```
+
+When `~/.ssh/config` names a `ControlPath` for the host, httk adds no control
+options and ssh reuses your own master connection instead. That reuse needs a
+running master or `ControlMaster auto`: with `ControlMaster no` and no master
+open, every call authenticates again. httk's own connection sends a keepalive
+every 15 seconds, so one that died (after a suspend or a network change) is
+noticed within a minute. To close it at once, name its socket:
+`ssh -O exit -o ControlPath=$XDG_RUNTIME_DIR/httk/%C HOST`. Calls join a shared
+connection only when they resolve the same socket directory: a cron job without
+`XDG_RUNTIME_DIR` looks under `/tmp/httk-ssh-UID` and does not find a
+connection opened from a desktop session.
+
+`httk monitor` prompts at most once per remote workspace, when it
 starts and before its display opens, if `interactive_auth` is `yes` and a
 terminal is attached; it then keeps that one connection, a far-side
-`httk workflow session`, for its whole run. Since the session is a single
-connection, `per-call` makes no difference to it. Calls without a terminal,
-including the monitor's reconnect after `r`, join a shared connection opened
-earlier, for example by `httk remote check NAME`, while it is open, provided
-they resolve the same socket directory: a cron job without `XDG_RUNTIME_DIR`
-looks under `/tmp/httk-ssh-UID` and does not find a connection opened from a
-desktop session. Against a far side that cannot serve a session, the monitor
-falls back to one call per read and shares a connection even with the default
-batch-mode login, so its reads and actions log in once and then reuse it until
-it has been idle for 10 minutes; `per-call` turns that sharing off as well.
+`httk workflow session`, for its whole run, whatever `connection_reuse` says.
+The monitor's reconnect after `r` runs without a terminal and joins a shared
+connection opened earlier, for example by `httk remote check NAME`, while it is
+open. Against a far side that cannot serve a session, the monitor falls back to
+one call per read and, while `connection_reuse` is unset (on the remote and in
+the per-user configuration), shares a connection anyway, so its reads and
+actions log in once and then reuse it until it has been idle for 10 minutes;
+`connection_reuse=no`, on the remote or as the per-user default, turns that
+sharing off as well.
 
 ## Working with remote workspaces
 
@@ -168,11 +192,11 @@ job's workflow there, push the jobs waiting to start and run its manager there:
 
 ```console
 $ httk workflow install --workspace kappa:runs 'git+https://github.com/httk/workflows-vasp#vasp-relax'
-$ httk job push kappa:runs
-$ httk workflow run --workspace kappa:runs --count 4
+$ httk push kappa:runs
+$ httk run --workspace kappa:runs --count 4
 ```
 
-`httk job push [SRC] DST` moves every `ready` job of SRC; the SRC left out is
+`httk push [SRC] DST` moves every `ready` job of SRC; the SRC left out is
 the workspace the command runs in, else the default workspace (the per-user
 one is created on first use). SRC keeps an inert *away copy* of each pushed job
 (state `away`; `--no-keep` keeps none) so the jobs stay accounted for:
@@ -180,10 +204,10 @@ one is created on first use). SRC keeps an inert *away copy* of each pushed job
 them, and `httk job recover JOB` returns a job lost on the remote to the state
 it left, to push again. See *Away copies* in {doc}`workflow_cli`.
 
-Workflows travel with the jobs. A transfer (push, pull or `job transfer`, local
+Workflows travel with the jobs. A transfer (push, pull or `job move`, local
 or remote ends, either direction) installs in DST every workflow the moved jobs
 need that DST lacks and SRC has, under the same id, before adopting them: each
-job's effective workflow (after `job request set_workflow`) and the closure of
+job's effective workflow (after `job set workflow=`) and the closure of
 its `[workflow.calls]`. One query asks DST which of them it has; the missing
 store entries then travel as their sources only (`install.json` and
 `package/`, never `builds/`, and `requires` is not checked there), each is
@@ -202,7 +226,7 @@ in DST's `.httk-workspace/tmp/push.<hex>/` is named in a warning and removed by
 `httk workspace gc` after a day. The workspace daemon's exchange never installs a workflow a
 client sends. The
 remote invocation asks the owning machine to run
-`httk workflow manager run --workspace runs --detach …`. The target workspace
+`httk run --workspace runs --detach …`. The target workspace
 then applies its own `manager.launch`, `manager.workers`, scheduler settings and
 `environment.prelude`, as if the command had been run on the login node. Fetch
 finished jobs back with a pull, which moves every `succeeded` job of SRC into
@@ -212,20 +236,20 @@ the implicit state, and `--step` without `--state` selects from every unowned
 state):
 
 ```console
-$ httk job pull kappa:runs
+$ httk pull kappa:runs
 ```
 
-Push and pull are the everyday forms of `httk job transfer SRC DST`, which
+Push and pull are the everyday forms of `httk job move SRC DST`, which
 names both ends and an explicit selection (`--job`, `--state`, `--step`):
 
 ```console
-$ httk job transfer --state succeeded --placement camp kappa:runs default
+$ httk job move --state succeeded --placement camp kappa:runs default
 ```
 
 A transfer holds the jobs on the source, copies them, adopts them at the
 destination and only then releases the hold, so an interrupted transfer is
-finished by running it again or with `httk job transfer --resume`;
-`httk transfer status` lists what a workspace holds. All jobs of one transfer
+finished by running it again or with `httk job move --resume`;
+`httk workspace status` lists what a workspace holds. All jobs of one transfer
 travel together, so the cost is the same whether it moves one job or a thousand:
 a push to a remote workspace is one ssh connection and one remote `httk` start,
 a transfer session (below) that also ships and builds the workflows the
@@ -239,7 +263,7 @@ remote workspace needs its transfer session, so both machines must run the same
 *httk* version (see *The transfer session* below). On a site where
 every Python start is slow, that is what a transfer costs. It reports each step
 on stderr (`-q` silences that). The
-steps and their recovery are in the `job transfer` section of {doc}`workflow_cli`.
+steps and their recovery are in the `job move` section of {doc}`workflow_cli`.
 
 ### The transfer session
 
@@ -267,9 +291,9 @@ source never takes a hold back: a refusal, an unknown outcome or a failure of
 that directory (a full disk) leaves the holds held there for `--resume`.
 
 A push holds and delivers its jobs a page at a time (when it keeps no away
-copies, as `job transfer` without `--keep` and `job push --no-keep`, the next
+copies, as `job move` without `--keep` and `push --no-keep`, the next
 page is held while the current one is delivered, so up to twice `io.workers`
-operations can run on the source; `job push` keeps away copies by default and
+operations can run on the source; `push` keeps away copies by default and
 so does not; see *Paged holds* in {doc}`workflow_cli`). Over the session it first
 asks the destination which of the workflows a page's jobs need it lacks or has
 unbuilt, installs and builds those (once a command per workflow; a failure is
@@ -314,10 +338,10 @@ to a bundle), nothing more is sent: this run's holds in that segment and in the
 segments never sent are taken back, an earlier run's stay held, and the
 segments staged before it (sent, not yet adopted) stay held too.
 Before the first segment, a session that fails while the workflows are installed
-has adopted nothing: the holds stay for `httk job transfer --resume`. An answer that cannot be read, a far side that dies, or a
+has adopted nothing: the holds stay for `httk job move --resume`. An answer that cannot be read, a far side that dies, or a
 segment answered by another workspace than the first stops the push there: that
 segment's holds and every later one's stay held, and running the transfer again
-(or `httk job transfer --resume`) finishes it, reporting what had arrived as
+(or `httk job move --resume`) finishes it, reporting what had arrived as
 already adopted.
 
 Over the session a pull first has the source check and resolve its selection
@@ -346,7 +370,7 @@ a file of it was replaced or changed size while it was read) fails alone and the
 rest of its segment is fetched once more without it. A source that dies or
 answers something else, or a refusal naming no hold (a full quota here, say),
 stops the pull: nothing of that fetch was adopted, its holds and every later one
-stay held there, and no later page is held; `httk job transfer --resume` lists
+stay held there, and no later page is held; `httk job move --resume` lists
 the holds over a new session and drives them (run the transfer again to select
 what was never held). A hold too large to describe in one answer (448 MiB as
 encoded; at about 40 to 60 bytes a job, a tree of several million jobs, more
@@ -354,8 +378,8 @@ than a bundle can hold, see below) fails alone and stays held on the source,
 and its message names the remedy by hand: copy its bundle
 `.httk-workspace/transfers/outgoing/<transfer id>/` from the source to the
 destination's machine, run `httk job adopt BUNDLE` in the destination
-workspace, then `httk job transfer --release TRANSFER_ID REMOTE:WS`; with
-`--keep`, `httk job transfer --release TRANSFER_ID --keep --destination-id ID
+workspace, then `httk job move --release TRANSFER_ID REMOTE:WS`; with
+`--keep`, `httk job move --release TRANSFER_ID --keep --destination-id ID
 REMOTE:WS`, ID being the `workspace_id` that `httk workspace status --json` of
 the destination reports (a hold of a remote source records no destination id,
 and a release without one keeps no away copies). A failed release leaves the
@@ -394,9 +418,9 @@ messages:
 
 Holds an earlier run left stay held, untouched, and `--resume` drives them once
 both ends run the same *httk* (or the cause of the third kind is gone). The remote setting `transfer_session` was
-removed with the transfers that did not use a session: `httk remote configure
---set transfer_session=…` is refused as an unknown setting, and a value an
-earlier version persisted is ignored (`--unset transfer_session` removes it).
+removed with the transfers that did not use a session: `httk remote set NAME
+transfer_session=…` is refused as an unknown setting, and a value an
+earlier version persisted is ignored (`httk remote unset NAME transfer_session` removes it).
 
 Once open, a session is never reopened: a request that fails (the far side
 ends, breaks the protocol, or fails the request fatally) has an unknown
@@ -419,7 +443,7 @@ an answer that large (a page of holds, or the adoption of a tree of about a
 million jobs) takes a few GB of Python objects to read on each side, an accepted
 cost at that scale. A tree whose adoption answer exceeds it (an accepted
 limitation) is still copied and adopted, but its answer cannot be read: the push
-reports an unknown outcome and keeps the hold, and `httk job transfer --resume`
+reports an unknown outcome and keeps the hold, and `httk job move --resume`
 completes it, its second delivery answered "already adopted" (a short answer)
 and the hold released, at the cost of copying the tree a second time; `httk job
 eject` and `httk job adopt` by hand avoid that second copy.
@@ -457,15 +481,15 @@ through the adapter contract, create a separate remote with the `local`
 template:
 
 ```console
-$ httk remote add --template local local-tree
+$ httk remote add --kind local local-tree
 $ httk workspace init --name scratch local-tree:/tmp/me/httk/scratch
 ```
 
 ### Job trees travel together
 
-A child job spawned by another job travels with its parent. `job push` and
-`job pull` always move a root together with its spawned descendants, with
-their placements kept; `job transfer` does so with `--tree` and without it
+A child job spawned by another job travels with its parent. `push` and
+`pull` always move a root together with its spawned descendants, with
+their placements kept; `job move` does so with `--tree` and without it
 refuses a job whose descendants are present. Every descendant must be paused or
 terminal, so a pull of finished work brings a campaign back whole once it is
 done. A root that finished before its children (an `any_terminal`,
@@ -475,9 +499,9 @@ first. A child that should leave alone is detached first, because a child may
 read its parent's files in place (see {doc}`composing_workflows`):
 
 ```console
-$ httk job pull kappa:runs
+$ httk pull kappa:runs
 $ httk job detach CHILD
-$ httk job push --job CHILD kappa:runs
+$ httk push --job CHILD kappa:runs
 ```
 
 ## Mounted filesystem with a separate executor (`mount`)
@@ -506,11 +530,10 @@ Three settings describe it:
   a hold left by an earlier run is never taken back (`failed`, held).
 
 ```console
-$ httk remote add --template mount sigma
-$ httk remote configure \
-      --set mount_root=/home/me/work/mounts/sigma \
-      --set remote_root=/proj/x/users/me/httk \
-      --set exec_command="/home/me/bin/hpc run" sigma
+$ httk remote add sigma --kind mount \
+      mount_root=/home/me/work/mounts/sigma \
+      remote_root=/proj/x/users/me/httk \
+      exec_command="/home/me/bin/hpc run"
 ```
 
 `configure` refuses unless `mount_root` is an existing directory (set
@@ -525,7 +548,7 @@ mount point looks the same as a mounted but empty one, so run
 filesystem is mounted and `httk` answers on the far side.
 
 The mount is for transfers only. Do not run `httk workspace init` on the mount
-as a local workspace, and do not run `status`, `collect`, `fsck` or any analysis
+as a local workspace, and do not run `status`, `collect`, `check` or any analysis
 against the mounted tree. The remote machine owns the workspace, so every
 `httk` command about it goes through the executor (`sigma:runs`), as with an
 `ssh` remote:
@@ -533,8 +556,8 @@ against the mounted tree. The remote machine owns the workspace, so every
 ```console
 $ httk workspace init --name runs sigma:/proj/x/users/me/httk/runs
 $ httk workflow install --workspace sigma:runs ./my-workflow
-$ httk job transfer --job JOB default sigma:runs
-$ httk workflow run --workspace sigma:runs --count 4
+$ httk job move --job JOB default sigma:runs
+$ httk run --workspace sigma:runs --count 4
 $ httk workspace status sigma:runs
 ```
 
@@ -553,23 +576,28 @@ mount point must be outside every local workspace. Then pin the identities the
 exchange publishes in `exchange.json` and `daemon.json`:
 
 ```console
-$ httk remote add --template mount-daemon confined
-$ httk remote daemon configure confined --exchange /mnt/cluster/exchange
+$ httk remote add --kind mount-daemon confined exchange=/mnt/cluster/exchange
 $ httk remote check confined
 ```
 
 The remote's settings are `exchange` and `daemon_workspace_id`, which are
 required, and `daemon_enrollment_id` and `daemon_public_key`, which are needed
-only for signed requests. `configure` pins the workspace from `exchange.json`
+only for signed requests. Setting `exchange=PATH` (at `remote add`, or later
+with `httk remote set confined exchange=PATH`) pins the workspace from `exchange.json`
 and, when a daemon has published `daemon.json`, the daemon identities; without
 `daemon.json` it pins the workspace only, which is enough to send and fetch
 jobs and read status. The active configuration digest and request lifetime are
 read live from protocol 5's `daemon.json`; changed configuration needs no
-reconfiguration, while a changed identity is refused. Configure an *httk*
-identity whose public key the daemon authorizes. `configure` publishes nothing.
-`check` reads `exchange.json` and, when the daemon is pinned, `daemon.json` and
-sends a signed health request; it checks a broker response and does not
-establish compute-node readiness.
+reconfiguration, while a changed identity is refused; set `exchange=PATH`
+again to repin. Configure an *httk* identity whose public key the daemon
+authorizes. Pinning publishes nothing. `check` reads `exchange.json` and, when
+the daemon is pinned, `daemon.json` and sends a signed typed health request,
+whose signed response it reports together with the pinned daemon's
+`daemon.json` (its identities and approved configurations, under `daemon`); it
+checks a broker response and does not establish compute-node readiness.
+`remote show` stays local: it prints the stored pins and never reads the
+mount. The `exchange` and `daemon_*` settings are refused for other kinds of
+remote.
 
 ### Moving jobs and daemon requests
 
@@ -577,12 +605,12 @@ Jobs move through the exchange with the ordinary `job eject` and `job adopt`:
 
 ```console
 $ httk job eject JOB /mnt/cluster/exchange/inbox
-$ httk remote daemon show confined
-$ httk remote daemon start confined --configuration small
-$ httk remote daemon status confined
-$ httk remote daemon status confined --handle MANAGER_HANDLE
-$ httk job request pause --workspace confined:runs --reason 'operator pause' JOB_UUID
-$ httk remote daemon cancel confined --handle MANAGER_HANDLE
+$ httk remote check confined
+$ httk run -w confined:runs --configuration small
+$ httk manager status confined
+$ httk manager status confined --handle MANAGER_HANDLE
+$ httk job pause --workspace confined:runs --reason 'operator pause' JOB_UUID
+$ httk manager cancel confined --handle MANAGER_HANDLE
 $ httk job adopt --move /mnt/cluster/exchange/outbox/CLIENT_JOB_KEY
 ```
 
@@ -603,37 +631,42 @@ returned tree, verifies it and removes the source from the exchange.
 `--configuration` names one of the global `slurm` launchers the operator
 approved for the daemon (each sets `manager.confine=bwrap`); `daemon.json`
 lists them with their digests and published resource settings (task layout,
-CPUs, memory, GRES, partition, workers and time limits), and `show` prints it. Every unrestricted confined manager of the workspace (no `--placement-prefix` or pool restriction), and
+CPUs, memory, GRES, partition, workers and time limits), and `remote check`
+reports it. On a `mount-daemon` workspace, `httk run` takes only
+`--configuration`, `--time-limit`, `--request-id` and `--wait-seconds`; those
+three daemon options are refused elsewhere. Every unrestricted confined manager of the workspace (no `--placement` or pool restriction), and
 every manager the daemon starts, adopts bundles from `inbox` and runs every job
 attempt confined to its own job directory; the daemon only starts, queries and
 cancels managers. Adoption puts the jobs you eject in your key's exchange pool,
 and a manager the daemon starts for your key runs only those, then exits once
 it has nothing left to do; a keyless bundle waits for a manager an operator
-starts on the host. Only the key that started a manager may query or cancel it. `status` without `--handle` is passive: it prints the
+starts on the host. Only the key that started a manager may query or cancel it. `manager status` without `--handle` is passive: it prints the
 informational root `status.json` and `managers.json` from the exchange without
 a request. With `--handle` it sends the signed `manager_status` request.
 `managers.json` also reports each manager's outcome (scheduler state, exit
-code, times); once a manager's Slurm job has ended, `httk remote
-daemon log confined --handle MANAGER_HANDLE` prints its published log. The
+code, times); once a manager's Slurm job has ended, `httk manager log
+confined --handle MANAGER_HANDLE` prints its published log. The
 published logs, like `managers.json`, are readable by every client of the
 exchange, not only the key that started the manager.
 
 To give up on a bundle that no manager has adopted, run `httk remote
-daemon take-back confined NAME [DESTINATION]`. It is client-only: it renames
+take-back confined NAME [DESTINATION]`. It is client-only: it renames
 `inbox/NAME` to a dot name (managers ignore it), copies it out and removes it.
 If the name is gone, a manager took it. See {doc}`workspace_daemon` for the job
 lifecycle, rejected bundles, `status.json` and signed job control.
 
-`job request` against a `mount-daemon` workspace sends one signed typed
-command per UUID or UUID-prefix selector. A batch is sequential and
+A request verb (`job cancel`, `pause`, `resume`, `restart`, `set`), and `job
+delete`, `job seal`, `job unseal`, `job detach` and `job eject`, against a
+`mount-daemon` workspace sends one signed typed command per UUID or
+UUID-prefix selector. A batch is sequential and
 non-atomic: earlier selectors may already be queued if a later one fails.
 Selectors must be UUIDs or lowercase UUID prefixes; paths, globs and tags are
-refused. `--force` is refused before any command is sent. Eject destinations
-are relative to the daemon exchange `outbox`. `--operator` selects the local
+refused. `--force` is refused before any command is sent. A `job eject` `DEST`
+is relative to the daemon exchange `outbox` (the outbox itself when omitted). `--operator` selects the local
 identity that signs each command. The daemon executes a command only for an
 exchange root submitted with that signing key, which must also be authorized;
 `--operator` must select the identity that ejected the job.
-`job request` exits 0 when each command is applied or queued, and 1 for a
+The command exits 0 when each command is applied or queued, and 1 for a
 refusal or uncertain result. Each output row includes the resolved job id,
 outcome, internal request id, daemon command id, explanation and observed
 state when available.
@@ -644,9 +677,9 @@ action, reason and action-specific fields to reuse its exact cached signature,
 even if the active configuration changed. Any semantic change under that id
 is refused. This option is valid only for one selector on a `mount-daemon`
 workspace; local and ordinary remote requests reject it. To inspect the
-original job command, run `httk remote daemon status confined --request-id ID`.
+original job command, run `httk manager status confined --request-id ID`.
 That command sends a fresh signed observation request. Without `--handle` or
-`--request-id`, `remote daemon status` remains passive and informational.
+`--request-id`, `manager status` remains passive and informational.
 
 ### Request ids and retries
 
@@ -659,12 +692,12 @@ request may still be queued in the exchange, and the daemon applies it when it
 picks it up, until the request expires. The error message names the id.
 
 - To keep waiting for that request, rerun with **`--request-id ID` and
-  identical fields**. Rerunning `start` without it sends a new request and may
-  start a second manager; check `httk remote daemon status confined` first.
+  identical fields**. Rerunning `httk run` without it sends a new request and may
+  start a second manager; check `httk manager status confined` first.
 - Never retry an uncertain submission with a new id; reconcile it with the
   operator.
 - Use a fresh id (the default) for each status refresh.
-- `remote daemon status --request-id ID` refers to the original job command ID;
+- `manager status --request-id ID` refers to the original job command ID;
   it sends a separate fresh status request each time.
 - The client stores the exact signed requests in its local httk data directory
   before publication. Retries reuse their original timestamps and signatures;
@@ -679,12 +712,12 @@ acceptance window and replay rules.
 
 ### Waiting and exit codes
 
-`health`, `start`, `status` and `cancel` accept `--wait-seconds` from 0.05 to
-120 (default 10). Exit 0 means a positive protocol outcome; `refused`, `busy`,
+`httk run` against a `mount-daemon` workspace, `manager status` and `manager
+cancel` accept `--wait-seconds` from 0.05 to 120 (default 10). Exit 0 means a positive protocol outcome; `refused`, `busy`,
 `uncertain` and unacknowledged calls exit 2. `UNKNOWN` is a valid status and
 does not establish completion. A cancellation acknowledgement does not confirm
 that the job has terminated. Finished jobs appear in the exchange `outbox` on their own.
-For daemon-mediated `job request pause --wait`, the client sends the original
+For daemon-mediated `job pause --wait`, the client sends the original
 pause once, then polls with a fresh signed status request every second until
 the job is paused, the command is refused or uncertain, a terminal state
 supersedes the pause, or the finite nonnegative `--timeout` expires. Passive
@@ -693,7 +726,7 @@ uncertainty, supersession and timeout exit 1.
 
 ### What is refused
 
-Generic `confined:workspace` commands (including `job transfer`), arbitrary
+Generic `confined:workspace` commands (including `job move`), arbitrary
 invocation, and adapter push/pull are refused. Manage workspace configuration at the destination
 through the operator. The older `mount` adapter still uses its separate
 executor as described above and does not gain confinement from this feature.
@@ -718,14 +751,14 @@ every rank of a parallel launch, in a sandbox that can write only that job's
 directory. The `status.json`, `managers.json` and manager log files are informational and
 never acted on. Parallel launches need the site configuration and acceptance
 described in {doc}`workspace_daemon`. Postprocess scripts are never run by the
-destination: run `httk workflow postprocess` on the adopted job locally.
+destination: run `httk postprocess` on the adopted job locally.
 
 ## From Python
 
 The low-level adapter API is in `httk.workflow.adapters`. This example uses the
 `local` template so it runs without an SSH server. Use the CLI to configure an
 SSH remote's persisted settings; there is no single high-level Python
-equivalent of `remote configure --set`.
+equivalent of `remote set`.
 
 ```python
 from pathlib import Path

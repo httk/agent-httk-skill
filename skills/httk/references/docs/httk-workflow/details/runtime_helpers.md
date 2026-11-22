@@ -90,7 +90,7 @@ an `adhoc:defects@<sha12>` workflow, and every job, parent and child, runs that
 installation:
 
 ```console
-httk job new --workspace workflow-workspace --from-runner defects.py --step characterize \
+httk job new --workspace workflow-workspace defects.py --start-step characterize \
     --parameter encut=520 --parameter 'supercell=[2, 2, 2]' --placement project/si-vacancies
 ```
 
@@ -440,16 +440,86 @@ replayed idempotently. `Attempt.initialize`, and so every dispatch through
 `Runner.main`, completes any batch an interrupted attempt sealed but did not
 apply.
 
+### Compressing files
+
+`httk.workflow.runtime_utils.compress_files(paths, method=..., level=...,
+workers=..., remove_source=...)` compresses regular files atomically with
+`bz2` (the default), `gz`, `xz`, or `zst` (Zstandard). `level=None` takes the
+codec default (bz2 9, gz 9, xz 6, zst 3); an out-of-range level raises
+`ValueError`. `workers` bounds the parallelism: Zstandard compresses the files
+one after another, each with `workers` threads inside libzstd, and the other
+codecs compress up to `workers` (at most 16) files concurrently. Outputs keep the
+source's permission bits. `decompress_files(paths)`
+reverses it. Every *httk₂* reader decompresses these suffixes transparently.
+
+`record_digests=True` also hashes each source while compressing it and records
+its SHA-256 in `uncompressed.sha256` (`DIGEST_MANIFEST_NAME`) in the same
+directory, before the source is removed. The manifest has the `sha256sum`
+format, one `<hex>  <name>` line per uncompressed base name, sorted, so after
+decompressing the directory `sha256sum -c uncompressed.sha256` checks it;
+`read_digest_manifest(directory)` reads it. Each update drops entries whose file
+is gone. A name holding a newline or backslash is compressed but not recorded.
+The manifest is an ordinary payload file, so a job seal covers it; `httk
+job verify --content` checks the files against it.
+
+```python
+from httk.workflow.runtime_utils import compress_files
+
+compress_files([a.workdir / "WAVECAR"], method="zst", workers=4, remove_source=True)
+```
+
+Bash runners call `httk_compress [--method M] [--level N] [--workers N]
+[--remove-source] PATH...` and `httk_decompress [--remove-source] PATH...`.
+
 ### Running processes
 
 `a.run(argv, timeout=...)` runs an argv array in the workdir and terminates
 its whole process group on timeout. `ProcessSupervisor` adds streamed
 stdout/stderr, followed-file monitoring, process-group timeout handling, and
-versioned executable checkers. A checker receives
+versioned executable checkers. A `SIGTERM` or `SIGINT` that reaches the runner
+during `ProcessSupervisor.run` stops the program's process group, and is then
+re-delivered to the runner: under the default disposition the runner ends by
+it, without an outcome, so a manager drain becomes `owner_lost` and a `maxtime`
+stop `timeout`. A runner that installed its own handler first gets that handler
+called, and the report back with termination `signal_N`. A checker receives
 `httk-workflow-checker-event` version 2 JSON lines and emits
 `httk-workflow-checker-result` version 2 JSON lines. Commands and checker
 commands are always argument arrays; the API does not reproduce the *httk* v1
 exit-code and `ht.nextstep` interface.
+
+A monitor can also wind a program down at the attempt's stop warning (see
+[`warntime`](taskmanager.md#winding-down-before-the-deadline)). Monitors receive
+a `"tick"` event every second; this one creates a stop file the program polls,
+once, on the first tick at or after `a.stop_warning`:
+
+```python
+import time
+
+from httk.workflow.codes import ProcessSupervisor
+
+
+def stop_file_monitor(a):
+    requested = False
+
+    def monitor(event):
+        nonlocal requested
+        warning = a.stop_warning
+        if not requested and event.event == "tick" and warning is not None and time.time() >= warning:
+            (a.workdir / "STOP").touch()
+            requested = True
+        return ()
+
+    return monitor
+
+
+@run.step
+def simulate(a):
+    report = ProcessSupervisor(monitors=[stop_file_monitor(a)]).run(["simulate"], cwd=a.workdir)
+    if report.returncode == 0 and (a.workdir / "STOP").exists():
+        (a.workdir / "STOP").unlink()
+        a.advance("simulate", resources={"mintime": "10:00"})  # resume under a later manager
+    ...
+```
 
 Native Bash runners use the same protocol through {doc}`/sdks/bash_api`.
 

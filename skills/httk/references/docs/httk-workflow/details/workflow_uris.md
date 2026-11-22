@@ -38,16 +38,20 @@ installed first, or with `--install` on first use:
 
 ```console
 httk workflow install --workspace WS 'git+https://github.com/httk/workflows-vasp#vasp-relax'
-httk job new --workspace WS --workflow vasp.relax --input structure=POSCAR
+httk job new --workspace WS vasp.relax --input structure=POSCAR
 
 httk job new --workspace WS --install \
-    --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' \
+    'git+https://github.com/httk/workflows-vasp#vasp-relax' \
     --input structure=POSCAR
 ```
 
-`httk campaign submit --install`, {py:func}`~httk.workflow.scaffold.new_job`
+`httk job new --campaign --install`, {py:func}`~httk.workflow.scaffold.new_job`
 with `install=True`, and `[workflow.calls]` of an installed package (which
-must pin the full commit) install the same way.
+must pin the full commit) install the same way. With `--install` a URI is
+fetched each time, but an installation that installing it again would only
+repeat is kept: the same commit, installed from the same branch or tag, of the
+same sources and calls, and still the newest installation of its short name.
+`httk workflow install` always installs again.
 
 `@ref` is a branch, a tag, an abbreviated or full commit hash, or omitted for
 the remote default branch. Installing fetches the repository at that ref into
@@ -77,22 +81,24 @@ httk workflow install --workspace WS 'git+https://github.com/httk/workflows-vasp
 
 A root `httk_workflow.toml` is still a single package. A `REMOTE:WS` workspace
 gets the pinned repository URI and expands it there. `httk job new
---workflow` and `httk workflow describe` still need `#subdir`.
+--workflow` and `httk workflow show` still need `#subdir`.
 
-`httk workflow describe URI` fetches and describes without installing.
+`httk workflow show URI` fetches and describes without installing: it
+describes a workflow installed in the workspace, and anything else as this
+machine resolves it.
 `httk workflow uninstall --workspace WS SELECTOR` removes an installation by
 id, short name or `NAME@REF` (a selector several installations share is
 refused); jobs are not checked unless `--check` is given.
 
 ## The machine cache
 
-Without `--workspace`, `httk workflow install URI` only fetches into this
-machine's cache and prints each canonical URI and short name, and
-`httk workflow uninstall SELECTOR` forgets fetched workflows:
+`httk workflow fetch URI` only fetches into this machine's cache and prints
+each canonical URI and short name, and `httk workflow forget SELECTOR` forgets
+fetched workflows:
 
 ```console
-httk workflow install 'git+https://github.com/httk/workflows-vasp#vasp-relax'
-httk workflow uninstall vasp.relax
+httk workflow fetch 'git+https://github.com/httk/workflows-vasp#vasp-relax'
+httk workflow forget vasp.relax
 ```
 
 A pinned URI forgets that commit; an unpinned URI or a short name forgets
@@ -126,8 +132,7 @@ repositories or subdirectories claim the same name, it is refused and the URI
 must be used. In-process registrations, installed plugins and
 [pip-installed workflow repositories](#install-a-workflow-repository-with-pip)
 take precedence, in that order; a fetched workflow they shadow logs a warning
-and stays reachable by its URI. `httk workflow list` without `--workspace`
-lists them.
+and stays reachable by its URI. `httk workflow list --available` lists them.
 
 ## Install a workflow repository with pip
 
@@ -174,8 +179,8 @@ workspaces move freely between a machine that installed it with pip and one
 that fetched it from GitHub.
 
 Only committed content is installed; the tree is always taken from git
-objects, never from the working tree, so install a package path (or use
-`--workflow-dir`) to run a working copy. An editable install follows the
+objects, never from the working tree, so install a package path (or give
+it to `job new` as SOURCE) to run a working copy. An editable install follows the
 clone's current HEAD and tags; a wheel offers the HEAD and tags of the time it
 was built, so after adding a tag at an unchanged HEAD reinstall with
 `pip install --force-reinstall --no-deps .`. A running process keeps the pip
@@ -184,8 +189,8 @@ state of its first lookup; restart it after `pip install`, `git checkout` or
 
 Nothing is written to this machine's installed entries
 (`data_home()/workflows/installed`), so `pip uninstall` removes the workflows
-entirely; only checkout trees stay in the cache. `httk workflow uninstall`
-without `--workspace` points to `pip uninstall` for them. Plugin names take
+entirely; only checkout trees stay in the cache. `httk workflow forget`
+points to `pip uninstall` for them. Plugin names take
 precedence over pip names, and pip names over fetched short names.
 
 ## Definition and declaration

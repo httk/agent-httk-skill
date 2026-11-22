@@ -25,8 +25,9 @@ or placement that held it.
 
 It covers the payload's own files but not `attempts/`, `logs/`, `.httk-job/`
 and the owner's `state.json`, which change as the job moves without breaking
-the seal. The seal never covers itself. `httk seal verify <payload>` checks a
-job directory on its own, whether or not it is inside a workspace.
+the seal. The seal never covers itself. `httk job verify JOB` checks a
+job's seal against its directory alone, and `JOB` may be a payload directory
+outside any workspace.
 
 The authority is the job's `state.json`, which records the SHA-256 of the seal
 document the manager wrote: a seal document a job planted itself proves
@@ -54,7 +55,7 @@ check it. Every member must be sealed before the project can be.
 
 ### Signatures and verification
 
-`httk project seal | unseal | verify-seal | repair | manifest` are core
+`httk project seal | unseal | verify | check | repair | manifest` are core
 commands; this guide describes what a workflow workspace contributes to them.
 The signature covers a domain-separated digest of the document body, the same
 way a signed project manifest is signed, so a seal digest cannot be replayed as
@@ -79,8 +80,8 @@ application settings do:
   `project,identity`.
 
 ```console
-httk workspace settings set --key seal.succeeded --value false default
-httk workspace settings set --key seal.keys --value project,identity default
+httk workspace set -w default seal.succeeded=false
+httk workspace set -w default seal.keys=project,identity
 ```
 
 ## Key refs
@@ -108,7 +109,7 @@ the setting. A ref that cannot be resolved is skipped with a warning.
   [Release records](#release-records)).
 - **Embedded workflows:** a job created with `job new --embed-workflow` embeds its
   workflow in `<payload>/workflow/`, an ordinary payload member, so the seal
-  covers the embedded tree (and `seal verify` detects a modified tree) as it does
+  covers the embedded tree (and `job verify` detects a modified tree) as it does
   `data/`. Unlocking such a job lifts the seal like any other.
 - **Unlocked jobs:** a job in debug mode (`httk job unlock`, see
   {doc}`/restarting_jobs`) is the exception. A succeeded unlocked job is not
@@ -125,9 +126,9 @@ the setting. A ref that cannot be resolved is skipped with a warning.
 
 These still work unchanged:
 
-- every read-only command (`status`, `show`, `log`, `why`, `seal verify`);
-- `gc` and `fsck`;
-- `workflow postprocess`, which writes outside the payload. A sealed job can be
+- every read-only command (`status`, `show`, `log`, `why`, `verify`);
+- `gc`, `workspace check` and `workspace repair`;
+- `postprocess`, which writes outside the payload. A sealed job can be
   postprocessed; the output is excluded from the job seal and, when it lives in
   the project tree, from the project seal too;
 - moving a job out of an unsealed workspace. The seal travels inside the
@@ -223,20 +224,26 @@ should be covered. A succeeded unlocked job
 can never be sealed, so it is always among the unsealed ones.
 
 `job unseal`, `workspace unseal` and `project unseal` ask for confirmation,
-which `--force` skips. Without a terminal and without `--force` they refuse
+which `--yes` skips. Without a terminal and without `--yes` they refuse
 rather than block.
 
 ## Verifying
 
-`httk seal verify [PATH]` verifies the seal at `PATH` (a project root,
-a workspace root, or a job payload) and, unless `--shallow` is given, every
-seal it references:
+Each level verifies its own seals: `httk job verify JOB...` a job's seal,
+`httk workspace verify [WORKSPACE...]` a workspace seal and the drift since it
+(with `--deep`, every job seal it records too), and `httk project verify`
+(*httk-core*) a project seal and every seal it references:
 
 ```console
-httk seal verify
-httk seal verify --json
-httk seal verify --trusted-key keys/collaborator.pub some/workspace
+httk job verify silicon
+httk job verify --json silicon
+httk workspace verify --deep --trusted-key keys/collaborator.pub some/workspace
+httk project verify
 ```
+
+`job verify` and `workspace verify --deep` report as follows (plain
+`workspace verify` prints its discrepancies and one verdict line, and exits 1 on
+drift).
 
 Text output is one line per entry, `<level> <subject> <verdict> <reason>`, with
 indented `<kind> <path>` discrepancy lines under any failing entry, then a
@@ -263,6 +270,38 @@ By default the project's pinned keys and the local identities' public keys are
 trusted, so a tree sealed by its own project or identity verifies as
 `valid_trusted` without naming a key. `--trusted-key` adds more, as an
 `ed25519:` key, a `sha256:` fingerprint, or a `*.pub` file.
+
+### Uncompressed content digests
+
+A job that compresses its outputs with
+`compress_files(..., record_digests=True)` (as the VASP workflows do when they
+finalize) leaves an `uncompressed.sha256` beside the compressed files: one
+`<sha256>  <name>` line per file, in `sha256sum` format, giving the SHA-256 of
+the *uncompressed* content of `<name>` (for `run/EIGENVAL.zst`, the line for
+`EIGENVAL`). The manifest is an ordinary payload file, so the job seal covers
+it; after decompressing a directory, `sha256sum -c uncompressed.sha256` checks
+it.
+
+The default verification checks stored bytes only: a decompressed or
+re-compressed file is a `missing`, `extra` or `mismatch` discrepancy.
+`httk job verify --content` (and `workspace verify --content`) additionally decompresses every existing form of
+each file a sealed manifest names (`X` and `X.<ext>` for every registered
+compression format) and checks each against the job's stated digest. A
+manifest that itself changed since sealing is not used. The added discrepancy
+kinds are `content_missing` (no form of the file is left), `content_mismatch`
+(on each form that does not match; the file's ordinary discrepancies then
+stay) and `invalid` (a sealed manifest that cannot be parsed). Only when every
+existing form matches are the file's ordinary discrepancies (a changed or
+added form, an absent one) replaced by one `reencoded` line, which is reported
+but keeps the entry valid. A manifest that names both `X` (stored as `X.zst`)
+and a file literally named `X.zst` (stored as `X.zst.zst`) gives a false
+`content_mismatch` on `X.zst`, since that path is also taken as the plain form
+of the entry `X.zst`; this errs on the safe side, and VASP finalization never
+produces it. In that mode, bytes of a compressed container that
+do not affect its decompressed content (headers, compression level) are not
+vouched for, and the cost follows the decompressed size of the files.
+`--content` implies `--deep` on `workspace verify`. `httk project verify` does
+not take `--content`: run `workspace verify --content` on each workspace.
 
 ## Not to be confused with
 

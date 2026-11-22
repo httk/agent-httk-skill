@@ -13,13 +13,13 @@ An installed package of a format records it as `runner.builtin` in its
 
 | Format | Bare document or package form | Built-in runner |
 | --- | --- | --- |
-| CWL | `job new --workspace WS --from-runner flow.cwl` | `httk.workflow.compat.cwl/cwl_runner.py` |
-| PWD | `job new --workspace WS --from-runner graph.json` | `httk.workflow.compat.pwd/pwd_runner.py` |
-| jobflow | `job new --workspace WS --from-runner maker.json`, or a package with `format = "jobflow"` | `httk.workflow.compat.jobflow/jobflow_runner.py` |
+| CWL | `job new --workspace WS flow.cwl` | `httk.workflow.compat.cwl/cwl_runner.py` |
+| PWD | `job new --workspace WS graph.json` | `httk.workflow.compat.pwd/pwd_runner.py` |
+| jobflow | `job new --workspace WS maker.json`, or a package with `format = "jobflow"` | `httk.workflow.compat.jobflow/jobflow_runner.py` |
 | httk-v1 | a package with `format = "httk-v1"` | `httk.workflow.compat.v1/v1_runner.py` |
 
 A package directory is installed first, with `httk workflow install
---workspace WS DIR`, `job new --workflow-dir DIR --install` or
+--workspace WS DIR`, `job new DIR --install` or
 `new_job(..., install=True)`; see {doc}`/details/workflow_packages`.
 
 ## Optional extras
@@ -226,7 +226,8 @@ the full store.
 
 #### Resources per job
 
-Every child inherits the package's `[workflow.resources]`. A table under the
+Every child inherits the package's `[workflow.resources]`, and the parent's
+retry policy (`[workflow.retry_policy]`). A table under the
 runner options sets resources per jobflow job:
 
 ```toml
@@ -247,7 +248,7 @@ procs = 4
 
 Keys are `fnmatch` globs over the jobflow job name (case-sensitive), tried in
 manifest order; values are validated like `[workflow.resources]`, with
-`maxtime`/`mintime` as Slurm durations. When no glob matches, the job's
+`maxtime`/`mintime`/`warntime` as Slurm durations. When no glob matches, the job's
 `JobConfig.manager_config["httk"]["resources"]` table applies (settable per job
 with `Flow.update_config` or a `config` override); a malformed table there fails
 the parent with `jobflow.resources_invalid`. The table found overlays the
@@ -443,9 +444,9 @@ through with the key upper-cased and dots replaced by underscores, as text;
 boolean and structured values are not passed. For example:
 
 ```console
-httk workspace settings set --key vasp.command --value vasp_std default
-httk workspace settings set --key pymatgen.psp_dir --value /opt/potcars default
-httk workspace settings set --key atomate2.vasp_custodian_max_errors --value 3 default
+httk workspace set -w default vasp.command=vasp_std
+httk workspace set -w default pymatgen.psp_dir=/opt/potcars
+httk workspace set -w default atomate2.vasp_custodian_max_errors=3
 ```
 
 Without `vasp.command` no VASP variable is set and atomate2's own configuration
@@ -457,7 +458,10 @@ signal to the attempt does not reach. When `psutil` is installed (custodian
 requires it), a `SIGTERM` or `SIGINT` to a running job is forwarded to every
 such descendant group; every such group is killed after a
 grace period, including members that outlive their leader, before the job
-itself stops.
+itself stops. On an unconfined manager that dies hard (no drain), that VASP can
+outlive the attempt until the allocation ends, so a retried attempt may briefly
+share `run/exec` with it; confined launches and the end of a Slurm allocation
+stop it.
 
 ### httk-v1 package
 
@@ -481,7 +485,7 @@ file = "collect.py"
 
 The directory must contain an executable `ht_steps` or `ht_run`, possibly as
 `.template`. `taskset` selects the claim pool and `attempts` sets the v1 retry
-budget. The realization keeps a persistent `ht.run.current`. The built-in `v1_runner.py`
+budget, so the format refuses `[workflow.retry_policy]`. The realization keeps a persistent `ht.run.current`. The built-in `v1_runner.py`
 runs like any other runner, with no v1-specific manager or capability.
 {doc}`/details/v1_compatibility` covers the environment entries and legacy
 runtime behavior.
@@ -492,15 +496,15 @@ runtime behavior.
 Maker `.json` document, and installs it ad hoc before creating the job:
 
 ```console
-httk job new --workspace WS --from-runner flow.cwl --input message=echo
-httk job new --workspace WS --from-runner workflow.json \
+httk job new --workspace WS flow.cwl --input message=echo
+httk job new --workspace WS workflow.json \
   --parameter pwd_module_path='["."]'
-httk job new --workspace WS --from-runner maker.json
+httk job new --workspace WS maker.json
 ```
 
-When path matching is not appropriate, `--format FORMAT` selects the reader:
-`cwl`, `pwd` or `jobflow`. A package directory rejects `--format`, since its
-format is already declared. `httk workflow install --format FORMAT` installs a
+When path matching is not appropriate, `--language LANGUAGE` selects the reader:
+`cwl`, `pwd` or `jobflow`. A package directory rejects `--language`, since its
+language is already declared. `httk workflow install --language LANGUAGE` installs a
 bare document, or with `httk-v1` a bare task directory
 ({doc}`/details/v1_compatibility`), the same way without creating a job.
 

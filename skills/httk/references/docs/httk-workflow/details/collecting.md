@@ -102,7 +102,7 @@ workflow received. Two kinds of staged file are recorded:
   payload-relative path. An input without a `destination` (a port, such as
   a jobflow input handed over from a parent job) is a value, not a staged
   file, and only a hook can record it.
-- Every file `job new --file`/`--files` staged (also with `--from-command`,
+- Every file `job new --file`/`--files` staged (also with `--command`,
   the `files` argument of `httk.workflow.new_job`, and the `files` of a
   child that `Attempt.call` creates), listed in the `staged_files` member of
   `job.json` and labelled by its payload-relative path, such as
@@ -527,9 +527,9 @@ Each `--raw` line is exactly `JobRecord.as_mapping()`, and
 to a file, shipped and read back by the storing process.
 
 Jobs that ran on a remote are collected the same way once home:
-`httk job pull REMOTE:NAME` moves every succeeded job into the local
+`httk pull REMOTE:NAME` moves every succeeded job into the local
 workspace (the enclosing one, else the default) in its terminal state, and
-`httk job transfer --job JOB REMOTE:NAME default` moves single jobs whatever
+`httk job move --job JOB REMOTE:NAME default` moves single jobs whatever
 their state; collect cannot tell them from local jobs. See {doc}`/details/workflow_cli`.
 
 ### Summary line and exit codes
@@ -628,6 +628,12 @@ rebuilds; see {doc}`/details/stable_ids`. It lives beside the store at
 `<into>.ids.sqlite` (relocate it with `--id-ledger PATH`), is created and
 signed on first use, and is announced prominently because it should be kept
 and committed with the store.
+
+`collect --campaign --into` keeps one ledger for all its partitions, at the
+same `<into>.ids.sqlite`, signed like a tree sweep's with the project or
+operator identity key (`tree_ledger_keys`). A store built by the former
+ledger-less `campaign collect --into X` gets a fresh `X.ids.sqlite` on its
+next sweep, unless `--no-id-ledger` is passed or the store is rebuilt.
 
 `--no-id-ledger` opts out, and a sweep without a resolvable workspace signing
 key has no ledger. Either way the store mints ids that are not stable across
@@ -803,7 +809,7 @@ installed workflow package in the workspace, after checking that its tree
 digest still matches the job's `runner_provenance` (a workflow reinstalled or
 modified since the job ran is refused; a reinstall's refusal names both digests
 and the remedies: reinstalling the tree it ran with, or rerunning the job on
-the installed tree with `httk job request restart` (`continue --tree` when it
+the installed tree with `httk job restart` (`job resume --tree` when it
 failed waiting on failed children), a succeeded job by deleting it and creating
 it again); refusals degrade only that job. See
 {doc}`/details/workflow_packages` for the trust tiers and package hook
