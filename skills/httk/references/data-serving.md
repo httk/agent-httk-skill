@@ -150,31 +150,30 @@ app = create_asgi_app(adapter)                  # … or uvicorn/hypercorn ASGI
 ```
 
 To deploy an existing *httk-store* SQLite or DuckDB file without writing an
-application module, `httk serve optimade serve STORE` is a production ASGI
-runner meant as the single `ExecStart` of a `systemd` unit behind Apache or
+application module, `httk serve --no-site STORE` is a production ASGI runner meant as the single `ExecStart` of a `systemd` unit behind Apache or
 Nginx:
 
 ```console
-httk serve optimade serve /srv/optimade/materials.sqlite \
-    --config optimade.toml --baseurl https://example.org/optimade \
+httk serve --no-site /srv/optimade/materials.sqlite \
+    --optimade-config optimade.toml --public-url https://example.org/optimade \
     --port 8001 --workers 4          # or --uds /run/httk-optimade/optimade.sock
-httk serve optimade check /srv/optimade/materials.sqlite   # self-test, no serving
+httk serve --check --no-site /srv/optimade/materials.sqlite   # self-test, no serving
 ```
 
 - The file format is sniffed from its header; a missing file is refused, never
   created. DuckDB opens read-only (workers share it; writers are blocked while
   serving); SQLite is live and works from read-only file permissions.
 - A store saved with application record classes (`records=[Result]`) needs
-  them named: `--records result_record:Result` (repeatable), imported with the
+  them named: `--record-class result_record:Result` (repeatable), imported with the
   working directory first on the import path (set `WorkingDirectory=` in the
   unit). Distribution-registered records (`httk collect --into`) need none.
-- `--config` TOML keys are `OptimadeConfig` fields (`[provider]` with
+- `--optimade-config` TOML keys are `OptimadeConfig` fields (`[provider]` with
   name/description/prefix, `license`, `page_limit_max`, `cors_origins`, ...);
   unknown keys and malformed values are refused.
 - Before binding, it requests `/info`, `/links` and every entry endpoint
   in-process and exits 2 on failure. Each worker handles one request at a time,
   so `--workers` sets concurrency; use `Restart=always` in the unit.
-- Prefer `--baseurl` behind a proxy; `--root-path` serves a prefix-stripping
+- Prefer `--public-url` behind a proxy; `--root-path` serves a prefix-stripping
   sub-path proxy. Server URLs (PostgreSQL/ClickHouse/Mongo) are not accepted;
   compose those with `create_asgi_app` in your own module.
 - Full guide: [deployment](docs/httk-serve/optimade/deployment.md).
@@ -252,22 +251,21 @@ httk serve optimade check /srv/optimade/materials.sqlite   # self-test, no servi
 
 ### Combined server (browse + OPTIMADE + files)
 
-`httk serve combined serve STORE --data-path NAME=WORKSPACE [--port N]` serves
+`httk serve STORE --data-path NAME=WORKSPACE [--port N]` serves
 one SQLite/DuckDB store as a site at `/` (default: catalog, browser and entry
 pages with provenance), OPTIMADE at `/optimade/` and registered file bytes at
-`/data/`; `check` self-tests without serving. Stored file urls are
+`/data/`; `--check` self-tests without serving. Stored file urls are
 `data/<workspace name>/...`: `--data-path` is either repeatable `NAME=PATH`
 (workspace NAME's files are under PATH) or one plain `PATH` holding the
 workspaces by name. Only registered files are served. `--data-url URL` instead
 points file urls at an external file server (absolute, or root-relative; the
 rest is percent-encoded); exclusive with `--data-path`. `--site DIR` replaces
-the default site. The site is built from three widgets: `optimade_catalog`,
+the default site (`--list-widgets` lists its widgets; `--site-config NAME` picks a configuration). The default site is built from three widgets: `optimade_catalog`,
 `optimade_browser`, `optimade_entry`. No authentication.
 
-`httk serve optimade serve|check` takes the same `--data-path`/`--data-url`;
+`httk serve --no-site STORE` takes the same `--data-path`/`--data-url`;
 with `--data-path` it also serves the bytes at `/data/` beside the API. The
-served file urls follow the request origin, or `--baseurl` (optimade) /
-`--public-base-url` (combined) behind a proxy.
+served file urls follow the request origin, or `--public-url` behind a proxy.
 
 ## httk-serve: websites
 

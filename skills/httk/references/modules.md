@@ -44,11 +44,11 @@ Public root names users touch most:
   SIGKILLs the whole group over budget — sacrificing the run, never the
   machine; the standard wrapper for test/CI/build targets in the module
   Makefiles, `HTTK_TEST_MAX_RSS_GB` override).
-- Project anchor: `httk project init|show|import-v1|export|verify-export`
-  (`export` packs a signed redistribution ZIP, `verify-export` checks the
+- Project anchor: `httk project init|show|import-v1|export|check|repair|manifest|verify|template|seal|unseal`
+  (`export` packs a signed redistribution ZIP, `verify ZIP` checks the
   signer); `httk_project/` directory marks a project root (Ed25519
   identity/trust).
-- Operator identities (per-user, `HTTK_CONFIG_HOME`): `httk init` creates the
+- Operator identities (per-user, `HTTK_CONFIG_HOME`): `httk setup` creates the
   default; `httk identity add|list|show|key|default|remove` manages them.
   `httk identity key [SHORT]` prints just the `ed25519:...` public key (the
   default identity when omitted) — what a workspace daemon operator authorizes.
@@ -131,7 +131,7 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   toolkit `httk.workflow.codes`. The same `httk.codes.<code>` pattern holds for
   all eight codes (abinit, cp2k, gromacs, lammps, orca, phonopy, qe, vasp):
   `pip install httk-workflow-<code>` or `pip install "httk2[<code>]"`. A single runner file
-  (`--from-runner ./my_runner.py`), or a **workflow package directory** with
+  (`job new ./my_runner.py`), or a **workflow package directory** with
   `httk_workflow.toml` (declared inputs/outputs/parameters/environment,
   instantiate/collect hooks as Python or any executable, any-language
   runner, `[workflow.build]` for compiled workflows — sources-only digests,
@@ -152,7 +152,7 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
 - **Workflow compat formats** (`workflow_compat.md`): CWL, Python Workflow
   Definition, jobflow/atomate2 Makers (DAG-parallel as child jobs), and
   converted httk v1 template packages run via a manifest `format =` key or
-  `job new --format LANG` on a bare document. Finished v1 trees are harvested
+  `job new --language LANG` on a bare document. Finished v1 trees are harvested
   with `httk v1 collect` (the only supported v1 surface).
 - Provenance: `run_record(job_record)` → `httk.core.Run`; collect assembles
   provenance in the framework. A `Run`'s input/artifact/output edges are
@@ -160,28 +160,28 @@ See `campaign.md` for the end-to-end playbook. Summary of the model:
   `data-serving.md`).
 - Sealing (`docs/httk-workflow/details/sealing.md`): signed manifests over a job's,
   workspace's, or project's contents, detecting later tampering —
-  `httk job seal|unseal`, `httk workspace seal|unseal`, `httk project
-  seal|unseal` (core-owned), `httk seal verify`. A job seal lives
+  `httk job seal|unseal|verify`, `httk workspace seal|unseal|verify`, `httk project
+  seal|unseal|verify` (core-owned). A job seal lives
   inside the job directory at `<payload>/.httk-job/seal.json`, so it travels
   wherever the job directory goes (transfer, or `job eject`/`job adopt`).
-- `job push [SRC] DST` (all `ready` jobs) and `job pull SRC [DST]` (all
-  `succeeded` jobs) are the everyday transfer verbs; `job transfer [--job JOB]
+- `push [SRC] DST` (all `ready` jobs) and `pull SRC [DST]` (all
+  `succeeded` jobs) are the everyday transfer verbs; `job move [--job JOB]
   [--state S] [--step STEP] [--tree] SRC DST` is the general form between
-  workspaces (hold, copy, adopt, release; `--resume`, `--release`, `--hold`,
-  `transfer status`).
+  workspaces (hold, copy, adopt, release; `--resume`, `--release`, `--hold`;
+  held transfers show in `workspace status`).
   `job eject [--tree] [--wait] [--hold] JOB DEST` / `job adopt [--move] BUNDLE`
   move a job (with `--tree`, its descendants, all paused or terminal) out of a
   workspace to a plain bundle directory, and into any workspace, without either
   side needing to be registered. Transfers to an ordinary (ssh/local)
   destination carry the needed workflows and install them there under the same
-  ids (`--no-workflows` opts out; never via the workspace daemon). `job push`
-  keeps an inert `away` copy in the source unless `--no-keep` (`job transfer
-  --keep` likewise); `job pull` replaces it, `job recover` restores a lost job.
+  ids (`--no-workflows` opts out; never via the workspace daemon). `push`
+  keeps an inert `away` copy in the source unless `--no-keep` (`job move
+  --keep` likewise); `pull` replaces it, `job recover` restores a lost job.
   Every transfer to or from a remote runs over one transfer session per remote
   end (one ssh connection, one remote `httk` start), so both ends need the same
   httk version; custom remote adapters must implement `session`;
-  `job transfer --release T --keep` aids recovery.
-  `job push|pull|transfer` accept `--placement`.
+  `job move --release T --keep` aids recovery.
+  `push`, `pull` and `job move` accept `--placement`.
 
 ## httk-analyse (`httk.analyse`) — analysis
 

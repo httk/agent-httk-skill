@@ -3,7 +3,7 @@
 No workflow is built into `httk-workflow`. All VASP workflows and every other
 non-trivial workflow live in separate git repositories, referenced by URI. A
 job runs a workflow installed in its workspace, and
-`job push|pull|transfer` install the workflows the jobs need in the destination
+`push`, `pull` and `job move` install the workflows the jobs need in the destination
 by default (`--no-workflows` opts out). Install by hand only for the workspace
 daemon, `--no-workflows`, or non-transfer paths, or embed the workflow in the
 job (`--embed-workflow`, below). See `campaign.md` for running jobs; this file is about
@@ -25,7 +25,7 @@ where workflows come from and the manifest.
   `.band-structure`, `.dielectric`, `.elastic`, `.phonons`, and
   `atomate2.full-characterization` (the others as parallel child jobs). Every
   package declares the postprocess scripts `report` and `plots`
-  (`httk workflow postprocess --script report [JOB]`). A script with manifest
+  (`httk postprocess report [JOB]`). A script with manifest
   `outputs` is stored as runs by `httk collect WS --postprocess NAME --into STORE
   --id-base BASE` (after the job collect).
 - **workflows-vasp-other-languages** — the same relaxation authored once per
@@ -48,23 +48,23 @@ the workspace's `workflows/` store, with its declared calls; the job records the
 
 ```console
 httk workflow install --workspace WS 'git+https://github.com/httk/workflows-vasp#vasp-relax'
-httk job new --workspace WS --workflow vasp.relax --input structure=POSCAR
-httk job new --workspace WS --workflow 'git+https://github.com/httk/workflows-vasp#vasp-static' --install --input structure=POSCAR
-httk workflow list --workspace WS          # or: httk workspace workflows WS
+httk job new --workspace WS vasp.relax --input structure=POSCAR
+httk job new --workspace WS 'git+https://github.com/httk/workflows-vasp#vasp-static' --install --input structure=POSCAR
+httk workflow list --workspace WS          # the workspace's workflows
 httk workflow uninstall --workspace WS vasp.relax
 ```
 
-`job new --workflow` refuses a workflow that is not installed unless
+`job new SOURCE` refuses a workflow that is not installed unless
 `--install` (Python: `new_job(..., install=True)`) installs it first; a runner
-file (`--from-runner`) or command (`--from-command`) is installed ad hoc. After
+file (`job new ./runner.py`) or command (`--command`) is installed ad hoc. After
 install, the manifest's `[workflow] name` (its **short name**, e.g.
 `vasp.relax`) resolves too, unless two installations share it — then the URI is
 required. An id is one workflow: reinstalling different sources under an id
 that unfinished jobs use is not refused, but `workflow install` warns naming
 them, `job why` shows a `workflow pin` check, and `httk collect` refuses such a
-job with remedies. Without `--workspace`, `httk workflow install URI` only fetches into
-this machine's cache (then `--workspace WS vasp.relax` installs it by short
-name), and `httk workflow uninstall SELECTOR` forgets fetched workflows: a pinned
+job with remedies. `httk workflow fetch URI` only fetches into
+this machine's cache (then `workflow install --workspace WS vasp.relax` installs it by short
+name), and `httk workflow forget SELECTOR` forgets fetched workflows: a pinned
 URI forgets that commit, an unpinned URI or short name the whole
 repository-and-subdirectory lineage. `httk plugin install URI` makes every
 workflow an `httk_plugin.toml` in the repo bundles known by name; install each
@@ -72,9 +72,9 @@ into a workspace like any other, or all at once: a `git+` URI with no `#subdir`
 whose repo root holds `httk_plugin.toml` (and no `httk_workflow.toml`) installs
 every package it lists, each under its pinned `@<commit>#<subdir>` URI, one
 `ID<TAB>NAME` line per workflow. Calls among the listed workflows, by name or
-alias, bind to the members at the same commit. Without `--workspace` this only
+alias, bind to the members at the same commit. `workflow fetch` only
 fetches every member into the cache; a `REMOTE:WS` workspace gets the pinned
-repository URI and expands it there. `job new --workflow` and `workflow describe` still need `#subdir`. A
+repository URI and expands it there. `job new` and `workflow show` still need `#subdir`. A
 running workspace daemon needs no reload.
 
 ```console
@@ -97,12 +97,12 @@ Install them into a workspace as usual. See the vendored
 development, or when the code must travel and be sealed with the job.
 
 ```console
-httk job new --workspace WS --embed-workflow --workflow-dir ./my_relax --input structure=POSCAR
-httk job new --workspace WS --embed-workflow --from-command 'my_executable {input}' --file input=a.dat
+httk job new --workspace WS --embed-workflow ./my_relax --input structure=POSCAR
+httk job new --workspace WS --embed-workflow --command 'my_executable {input}' --file input=a.dat
 ```
 
-- It combines with `--workflow`, `--workflow-dir`, `--from-runner` and
-  `--from-command`, and is refused together with `--install`.
+- It combines with a `SOURCE` (workflow name, package directory or runner file) and
+  `--command`, and is refused together with `--install`.
 - The job's workflow id is `embedded:<name>@<sha12>`. `job.json` holds an
   `embedded` member that pins the tree digest plus the runner, steps, calls,
   call-slot interfaces and `requires`, read from the manifest at creation.
@@ -119,8 +119,8 @@ httk job new --workspace WS --embed-workflow --from-command 'my_executable {inpu
   - calls to workflows that are not installed;
   - trees with symlinks, special or hard-linked files, or `__pycache__`;
   - jobs submitted through a daemon's exchange;
-  - `set_workflow` on an embedded job.
-- `job show`, `job why` and `workflow precheck` report embedded jobs.
+  - `job set workflow=…` on an embedded job.
+- `job show`, `job why` and `job precheck` report embedded jobs.
 - To change one job's code, `httk job unlock` it (a one-way debug mode) and
   edit `workflow/`.
 
@@ -133,8 +133,8 @@ workflows*).
 field). `requires = ["httk-workflow>=2.2.0", ...]` declares minimum
 distribution versions; it is recorded at installation and checked at claim
 time — a manager whose environment doesn't meet it just leaves the job for
-another manager (`job why` and `workflow precheck` name the unmet requirement),
-so a runner needs no import guard. `workflow describe` refuses it too.
+another manager (`job why` and `job precheck` name the unmet requirement),
+so a runner needs no import guard. `workflow show` refuses it too.
 
 `[workflow.runner]` is one of: an executable `entry` (any executable package
 member; `run.py`/`run.sh` recommended, and then the package carries no plain

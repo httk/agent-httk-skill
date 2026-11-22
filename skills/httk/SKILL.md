@@ -79,9 +79,9 @@ From an empty directory containing a VASP-5 `POSCAR` (with
 ```console
 $ httk project init --name myproject .
 $ httk workspace init --name default workspace
-$ httk job new --workflow 'git+https://github.com/httk/workflows-vasp#vasp-relax' --install --input structure=POSCAR --tag silicon
-$ httk workspace settings set --key vasp.command --value "vasp_std" default
-$ httk workflow run
+$ httk job new 'git+https://github.com/httk/workflows-vasp#vasp-relax' --install --input structure=POSCAR --tag silicon
+$ httk workspace set -w default vasp.command=vasp_std
+$ httk run
 $ httk collect
 ```
 
@@ -89,7 +89,7 @@ $ httk collect
 
 A job runs only a workflow installed in its workspace: `job new --install`
 installs the relaxation workflow there first (`httk workflow install --workspace
-WS URI` does it on its own; without `--workspace` it only fetches into the
+WS URI` does it on its own; `httk workflow fetch URI` only fetches into the
 machine cache), and the job pins the installed commit and digest (upgrading
 httk cannot change queued jobs); `run` drives every job
 until idle; `collect` prints one JSON `CollectedJob` summary per finished job
@@ -103,16 +103,16 @@ results in the persistent `run/` workdir by default; add
 `--parameter publish_data=true` to `job new` when a curated `data/` copy is also
 required.
 
-`job new` takes exactly one of `--workflow NAME` (a workflow installed in the
-workspace, by id or short name; with `--install`, a git URI or known name is
-installed first), `--workflow-dir DIR --install`, `--from-runner FILE` (a
-single-file Python or Bash runner, installed ad hoc), or `--from-command 'srun
+`job new` takes either a positional `SOURCE` (a workflow installed in the
+workspace, by id or short name; with `--install`, a git URI, known name or
+package directory is installed first; a single-file Python or Bash runner is
+installed ad hoc) or `--command 'srun
 my_executable {n}'` (wrap one command line as a one-step workflow, installed ad
 hoc; `{n}` is filled from `--parameter n=…`). Inputs:
 `--file NAME=PATH` stages one file and `--files DIR` every file of a directory
 (e.g. INCAR/KPOINTS/POSCAR/POTCAR); both land in the job's `files/` and are
 copied into the working directory before the command runs. For a
-plain "run this program N times through SLURM" task, `--from-command` plus a
+plain "run this program N times through SLURM" task, `--command` plus a
 `slurm` launcher is the whole recipe — see the vendored `launchers.md`.
 Add `--embed-workflow` to keep the workflow in the job's own `workflow/` instead
 of installing it in the workspace (see `references/workflows.md`).
@@ -120,7 +120,7 @@ Workers can enforce per-job and per-step resource requirements; start them with
 capacities such as:
 
 ```console
-httk workflow run --workers 4 \
+httk run --workers 4 \
   --worker-resource procs 32 --worker-resource mem 128000 \
   --worker-resource matlab_license_slots 2
 ```
@@ -128,28 +128,28 @@ httk workflow run --workers 4 \
 See `references/campaign.md` for manifest and dynamic-resource declarations.
 Monitor with `job list`, `job show JOB`, `job why JOB` (explains a stuck job),
 `job debug --workspace WS JOB` (foreground single-job loop), or interactively with
-`httk workflow monitor` (a paged terminal UI over local and remote workspaces —
-counts per state, job pages, details, cancel/pause/continue, transfer, removal;
+`httk monitor` (a paged terminal UI over local and remote workspaces —
+counts per state, job pages, details, cancel/pause/resume, transfer, removal;
 scales to 100k-job workspaces; `job list --json --limit N --after CURSOR` is the
 same paged data path for scripts). `JOB` is a job UUID, `tag--uuid` key or
 unique prefix of either, or an in-workspace path or glob; a job directory moves
 between `jobs/<state>/` trees with its state, so from the project root after the
 quickstart `workspace/jobs/succeeded/silicon*` names the finished job. Change a
-job's course with `httk job request ACTION --reason TEXT JOB`, `ACTION` being
-`pause`, `continue`, `restart`, `override_step --override-step STEP`, `set_budget`
-(`--max-attempts-per-activation|--max-total-attempts|--max-activations N|unlimited`
-to go beyond the declared retry limits), `set_workflow --workflow NAME@REF
---state ready` (switch jobs to another installed version of the same declared
-workflow; not via the daemon) or `cancel`. A failed or paused job keeps its files
-(edit all but `job.json` first; `job why JOB` names the remedy): `continue`
+job's course with `httk job cancel|pause|resume|restart JOB…` (`--reason TEXT` is
+optional) and `httk job set JOB… priority=N step=STEP workflow=NAME@REF
+budget.max_attempts_per_activation=N budget.max_total_attempts=N
+budget.max_activations=N` (budgets accept `unlimited`, to go beyond the declared
+retry limits; `workflow=` switches jobs to another installed version of the same
+declared workflow, with `--state ready`; not via the daemon). A failed or paused job keeps its files
+(edit all but `job.json` first; `job why JOB` names the remedy): `resume`
 puts a `dependency_failure` parent back to waiting on its children (no new
 attempt, no budget used) and otherwise reruns the step as a new attempt;
 `restart` always reruns the step as a new attempt (a parent reuses its children
-by label, so it refuses while one is failed or cancelled: `continue --tree` the
+by label, so it refuses while one is failed or cancelled: `resume --tree` the
 parent or delete the child, or `--force`); a revived step reruns from its top, so edit the file it reads from. Revivals
 restore the declared retry allowance automatically (`--keep-budget` opts out).
 See `references/docs/httk-workflow/restarting_jobs.md`.
-Remove terminal or paused jobs with `httk job delete JOB…` (`--force` skips only
+Remove terminal or paused jobs with `httk job delete JOB…` (`--yes` skips only
 the confirmation; a succeeded job needs `httk job unseal` first). Never `rm -r` a
 job directory: a manager may hold it at that moment. VASP workflow packages
 (`vasp.relax`, `vasp.relax-bash`, `vasp.static`, `vasp.relax-static`, the
@@ -162,7 +162,7 @@ See `references/workflows.md`.
 
 For a cluster campaign, configure the workspace's manager launcher first; use
 a remote only when transport to another machine is needed. For the full
-remote/HPC path (`kappa:runs` colon workspaces, `job push`/`job pull`/`job transfer`, `campaign`
+remote/HPC path (`kappa:runs` colon workspaces, `push`/`pull`/`job move`, `campaign`
 partitioning, Python `new_jobs` streaming, `collect --into` a store), follow
 `references/campaign.md`. For the confined `mount-daemon` workflow, including
 identity keys and exchange-directory job eject/adopt, see

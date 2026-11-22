@@ -1,13 +1,10 @@
 # Confined workspace daemon
 
 Use `mount-daemon` when files are the only channel to an HPC destination. The
-workspace there has an **exchange** directory, `WORKSPACE/exchange/` (a
-workspace extension; `httk workspace exchange enable`, also done by `daemon
-init`), the one directory the client mounts (never the workspace). Every
+workspace there has an **exchange** directory, `WORKSPACE/exchange/` (a workspace extension, enabled by `httk daemon init`), the one directory the client mounts (never the workspace). Every
 unrestricted confined manager of the workspace serves it: it adopts `inbox`
 bundles and returns finished exchange-origin jobs to `outbox`; jobs keep
-running whether or not a daemon exists. The operator also runs `httk workspace
-daemon`, a foreground Slurm broker that only starts, queries and cancels
+running whether or not a daemon exists. The operator also runs `httk daemon`, a foreground Slurm broker that only starts, queries and cancels
 managers on signed typed requests (health, start, status, cancel). Requests
 cannot carry commands, paths or Slurm arguments. This is an opt-in deployment
 feature with strict Linux, Bubblewrap (no unsandboxed fallback), Slurm and site
@@ -28,12 +25,12 @@ Share only your public key with the operator; the private key stays on the
 client. Use the same user and `HTTK_CONFIG_HOME` for setup and signing.
 
 ```console
-httk init --name 'Your Name' --email you@example.org
+httk setup --name 'Your Name' --email you@example.org
 httk identity key
 ```
 
 `httk identity list` shows identities, `httk identity show [SHORT]` details one,
-and `httk identity default SHORT` selects one. `httk init` is idempotent. If
+and `httk identity default SHORT` selects one. `httk setup` is idempotent. If
 `httk identity key` reports no identity or key, finish identity setup first.
 
 ## Destination operator
@@ -57,23 +54,23 @@ MUNGE, user database just work), except its writable exchange and
 `WORKSPACE/.httk-workspace/daemon/broker` binds; attempts see
 `confine.readonly_paths` (default: `/usr`, `/etc`, the
 Python installation, where httk is imported from), so add software trees jobs
-need with `--add-path`. Keep the *httk* installation, launcher bundles, Python
+need with `launcher set --add`. Keep the *httk* installation, launcher bundles, Python
 and Slurm clients outside the workspace under the existing ownership and
 world-writability rules; use the workspace's own `exchange/`.
 
 ```console
-httk launcher add --template slurm --global small \
-  --set manager.confine=bwrap --set slurm.cpus_per_task=2 --set slurm.mem=4G \
-  --set slurm.time_limit=01:00:00 --set manager.workers=2
-httk launcher configure --add-path confine.readonly_paths=/software small
-httk workspace daemon init /proj/campaign/workspace \
+httk launcher add --kind slurm --global small \
+  manager.confine=bwrap slurm.cpus_per_task=2 slurm.mem=4G \
+  slurm.time_limit=01:00:00 manager.workers=2
+httk launcher set small --add confine.readonly_paths=/software
+httk daemon init /proj/campaign/workspace \
   --add launchers=small \
   --add authorized_keys=ed25519:CLIENT_PUBLIC_KEY
-httk workspace daemon check /proj/campaign/workspace
-httk workspace daemon run /proj/campaign/workspace
+httk daemon check /proj/campaign/workspace
+httk daemon run /proj/campaign/workspace
 ```
 
-Repeat `--add` per item; `--set KEY=VALUE` sets other keys (`bwrap`, `python`,
+Repeat `--add` per item; a plain `KEY=VALUE` sets other keys (`bwrap`, `python`,
 `sbatch`, `squeue`, `scancel`, `sacct`, `slurm_conf`, `max_submissions`,
 `force`; `cluster`/`scontrol` at `init` only). There is no `--exchange` option.
 `init` saves `WORKSPACE/.httk-workspace/daemon/configuration.json`, writes
@@ -94,11 +91,7 @@ workspace owner's account (a separate transport UID is unsupported);
 restricting that account's SFTP access is a site matter. Mount without
 `follow_symlinks`.
 
-Changing the configuration: edit launchers with `httk launcher
-configure`, or the daemon configuration with `httk workspace daemon configure
-WORKSPACE --set|--add|--remove KEY=VALUE` (lists `launchers`,
-`authorized_keys`; `--unset KEY` clears `sacct`/`slurm_conf` or resets
-`max_submissions`/`force`), then `httk workspace daemon reload WORKSPACE`. There is no
+Changing the configuration: edit launchers with `httk launcher set`, or the daemon configuration with `httk daemon set WORKSPACE KEY=VALUE… [--add KEY=VALUE] [--remove KEY=VALUE]` (lists `launchers`, `authorized_keys`; `httk daemon unset WORKSPACE KEY` clears `sacct`/`slurm_conf` or resets `max_submissions`/`force`), then `httk daemon reload WORKSPACE`. There is no
 approval step: every `reload`/`check`/`run` re-reads the configuration and
 current launcher bundles and activates changes, rewriting `daemon.json` (clients
 read it live). A running daemon notices the activation at its next poll, stops,
@@ -115,15 +108,13 @@ cancelled=` line whenever the counts change. A change of the fixed connection
 Mount the exchange (mount point outside any local workspace), then:
 
 ```console
-httk remote add --template mount-daemon confined
-httk remote daemon configure confined --exchange /mnt/cluster/exchange
-httk remote check confined
-httk remote daemon health confined
+httk remote add --kind mount-daemon confined exchange=/mnt/cluster/exchange
+httk remote check confined      # health response and daemon.json
 ```
 
 Remote settings: `exchange` and `daemon_workspace_id` are required;
 `daemon_enrollment_id` and `daemon_public_key` are optional, needed only for
-signed requests. `configure` pins the workspace from `exchange.json` and the
+signed requests. `remote set` pins the workspace from `exchange.json` and the
 daemon identities from `daemon.json` (when present) and publishes nothing;
 `check` reads `exchange.json` and, with the daemon pinned, `daemon.json` and a
 signed health request.
@@ -132,15 +123,15 @@ Send a job, start a manager (each call generates its request ID), and fetch:
 
 ```console
 httk job eject JOB /mnt/cluster/exchange/inbox          # hidden partial copy, renamed into inbox/ when complete
-httk remote daemon show confined                         # daemon.json: configurations + published resources
-httk remote daemon start confined --configuration small
-httk remote daemon status confined                       # passive: status.json, managers.json
-httk remote daemon status confined --handle MANAGER_HANDLE   # signed, fresh ID
-httk remote daemon cancel confined --handle MANAGER_HANDLE
+httk remote check confined                               # daemon.json: configurations + published resources
+httk run -w confined:runs --configuration small
+httk manager status confined                             # passive: status.json, managers.json
+httk manager status confined --handle MANAGER_HANDLE     # signed, fresh ID
+httk manager cancel confined --handle MANAGER_HANDLE
 httk job adopt --move /mnt/cluster/exchange/outbox/CLIENT_JOB_KEY   # copied, verified, source removed
 ```
 
-`start --time-limit DURATION` changes only this manager's Slurm `--time`, up to
+`run --time-limit DURATION` changes only this manager's Slurm `--time`, up to
 the launcher's `slurm.time_limit_max` (default: its `slurm.time_limit`, so only
 shorter); longer is refused as `time_limit_exceeded`. The response and the
 `managers.json` row carry the effective `time_limit`. Nodes and ranks always
@@ -157,7 +148,7 @@ private; approval refuses a published value with control characters or over
 
 An inbox job must be fresh (never run, state `ready`) with no parent; a failed
 delivery returns it to the state it left. Any unrestricted confined manager (no
-`--placement-prefix` or pool restriction) adopts `inbox` bundles, giving the
+`--placement` or pool restriction) adopts `inbox` bundles, giving the
 jobs fresh UUIDs and keeping the client job UUID as the exchange name. The
 job's workflow must be installed in the destination workspace (an operator
 task: `httk workflow install --workspace WS …`); until then the adopted job
@@ -170,14 +161,14 @@ outbox copy, and the next return of that job waits until it is gone. Refused bun
 `reason.json` (`status.json` lists only job states). Failed jobs are never retried automatically: adopt, fix, eject
 again. `managers.json` lists each manager's scheduler state, exit code and
 times; a finished manager's Slurm output is at `launchers/<handle>.log`
-(`httk remote daemon log REMOTE --handle H`). To take back a bundle
-nobody has adopted, `httk remote daemon take-back REMOTE NAME
+(`httk manager log REMOTE --handle H`). To take back a bundle
+nobody has adopted, `httk remote take-back REMOTE NAME
 [DESTINATION]` (client-only: rename to a dot name, copy out, remove; if the
 name is gone a manager took it, so cancel the job).
 
 A timed-out call may still be queued and applied later. To keep waiting, rerun
 with `--request-id ID` (printed on stderr) and identical fields; the daemon never
-submits a duplicate. Rerunning `start` without it may start a second manager. `uncertain` means the operator must reconcile with
+submits a duplicate. Rerunning `run` without it may start a second manager. `uncertain` means the operator must reconcile with
 Slurm; do not retry it with a new ID. Keep client and server clocks
 synchronized (130 minutes skew allowed). A cancel acknowledgement is not proof
 that the manager stopped. `status.json` and `managers.json` are informational
@@ -188,14 +179,13 @@ unconsumed responses after the request lifetime plus the skew allowance
 Ledger history: the daemon retires settled requests and ended manager starts
 (their `managers.json` rows too) after the workspace retention setting
 `retention.daemon_history_days` (default 30; `null` or `"keep"` never), read
-when the daemon starts, so restart it after `httk workspace policy set --key
-retention.daemon_history_days --value 14 WS`. It never retires a request before
+when the daemon starts, so restart it after `httk workspace set -w WS policy.retention.daemon_history_days=14`. It never retires a request before
 its signed lifetime plus the skew allowance, nor anything that can still
 matter; a start answered `uncertain` without a Slurm job ID stays for good.
 The record limit (4096) and `max_submissions` (default 128) bound this
 retained history, not lifetime totals, so retirement frees quota; exhaustion
 answers a retryable `busy` (same request ID): wait, lower the history, or raise
-`max_submissions` with `daemon configure`. A retired request is forgotten:
+`max_submissions` with `daemon set`. A retired request is forgotten:
 `status --handle`/`cancel` on its handle answer `refused` with
 `unknown_manager`, a status observation of a retired job command reports
 `unknown_command`, and a replay is admitted afresh, where its own expiry
@@ -231,8 +221,7 @@ The built-in Slurm prefix is `env SLURM_HOSTFILE=<nodefile> srun [--mpi=M]
 `--nodes`/`--nodelist`; a custom `manager.launch_template` using
 `--distribution=arbitrary` must not pass them either). `manager.launch_mpi=<plugin>`
 adds `--mpi=<plugin>` (ignored with a template); Intel MPI needs `pmi2`:
-`httk launcher configure --set manager.launch_mpi=pmi2 small`, then
-`httk workspace daemon reload WS` (a running `daemon run` restarts on it).
+`httk launcher set small manager.launch_mpi=pmi2`, then `httk daemon reload WS` (a running `daemon run` restarts on it).
 
 `manager.confine.block_mpi_spawn` (under `manager.confine=bwrap`) is `on`
 (default), `auto` or `off`. With `on`, the rank helper keeps Slurm's `PMI_FD`,
