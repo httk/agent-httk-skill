@@ -59,6 +59,8 @@ elsewhere.
   note about matching development versions.
 - **"Phase diagram / convex hull / stability"** → `references/modules.md`
   (httk-analyse section).
+- **"Summarize / triage many jobs or entries"** → *Working at scale* below:
+  one script that aggregates, not one call per item.
 - **"Serve an OPTIMADE API / build a website"** → `references/data-serving.md`
   (httk-serve). To start a *new website project*, copy the
   `example_website_httk` repository as the template. To create a *new
@@ -168,6 +170,72 @@ partitioning, Python `new_jobs` streaming, `collect --into` a store), follow
 `references/campaign.md`. For the confined `mount-daemon` workflow, including
 identity keys and exchange-directory job eject/adopt, see
 `references/workspace-daemon.md`.
+
+## Working at scale: script it, don't chain it
+
+When a task spans many jobs, store entries, or OPTIMADE results, do not issue
+one CLI call per item and read each full output. Write one short Python (or
+shell) script that loops, filters and aggregates, and print only the summary
+the user needs: counts, a table of the interesting rows, the few job keys that
+need action. The bulk of the data should never reach the conversation.
+
+- **Use the machine-readable output.** Most `httk` commands take `--json`;
+  parse it instead of scraping text. For workspaces, `job list --json` returns
+  `jobs` (rows with `job_key`, `job_id`, `state`, `step`, `phase`,
+  `placement`, …) and `next_after`. Pass `next_after` to `--after` with a
+  `--limit` until it is null. Paging is weakly consistent, so deduplicate by
+  `job_id`. Filter with `--state`, `--step`, `--tag-contains` rather than
+  fetching everything; `--counts` gives per-state totals. The same loop works
+  for a remote workspace (`--workspace kappa:runs`).
+- **Query stores through the searcher, not by dumping tables.** Declare only
+  the outputs you need in `search.results(...)`; rows are lazy, so unused
+  fields are never loaded. Use `search.count()` when only the number matters.
+- **Print aggregates, then drill down.** Report the shape first (how many
+  failed, at which step; how many entries per chemical system) and inspect
+  individual jobs (`job show`, `job why`, `job log`) or records only for the
+  handful the summary points at.
+- **Keep actions out of bulk loops unless the user asked.** Reading and
+  summarizing in a loop is safe. Cancel, delete, restart, `job set` and
+  transfers change state: list the affected jobs and confirm before running
+  them over a batch.
+
+Tally a large workspace by state and step:
+
+```python
+import json, subprocess
+from collections import Counter
+
+seen, tally, after = set(), Counter(), None
+while True:
+    cmd = ["httk", "job", "list", "--workspace", "default", "--json", "--limit", "1000"]
+    if after:
+        cmd += ["--after", after]
+    page = json.loads(subprocess.run(cmd, check=True, capture_output=True, text=True).stdout)
+    for job in page["jobs"]:
+        if job["job_id"] not in seen:
+            seen.add(job["job_id"])
+            tally[job["state"], job["step"]] += 1
+    after = page["next_after"]
+    if after is None:
+        break
+for (state, step), n in tally.most_common():
+    print(f"{n:7d}  {state:12s}  {step}")
+```
+
+Summarize a store without materializing records (`Result` and its fields are
+illustrative; use the stored record class's own):
+
+```python
+from collections import Counter
+
+search = store.searcher()
+v = search.variable(Result)
+search.add(v.energy_above_hull <= 0)
+per_system = Counter(row.system for row in search.results(system=v.chemical_system))
+print(search.count(), "stable entries in", len(per_system), "systems")
+for system, n in per_system.most_common(10):
+    print(f"{n:5d}  {system}")
+```
 
 ## Core ideas to keep in mind (details: references/architecture.md)
 
