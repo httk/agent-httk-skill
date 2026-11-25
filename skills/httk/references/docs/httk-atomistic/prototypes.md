@@ -598,6 +598,8 @@ refused with a message to write `I`. Net version 10 adds
 [torsion letters](#torsion-letters) on the qualifying bonds of molecules; a label
 without such a bond did not change. Net version 11 makes a tie by bond count final
 at a planar (`TP3`) end, so labels only lose letters, on bonds with such an end.
+Net version 12 no longer withholds a letter when B, C, A or D sits on a partially
+occupied or mixed site, so labels only gain letters, on bonds with such a site.
 
 The Source column names where a symbol comes from, not its geometry. The shapes
 that predate net version 7 keep geometries of their own; three of them
@@ -691,8 +693,7 @@ decided from the net, the shapes and the coordinates, never from element names
    a methyl, a carboxylate or a hydroxyl gives no letter;
 5. the shapes of B and C, as used in the label, are a pair of the table (in
    either order);
-6. each end has a unique reference neighbour, A at B and D at C (below);
-7. B, C, A and D sit on fully occupied, unmixed sites.
+6. each end has a unique reference neighbour, A at B and D at C (below).
 
 | Shapes of B and C | Letter below the edge | From the edge | Edge |
 |---|---|---|---|
@@ -719,9 +720,28 @@ bonds. Where A-B-C or B-C-D is
 within 3 degrees of straight there is no letter. The magnitude comes from the exact coordinates and the group-averaged exact metric,
 converted to a float once and compared after rounding to 1e-6 degrees, so every
 exact re-description and the mirror image give the same letter, and a value on
-the edge takes the upper class. The letters are always computed from the
-structure (`from_asu`); they are not supplied, and are not written to OPTIMADE
-`_httk_bonds` or CIF. The sign of a gauche torsion is not recorded.
+the edge takes the upper class. The label does not record the sign of a gauche
+torsion.
+
+**Letters from torsion statements.** A structure's bond network can state torsions
+(`bonds.torsions`, see {doc}`details/asu`). `from_asu` takes a qualifying bond's letter
+from those statements first: a statement on its reference atoms A-B-C-D (in either order,
+through any member of their orbit) determines the letter by its symbol, `c`, `g` or `t`
+when that is the pair's low letter or `t`, or a Klyne-Prelog symbol with its sign ignored
+(at the 90 degree edge `sp` and `sc` give `c`, `ac` and `ap` give `t`; at the 120 degree
+edge `sp` and `sc` give `g` and `ap` gives `t`, while `ac`, which spans that edge, decides
+nothing); otherwise by its angle, classified as above. A `none` statement on the bond, with
+any A and D, leaves it without a letter. Statements are never overridden, and a bond they
+decide ignores the 3 degree collinear rule. A `none` statement together with a determining
+one on one bond, or two determining statements that disagree, raise `ValueError`. Every
+other qualifying bond gets the letter the rules above compute from the structure, and
+statements on other atoms or bonds are ignored. A computed letter is not added to the
+network, but {py:func}`~httk.atomistic.distance_bonds` (by default) and
+{py:func}`~httk.atomistic.assign_baseline_torsions` store the computed letters as
+statements, so their labels are those the rules give. The network's statements travel with
+it: storage records keep them ([storing networks](details/asu.md#storing-networks)), OPTIMADE
+serves them as `_httk_bonds.torsions` ([serving bond networks](details/asu.md#serving-bond-networks)),
+and CIF writes and reads them as a `_geom_torsion_` loop ([torsion loops](details/cif.md#torsion-loops)).
 
 In a finite piece, two bond orbits between one site pair, or between a site and
 itself, are both ring bonds, so a letter is a function of the unordered site
@@ -743,8 +763,8 @@ its two sites, every row of which carries the same letter, and rules 1, 3 and 6:
 a bond of a periodic piece, a ring bond and a bond with a tied end are each refused
 with their own message. The net decides these without coordinates, so the check
 runs the code that gives the letters on atoms placed at each Wyckoff letter's
-generic probe point. Full occupancy, collinear ends and the torsion itself are not
-checked from a label, as they need the structure.
+generic probe point. Collinear ends and the torsion itself are not checked from a
+label, as they need the structure.
 
 **Relation to CIF.** This is the CIF bond list in compressed form. CIF records
 a bond as two atom labels plus a symmetry code for each
